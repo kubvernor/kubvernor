@@ -1,0 +1,61 @@
+[package]
+name = "kubevernor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+futures = "0.3"
+gateway-api = { version = "0.10.0", path = "../gateway-api-rs/gateway-api" }
+k8s-openapi = { version = "0.22", features = ["v1_29", "schemars"] }
+kube = { version = "0.93", features = ["runtime", "client", "derive"] }
+thiserror = "1.0.63"
+tokio = { version = "1.39.3", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "0.8.21"
+kube-core = "0.93.0"
+multimap = "0.10.0"
+env_logger = "0.11.5"
+log = "0.4.22"
+clap = { version = "4.5.16", features = ["derive"] }
+clap_derive = "4.5.13"
+uuid = { version = "1.10.0", features = ["v4"] }
+
+
+[profile.release]
+codegen-units = 1
+debug = false
+debug-assertions = false
+incremental = false
+lto = true
+opt-level = 3
+overflow-checks = false
+panic = "abort"
+rpath = false
+strip = "debuginfo"
+
+
+[profile.release-debuginfo]
+debug = "full"
+inherits = "release"
+panic = "abort"
+split-debuginfo = "packed"
+strip = false
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+clone_on_ref_ptr = "warn"
+disallowed-methods = "deny"
+doc_markdown = "allow"
+get_unwrap = "warn"
+if_then_some_else_none = "warn"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+print_stderr = "warn"
+print_stdout = "warn"
+str_to_string = "warn"
+string_to_string = "warn"
+todo = "warn"
+unwrap_used = "warn"

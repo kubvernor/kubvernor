@@ -1,0 +1,4 @@
+condense_wildcard_suffixes = true
+group_imports = "StdExternalCrate"
+imports_granularity = "Crate"
+use_field_init_shorthand = true
