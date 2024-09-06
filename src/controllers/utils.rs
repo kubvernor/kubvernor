@@ -1,12 +1,21 @@
 use std::sync::Arc;
 
-use kube::ResourceExt;
+use kube::{
+    api::{Patch, PatchParams},
+    Api, Resource, ResourceExt,
+};
+use kube_core::{PartialObjectMeta, PartialObjectMetaExt};
+use log::{debug, warn};
+
+use crate::controllers::ControllerError;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum ResourceState {
-    NotSeenBefore,
-    Existing,
+    New,
+    Changed,
+    Uptodate,
     Deleted,
+    SpecChanged,
 }
 
 impl ResourceState {
@@ -20,11 +29,11 @@ impl ResourceState {
 
         if let Some(stored_object) = maybe_added {
             if stored_object.meta().resource_version == resource.meta().resource_version {
-                return ResourceState::Existing;
+                return ResourceState::Uptodate;
             }
         }
 
-        ResourceState::NotSeenBefore
+        ResourceState::New
     }
 }
 
@@ -41,5 +50,56 @@ impl VerifiyItems {
         let good: Vec<_> = good.into_iter().map(|i| i.unwrap()).collect();
         let bad: Vec<_> = bad.into_iter().map(|i| i.unwrap_err()).collect();
         (good, bad)
+    }
+}
+
+pub struct MetadataPatcher {}
+
+impl MetadataPatcher {
+    pub async fn patch_finalizer<T>(
+        api: &Api<T>,
+        resource_name: &str,
+        controller_name: &str,
+        finalizer_name: &str,
+    ) -> std::result::Result<(), ControllerError>
+    where
+        T: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug,
+        T: ResourceExt,
+        T: Resource<DynamicType = ()>,
+    {
+        let type_name = std::any::type_name::<T>();
+        let maybe_meta = api.get_metadata(resource_name).await;
+        debug!("patch_finalizer {type_name} {resource_name} {controller_name}");
+        if let Ok(mut meta) = maybe_meta {
+            let finalizers = meta.finalizers_mut();
+
+            if finalizers.contains(&finalizer_name.to_owned()) {
+                Ok(())
+            } else {
+                finalizers.push(finalizer_name.to_owned());
+                let mut object_meta = meta.meta().clone();
+                object_meta.managed_fields = None;
+                let meta: PartialObjectMeta<T> = object_meta.into_request_partial::<_>();
+
+                match api
+                    .patch_metadata(
+                        resource_name,
+                        &PatchParams::apply(controller_name),
+                        &Patch::Apply(&meta),
+                    )
+                    .await
+                {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        warn!(
+                            "patch_finalizer: {type_name} {controller_name} {resource_name} patch failed {e:?}", 
+                        );
+                        Err(ControllerError::PatchFailed)
+                    }
+                }
+            }
+        } else {
+            Err(ControllerError::UnknownResource)
+        }
     }
 }

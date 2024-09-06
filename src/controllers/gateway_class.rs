@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::apis::standard::gatewayclasses::{GatewayClass, GatewayClassStatus};
@@ -11,13 +11,15 @@ use kube::{
     runtime::{controller::Action, finalizer, watcher::Config, Controller},
     ResourceExt,
 };
-use kube_core::ObjectMeta;
 use log::{debug, info, warn};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use super::{utils::ResourceState, ControllerError};
-use crate::state::State;
+use super::{utils::ResourceState, ControllerError, RECONCILE_ERROR_WAIT};
+use crate::{
+    controllers::{GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_LONG_WAIT},
+    state::State,
+};
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
 struct Context {
@@ -31,23 +33,6 @@ pub struct GatewayClassController {
     client: kube::Client,
     api: Api<GatewayClass>,
     state: Arc<Mutex<State>>,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-enum GatewayClassState {
-    New,
-    PreviouslyProcessed,
-    Added,
-    Deleted,
-}
-impl From<ResourceState> for GatewayClassState {
-    fn from(value: ResourceState) -> Self {
-        match value {
-            ResourceState::Existing => GatewayClassState::Added,
-            ResourceState::NotSeenBefore => GatewayClassState::New,
-            ResourceState::Deleted => GatewayClassState::Deleted,
-        }
-    }
 }
 
 impl GatewayClassController {
@@ -76,26 +61,37 @@ impl GatewayClassController {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn error_policy<T>(_object: Arc<T>, _err: &ControllerError, _ctx: Arc<Context>) -> Action {
-        Action::await_change()
+    fn error_policy<T>(_object: Arc<T>, err: &ControllerError, _ctx: Arc<Context>) -> Action {
+        match err {
+            ControllerError::PatchFailed
+            | ControllerError::AlreadyAdded
+            | ControllerError::InvalidPayload(_)
+            | ControllerError::InvalidRecipent
+            | ControllerError::FinalizerPatchFailed(_)
+            | ControllerError::BackendError
+            | ControllerError::UnknownResource => Action::requeue(RECONCILE_LONG_WAIT),
+            ControllerError::UnknownGatewayClass(_) | ControllerError::ResourceInWrongState => {
+                Action::requeue(RECONCILE_ERROR_WAIT)
+            }
+        }
     }
 
     async fn reconcile_gateway_class(
-        requested_gateway_class: Arc<GatewayClass>,
+        gateway_class: Arc<GatewayClass>,
         ctx: Arc<Context>,
     ) -> Result<Action> {
         let client = &ctx.client;
         let configured_controller_name = &ctx.controller_name;
-        let resource_name = requested_gateway_class.name_any();
+        let resource_name = gateway_class.name_any();
         let state = &ctx.state;
 
-        let id = Uuid::parse_str(&requested_gateway_class.metadata.uid.clone().ok_or(
+        let id = Uuid::parse_str(&gateway_class.metadata.uid.clone().ok_or(
             ControllerError::InvalidPayload("Uid must be present".to_owned()),
         )?)
         .map_err(|e| ControllerError::InvalidPayload(format!("Uid in wrong format {e}")))?;
 
-        let controller_name = &requested_gateway_class.spec.controller_name;
-        let resource_version = &requested_gateway_class.metadata.resource_version;
+        let controller_name = &gateway_class.spec.controller_name;
+        let resource_version = &gateway_class.metadata.resource_version;
 
         if *configured_controller_name != *controller_name {
             warn!("reconcile_gateway_class: Name don't match {configured_controller_name} {controller_name}");
@@ -105,10 +101,6 @@ impl GatewayClassController {
         info!(
             "reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} {resource_version:?}"
 	    );
-        debug!(
-            "reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} {resource_version:?} {:?}",
-            requested_gateway_class
-	    );
 
         let mut state = state.lock().await;
 
@@ -116,31 +108,20 @@ impl GatewayClassController {
 
         if let Some(stored_object) = maybe_added {
             if stored_object.metadata.resource_version == *resource_version {
-                debug!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} skipping as already processed, resource version is the same");
+                debug!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} {resource_version:?} skipping as already processed, resource version is the same");
                 return Err(ControllerError::AlreadyAdded);
             }
         }
 
-        match Self::check_state(&requested_gateway_class, maybe_added) {
-            GatewayClassState::PreviouslyProcessed => {
-                state
-                    .gateway_class_names
-                    .insert(id, Arc::clone(&requested_gateway_class));
-                drop(state);
-                info!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} Added without update");
-                Ok(Action::await_change())
-            }
+        let resource_state = Self::check_state(&gateway_class, maybe_added);
+        info!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} {resource_version:?} Resource state {resource_state:?}");
+        match resource_state {
+            ResourceState::Uptodate => Err(ControllerError::AlreadyAdded),
 
-            GatewayClassState::Added => {
-                info!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} Already added");
-                Err(ControllerError::AlreadyAdded)
-            }
+            ResourceState::New | ResourceState::Changed | ResourceState::SpecChanged => {
+                let updated_gateway_class = Self::update_gateway_class((*gateway_class).clone());
 
-            GatewayClassState::New => {
-                info!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} New ");
-                let updated_gateway_class = Self::update_gateway_class(&requested_gateway_class);
-
-                debug!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} patch new class {updated_gateway_class:?}");
+                debug!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} {resource_version:?} patch new ");
 
                 let patch_params = PatchParams::apply(configured_controller_name).force();
                 match Api::<GatewayClass>::all(client.clone())
@@ -152,50 +133,58 @@ impl GatewayClassController {
                     .await
                 {
                     Ok(_) => {
-                        info!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} patch result ok");
+                        info!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} {resource_version:?} patch result ok");
                         state
                             .gateway_class_names
                             .insert(id, Arc::new(updated_gateway_class));
                         drop(state);
-                        Ok(Action::requeue(Duration::from_secs(10)))
+                        Ok(Action::await_change())
                     }
                     Err(e) => {
-                        warn!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} patch failed {e:?}");
+                        warn!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} {resource_version:?} patch failed {e:?}");
                         Err(ControllerError::PatchFailed)
                     }
                 }
             }
 
-            GatewayClassState::Deleted => {
-                info!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} Deleted");
-                let _ = state.gateway_class_names.remove(&id);
+            ResourceState::Deleted => {
+                if state
+                    .get_gateways()
+                    .any(|g| *g.spec.gateway_class_name == resource_name)
+                {
+                    debug!("reconcile_gateway_class: {configured_controller_name} {controller_name} {id} {resource_name} {resource_version:?} can't delete since there are remaining gateways ");
+                    Err(ControllerError::ResourceInWrongState)
+                } else {
+                    let _ = state.gateway_class_names.remove(&id);
 
-                let api = Api::all(client.clone());
-                let res: std::result::Result<Action, finalizer::Error<_>> = finalizer::finalizer(
-                    &api,
-                    controller_name,
-                    Arc::clone(&requested_gateway_class),
-                    |event| async move {
-                        match event {
-                            finalizer::Event::Apply(_) | finalizer::Event::Cleanup(_) => {
-                                Result::<Action>::Ok(Action::await_change())
-                            }
-                        }
-                    },
-                )
-                .await;
+                    let api = Api::all(client.clone());
+                    let res: std::result::Result<Action, finalizer::Error<_>> =
+                        finalizer::finalizer(
+                            &api,
+                            GATEWAY_CLASS_FINALIZER_NAME,
+                            Arc::clone(&gateway_class),
+                            |event| async move {
+                                match event {
+                                    finalizer::Event::Apply(_) | finalizer::Event::Cleanup(_) => {
+                                        Result::<Action>::Ok(Action::await_change())
+                                    }
+                                }
+                            },
+                        )
+                        .await;
 
-                res.map_err(|e| ControllerError::FinalizerPatchFailed(e.to_string()))
+                    res.map_err(|e| ControllerError::FinalizerPatchFailed(e.to_string()))
+                }
             }
         }
     }
 
-    fn update_gateway_class(requested_gateway_class: &Arc<GatewayClass>) -> GatewayClass {
+    fn update_gateway_class(mut new_gateway_class: GatewayClass) -> GatewayClass {
         let mut conditions: Vec<Condition> = vec![];
         let new_condition = Condition {
             last_transition_time: Time(Utc::now()),
             message: "Updated by controller".to_owned(),
-            observed_generation: requested_gateway_class.metadata.generation,
+            observed_generation: new_gateway_class.metadata.generation,
             reason: "AcceptedByController".to_owned(),
             status: "True".to_owned(),
             type_: "Accepted".to_owned(),
@@ -205,19 +194,18 @@ impl GatewayClassController {
         let new_status = GatewayClassStatus {
             conditions: Some(conditions),
         };
-        let mut new_gateway_class = (**requested_gateway_class).clone();
         new_gateway_class.status = Some(new_status);
-        new_gateway_class.metadata = ObjectMeta::default();
+        new_gateway_class.metadata.managed_fields = None;
         new_gateway_class
     }
 
     fn check_state(
         gateway_class: &GatewayClass,
         maybe_added: Option<&Arc<GatewayClass>>,
-    ) -> GatewayClassState {
-        let state = GatewayClassState::from(ResourceState::check_state(gateway_class, maybe_added));
+    ) -> ResourceState {
+        let state = ResourceState::check_state(gateway_class, maybe_added);
 
-        if GatewayClassState::New != state {
+        if ResourceState::New != state {
             return state;
         }
         if let Some(status) = &gateway_class.status {
@@ -228,7 +216,7 @@ impl GatewayClassController {
                         && c.type_ == "Accepted"
                         && c.reason == "AcceptedByController"
                     {
-                        return GatewayClassState::PreviouslyProcessed;
+                        return ResourceState::Changed;
                     }
                 }
             }

@@ -3,7 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute,
 };
-
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd)]
@@ -55,6 +54,10 @@ impl State {
             self.gateways_by_id
                 .remove(&ResourceKey::from(gateway.as_ref()));
         }
+    }
+
+    pub fn get_gateways(&self) -> std::collections::hash_map::Values<'_, Uuid, Arc<Gateway>> {
+        self.gateways.values()
     }
 
     pub fn get_gateway_by_id(&self, id: Uuid) -> Option<&Arc<Gateway>> {

@@ -3,10 +3,12 @@ use std::{
     fmt::Display,
 };
 
-use futures::channel::oneshot;
-use log::{debug, info};
+use log::{debug, info, warn};
 use thiserror::Error;
-use tokio::sync::mpsc::{self, Receiver};
+use tokio::sync::{
+    mpsc::{self, Receiver},
+    oneshot,
+};
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum ListenerError {
@@ -17,12 +19,32 @@ pub enum ListenerError {
 }
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
+pub enum RouteError {
+    #[error("Unknown protocol")]
+    UnknownProtocol(String),
+    #[error("Route is not distinct")]
+    NotDistinct(String, i32, ProtocolType, Option<String>),
+}
+
+#[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum ListenerStatus {
     Added,
     Updated,
     AlreadyConfigured,
 }
+
+#[derive(Error, Debug, PartialEq, PartialOrd)]
+pub enum RouteStatus {
+    Attached,
+    Ignored,
+}
 impl std::fmt::Display for ListenerStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::fmt::Display for RouteStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
     }
@@ -49,6 +71,7 @@ pub struct ListenerConfig {
     name: String,
     port: i32,
     hostname: Option<String>,
+    routes: Vec<Route>,
 }
 
 impl ListenerConfig {
@@ -57,6 +80,7 @@ impl ListenerConfig {
             name,
             port,
             hostname,
+            routes: vec![],
         }
     }
 }
@@ -108,6 +132,61 @@ impl Listener {
             | Listener::Tls(config)
             | Listener::Udp(config) => config.hostname.as_ref(),
         }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub struct RouteConfig {
+    name: String,
+}
+
+impl RouteConfig {
+    pub fn new(name: String) -> Self {
+        Self { name }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub enum Route {
+    Http(RouteConfig),
+    Grpc(RouteConfig),
+}
+
+pub struct Gateway {
+    listeners: Listeners,
+}
+pub struct Gateways {
+    gateways: HashMap<String, Gateway>,
+}
+
+impl Gateways {
+    fn new() -> Self {
+        Self {
+            gateways: HashMap::new(),
+        }
+    }
+
+    pub fn update_listeners(
+        &mut self,
+        gateway_name: String,
+        listeners: Vec<Listener>,
+    ) -> Vec<(String, Result<ListenerStatus, ListenerError>)> {
+        if let Some(gateway) = self.gateways.get_mut(&gateway_name) {
+            gateway.listeners.update_listeners(listeners)
+        } else {
+            let mut gateway = Gateway {
+                listeners: Listeners::new(),
+            };
+            let updated = gateway.listeners.update_listeners(listeners);
+            self.gateways.insert(gateway_name, gateway);
+            updated
+        }
+    }
+
+    pub fn remove_listeners(&mut self, gateway: &str) {
+        if let Some(mut gateway) = self.gateways.remove(gateway) {
+            gateway.listeners.delete_listeners();
+        };
     }
 }
 
@@ -204,54 +283,96 @@ impl Listeners {
 }
 
 #[derive(Debug)]
-pub enum ListenerResponse {
-    Processed(Vec<(String, Result<ListenerStatus, ListenerError>)>),
-    Deleted,
+pub enum GatewayResponse {
+    GatewayProcessed(Vec<(String, Result<ListenerStatus, ListenerError>)>),
+    GatewayDeleted,
+    RouteProcessed(RouteStatus),
+    RouteDeleted,
 }
 
-pub enum ListenerEvent {
-    AddListeners((oneshot::Sender<ListenerResponse>, Vec<Listener>)),
-    DeleteAllListeners(oneshot::Sender<ListenerResponse>),
+pub enum GatewayEvent {
+    GatewayChanged((oneshot::Sender<GatewayResponse>, String, Vec<Listener>)),
+    GatewayDeleted((oneshot::Sender<GatewayResponse>, String)),
+    RouteChanged(
+        (
+            oneshot::Sender<GatewayResponse>,
+            String,
+            Vec<Listener>,
+            Route,
+        ),
+    ),
+    RouteRemoved((oneshot::Sender<GatewayResponse>, String, String)),
 }
 
-pub struct ListenerChannelHandler {
-    listeners: Listeners,
-    event_receiver: Receiver<ListenerEvent>,
+pub struct GatewayChannelHandler {
+    gateways: Gateways,
+    event_receiver: Receiver<GatewayEvent>,
 }
 
-impl ListenerChannelHandler {
-    pub fn new() -> (mpsc::Sender<ListenerEvent>, Self) {
+impl GatewayChannelHandler {
+    pub fn new() -> (mpsc::Sender<GatewayEvent>, Self) {
         let (sender, receiver) = mpsc::channel(1024);
         (
             sender,
             Self {
-                listeners: Listeners::new(),
+                gateways: Gateways::new(),
                 event_receiver: receiver,
             },
         )
     }
     pub async fn start(&mut self) {
-        info!("Listener handler started");
+        info!("Gateways handler started");
         loop {
             tokio::select! {
                     Some(event) = self.event_receiver.recv() => {
                          match event{
-                            ListenerEvent::AddListeners((response_sender, listeners)) => {
-                                let processed = self.listeners.update_listeners(listeners);
-                                let sent = response_sender.send(ListenerResponse::Processed(processed));
+                            GatewayEvent::GatewayChanged((response_sender, gateway, listeners)) => {
+                                let processed = self.gateways.update_listeners(gateway,listeners);
+                                let sent = response_sender.send(GatewayResponse::GatewayProcessed(processed));
                                 if let Err(e) = sent{
                                     info!("Listener handler closed {e:?}");
                                     return;
                                 }
                             }
 
-                            ListenerEvent::DeleteAllListeners(response_sender) => {
-                                self.listeners.delete_listeners();
-                                let sent = response_sender.send(ListenerResponse::Deleted);
+                            GatewayEvent::GatewayDeleted((response_sender, gateway)) => {
+                                self.gateways.remove_listeners(&gateway);
+                                let sent = response_sender.send(GatewayResponse::GatewayDeleted);
                                 if let Err(e) = sent{
                                     info!("Listener handler closed {e:?}");
                                     return;
                                 }
+                            }
+
+                            GatewayEvent::RouteChanged((response_sender, gateway, listeners, route)) => {
+                                let gateway_name = gateway;
+                                warn!("Route added {gateway_name:?} {route:?}");
+                                let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteStatus::Attached));
+                                if let Err(e) = sent{
+                                    info!("Listener handler closed {e:?}");
+                                    return;
+                                }
+                                // let processed = self.gateways.update_listeners(gateway,listeners);
+                                // let sent = response_sender.send(GatewayResponse::Processed(processed));
+                                // if let Err(e) = sent{
+                                //     info!("Listener handler closed {e:?}");
+                                //     return;
+                                // }
+                            }
+
+                            GatewayEvent::RouteRemoved((response_sender, gateway, route)) => {
+                                warn!("Route added {gateway} {route:?}");
+                                let sent = response_sender.send(GatewayResponse::RouteDeleted);
+                                if let Err(e) = sent{
+                                    info!("Listener handler closed {e:?}");
+                                    return;
+                                }
+                                // let processed = self.gateways.update_listeners(gateway,listeners);
+                                // let sent = response_sender.send(GatewayResponse::Processed(processed));
+                                // if let Err(e) = sent{
+                                //     info!("Listener handler closed {e:?}");
+                                //     return;
+                                // }
                             }
                         }
                     }

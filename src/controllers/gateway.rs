@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
-use futures::{channel::oneshot, future::BoxFuture, FutureExt, StreamExt};
-use gateway_api::apis::standard::gateways::{Gateway, GatewayListeners, GatewayStatus};
+use futures::{future::BoxFuture, FutureExt, StreamExt};
+use gateway_api::apis::standard::{
+    gatewayclasses::GatewayClass,
+    gateways::{Gateway, GatewayListeners, GatewayStatus},
+};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
@@ -11,15 +14,20 @@ use kube::{
     runtime::{controller::Action, finalizer, watcher::Config, Controller},
     Api, ResourceExt,
 };
-use kube_core::ObjectMeta;
 use log::{debug, info, warn};
-use tokio::sync::{mpsc, mpsc::Sender, Mutex};
+use tokio::sync::{
+    mpsc::{self, Sender},
+    oneshot, Mutex,
+};
 use uuid::Uuid;
 
-use super::{utils::ResourceState, ControllerError, RECONCILE_WAIT};
+use super::{
+    utils::ResourceState, ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT,
+    RECONCILE_LONG_WAIT,
+};
 use crate::{
-    controllers::utils::VerifiyItems,
-    listener::{Listener, ListenerConfig, ListenerError, ListenerEvent},
+    backends::gateways::{GatewayEvent, GatewayResponse, Listener, ListenerConfig, ListenerError},
+    controllers::utils::{MetadataPatcher, VerifiyItems},
     state::{ResourceKey, State, DEFAULT_GROUP_NAME, DEFAULT_KIND_NAME, DEFAULT_NAMESPACE_NAME},
 };
 
@@ -29,34 +37,18 @@ type Result<T, E = ControllerError> = std::result::Result<T, E>;
 struct Context {
     client: kube::Client,
     controller_name: String,
-    listener_sender: mpsc::Sender<ListenerEvent>,
+    gateway_channel_sender: mpsc::Sender<GatewayEvent>,
     state: Arc<Mutex<State>>,
 }
 
 pub struct GatewayController {
     pub controller_name: String,
-    listener_sender: mpsc::Sender<ListenerEvent>,
+    gateway_channel_sender: mpsc::Sender<GatewayEvent>,
     client: kube::Client,
     api: Api<Gateway>,
     state: Arc<Mutex<State>>,
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-enum GatewayState {
-    New,
-    PreviouslyProcessed,
-    Added,
-    Deleted,
-}
-impl From<ResourceState> for GatewayState {
-    fn from(value: ResourceState) -> Self {
-        match value {
-            ResourceState::Existing => GatewayState::Added,
-            ResourceState::NotSeenBefore => GatewayState::New,
-            ResourceState::Deleted => GatewayState::Deleted,
-        }
-    }
-}
 impl From<&Gateway> for ResourceKey {
     fn from(value: &Gateway) -> Self {
         let namespace = value
@@ -102,13 +94,13 @@ impl TryFrom<&GatewayListeners> for Listener {
 impl GatewayController {
     pub(crate) fn new(
         controller_name: String,
-        listener_sender: mpsc::Sender<ListenerEvent>,
+        gateway_channel_sender: mpsc::Sender<GatewayEvent>,
         client: kube::Client,
         state: Arc<Mutex<State>>,
     ) -> Self {
         GatewayController {
             controller_name,
-            listener_sender,
+            gateway_channel_sender,
             api: Api::all(client.clone()),
             client,
             state,
@@ -118,7 +110,7 @@ impl GatewayController {
         let context = Arc::new(Context {
             client: self.client.clone(),
             controller_name: self.controller_name.clone(),
-            listener_sender: self.listener_sender.clone(),
+            gateway_channel_sender: self.gateway_channel_sender.clone(),
             state: Arc::clone(&self.state),
         });
 
@@ -133,14 +125,25 @@ impl GatewayController {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn error_policy<T>(_object: Arc<T>, _err: &ControllerError, _ctx: Arc<Context>) -> Action {
-        Action::requeue(RECONCILE_WAIT)
+    fn error_policy<T>(_object: Arc<T>, err: &ControllerError, _ctx: Arc<Context>) -> Action {
+        match err {
+            ControllerError::PatchFailed
+            | ControllerError::AlreadyAdded
+            | ControllerError::InvalidPayload(_)
+            | ControllerError::InvalidRecipent
+            | ControllerError::FinalizerPatchFailed(_)
+            | ControllerError::BackendError
+            | ControllerError::UnknownResource => Action::requeue(RECONCILE_LONG_WAIT),
+            ControllerError::UnknownGatewayClass(_) | ControllerError::ResourceInWrongState => {
+                Action::requeue(RECONCILE_ERROR_WAIT)
+            }
+        }
     }
 
     async fn reconcile_gateway(gateway: Arc<Gateway>, ctx: Arc<Context>) -> Result<Action> {
         let client = &ctx.client;
         let controller_name = &ctx.controller_name;
-        let sender = &ctx.listener_sender;
+        let sender = &ctx.gateway_channel_sender;
         let gateway_class_name = &gateway.spec.gateway_class_name;
         let resource_name = gateway.name_any();
         let resource_version = &gateway.metadata.resource_version;
@@ -155,10 +158,6 @@ impl GatewayController {
         info!(
             "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?}",
         );
-        debug!(
-            "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} {:?}",
-            gateway
-        );
 
         let mut state = state.lock().await;
         let maybe_added = state.get_gateway_by_id(id);
@@ -169,19 +168,29 @@ impl GatewayController {
             .any(|gc| gc.metadata.name == Some(gateway_class_name.to_string()))
         {
             warn!("reconcile_gateway: {controller_name} {gateway_class_name} {resource_name} Unknown gateway class name {gateway_class_name}");
-            return Err(ControllerError::InvalidPayload(format!(
-                "Unknown gateway class name {gateway_class_name}"
-            )));
+            return Err(ControllerError::UnknownGatewayClass(
+                gateway_class_name.clone(),
+            ));
         }
 
-        let api: Api<Gateway> = Api::namespaced(client.clone(), "default");
+        let api = Api::<Gateway>::namespaced(
+            client.clone(),
+            &gateway
+                .metadata
+                .namespace
+                .clone()
+                .unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
+        );
+        let resource_state = Self::check_state(&gateway, maybe_added);
+        info!(
+            "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} Resource state {resource_state:?}",                
+        );
+        match resource_state {
+            ResourceState::Uptodate => Err(ControllerError::AlreadyAdded),
 
-        match Self::check_state(&gateway, maybe_added) {
-            GatewayState::PreviouslyProcessed => {
-                info!(
-                    "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} previously processed",                
-                );
-                Self::process_listeners(
+            ResourceState::New | ResourceState::Changed | ResourceState::SpecChanged => {
+                let configured_gateway = (*gateway).clone();
+                let gateway_status = Self::update_gateway(
                     &(
                         controller_name,
                         gateway_class_name,
@@ -194,28 +203,9 @@ impl GatewayController {
                 )
                 .await;
 
-                state.save_gateway(id, &Arc::clone(&gateway));
-
-                Ok(Action::await_change())
-            }
-
-            GatewayState::Added => {
-                info!(
-                    "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} already added",                
-                );
-                Err(ControllerError::AlreadyAdded)
-            }
-
-            GatewayState::New => {
-                info!(
-                    "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} new",                
-                );
-
-                let updated_gateway = Self::update_gateway(&gateway);
-                debug!(
-            "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} patch new gateway {updated_gateway:?}");
-
-                let patch_params = PatchParams::apply(controller_name).force();
+                let updated_gateway: Gateway =
+                    Self::update_gateway_status(configured_gateway, gateway_status);
+                let patch_params = PatchParams::apply(controller_name);
 
                 match api
                     .patch_status(
@@ -228,20 +218,44 @@ impl GatewayController {
                     Ok(new_gateway) => {
                         info!(
                     "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} patch status result ok");
-                        Self::process_listeners(
-                            &(
-                                controller_name,
-                                gateway_class_name,
-                                id,
-                                &resource_name,
-                                resource_version,
-                            ),
-                            sender,
-                            &gateway,
+
+                        state.save_gateway(id, &Arc::new(new_gateway));
+                        let gateway_class_api = Api::<GatewayClass>::all(client.clone());
+                        let res = MetadataPatcher::patch_finalizer(
+                            &gateway_class_api,
+                            gateway_class_name,
+                            controller_name,
+                            GATEWAY_CLASS_FINALIZER_NAME,
                         )
                         .await;
-                        state.save_gateway(id, &Arc::new(new_gateway));
-                        Ok(Action::requeue(RECONCILE_WAIT))
+
+                        if res.is_err() {
+                            warn!("reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} couldn't patch gateway class name {res:?}");
+                        }
+
+                        let res = MetadataPatcher::patch_finalizer(
+                            &api,
+                            &resource_name,
+                            controller_name,
+                            controller_name,
+                        )
+                        .await;
+
+                        match res {
+                            Ok(()) => {
+                                info!(
+                    "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} meta patch status result ok");
+                                if res.is_err() {
+                                    warn!("reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} couldn't patch meta");
+                                }
+                                Ok(Action::requeue(RECONCILE_LONG_WAIT))
+                            }
+                            Err(e) => {
+                                warn!(
+                    "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} patch status failed {e:?}");
+                                Err(ControllerError::PatchFailed)
+                            }
+                        }
                     }
                     Err(e) => {
                         warn!(
@@ -251,12 +265,9 @@ impl GatewayController {
                 }
             }
 
-            GatewayState::Deleted => {
-                info!(
-                    "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} deleted",                
-                );
+            ResourceState::Deleted => {
                 state.delete_gateway(id);
-                Self::delete_listeners(
+                Self::delete_gateway(
                     &(
                         controller_name,
                         gateway_class_name,
@@ -286,11 +297,11 @@ impl GatewayController {
         }
     }
 
-    fn check_state(gateway: &Gateway, maybe_added: Option<&Arc<Gateway>>) -> GatewayState {
-        let gateway_state = GatewayState::from(ResourceState::check_state(gateway, maybe_added));
+    fn check_state(gateway: &Gateway, maybe_added: Option<&Arc<Gateway>>) -> ResourceState {
+        let state = ResourceState::check_state(gateway, maybe_added);
 
-        if GatewayState::New != gateway_state {
-            return gateway_state;
+        if ResourceState::New != state {
+            return state;
         }
 
         if let Some(status) = gateway.status.as_ref() {
@@ -305,16 +316,16 @@ impl GatewayController {
                             == gateway_api::apis::standard::constants::GatewayConditionReason::Ready
                                 .to_string()
                     {
-                        return GatewayState::PreviouslyProcessed;
+                        return ResourceState::Changed;
                     }
                 }
             }
         };
 
-        gateway_state
+        state
     }
 
-    fn update_gateway(gateway: &Arc<Gateway>) -> Gateway {
+    fn update_gateway_status(mut gateway: Gateway, mut gateway_status: GatewayStatus) -> Gateway {
         let mut conditions: Vec<Condition> = vec![];
 
         let new_condition = Condition {
@@ -327,22 +338,17 @@ impl GatewayController {
             type_: gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string(),
         };
         conditions.push(new_condition);
-        let new_status = GatewayStatus {
-            conditions: Some(conditions),
-            addresses: None,
-            listeners: Some(vec![]),
-        };
-        let mut configured_gateway = (**gateway).clone();
-        configured_gateway.status = Some(new_status);
-        configured_gateway.metadata = ObjectMeta::default();
-        configured_gateway
+        gateway_status.conditions = Some(conditions);
+        gateway.status = Some(gateway_status);
+        gateway.metadata.managed_fields = None;
+        gateway
     }
 
-    async fn process_listeners(
+    async fn update_gateway(
         ctx: &(&String, &String, Uuid, &String, &Option<String>),
-        sender: &Sender<ListenerEvent>,
+        sender: &Sender<GatewayEvent>,
         gateway: &Arc<Gateway>,
-    ) {
+    ) -> GatewayStatus {
         let (controller_name, gateway_class_name, id, resource_name, resource_version) = ctx;
         let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) =
             VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
@@ -356,44 +362,90 @@ impl GatewayController {
         }
 
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = ListenerEvent::AddListeners((response_sender, listeners));
+        let listener_event = GatewayEvent::GatewayChanged((
+            response_sender,
+            (*resource_name).to_string(),
+            listeners,
+        ));
         let _ = sender.send(listener_event).await;
         let response = response_receiver.await;
-        if let Ok(crate::listener::ListenerResponse::Processed(processed)) = response {
-            for (_configured_name, status) in processed {
+        if let Ok(GatewayResponse::GatewayProcessed(processed)) = response {
+            for (configured_name, status) in processed {
                 match status {
                     Ok(good) => {
                         debug!(
-                            "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} Gateway added listeners {good:?}",
+                            "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} Gateway added listeners {configured_name} {good:?}",
                         );
                     }
                     Err(bad) => {
                         debug!(
-                            "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} Gateway misconfigured listeners {bad:?}");
+                            "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} Gateway misconfigured listeners {configured_name} {bad:?}");
                     }
                 }
             }
+            GatewayStatus::default()
         } else {
             warn!(
                 "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} {response:?} ... Problem"
             );
+            GatewayStatus::default()
         }
     }
 
-    async fn delete_listeners(
+    async fn delete_gateway(
         ctx: &(&String, &String, Uuid, &String, &Option<String>),
-        sender: &Sender<ListenerEvent>,
+        sender: &Sender<GatewayEvent>,
     ) {
         let (controller_name, gateway_class_name, id, resource_name, resource_version) = ctx;
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = ListenerEvent::DeleteAllListeners(response_sender);
-        let _ = sender.send(listener_event).await;
+        let gateway_event =
+            GatewayEvent::GatewayDeleted((response_sender, (*resource_name).to_string()));
+        let _ = sender.send(gateway_event).await;
         let response = response_receiver.await;
-        if let Ok(crate::listener::ListenerResponse::Deleted) = response {
+        if let Ok(GatewayResponse::GatewayDeleted) = response {
         } else {
             warn!(
                 "reconcile_gateway: {controller_name} {gateway_class_name} {id} {resource_name} {resource_version:?} {response:?} ... Problem "
             );
         }
     }
+
+    // async fn add_gateway_class_finalizer(
+    //     client: &Client,
+    //     resource_name: &str,
+    //     controller_name: &str,
+    // ) -> Result<()> {
+    //     let api = Api::<GatewayClass>::all(client.clone());
+    //     let maybe_meta = api.get_metadata(resource_name).await;
+    //     debug!("add_gateway_class_finalizer {resource_name} {controller_name}");
+    //     if let Ok(mut meta) = maybe_meta {
+    //         let finalizers = meta.finalizers_mut();
+
+    //         if finalizers.contains(&GATEWAY_CLASS_FINALIZER_NAME.to_owned()) {
+    //             Ok(())
+    //         } else {
+    //             finalizers.push(GATEWAY_CLASS_FINALIZER_NAME.to_owned());
+    //             let mut object_meta = meta.meta().clone();
+    //             object_meta.managed_fields = None;
+    //             let meta = object_meta.into_request_partial::<GatewayClass>();
+
+    //             match api
+    //                 .patch_metadata(
+    //                     resource_name,
+    //                     &PatchParams::apply(controller_name),
+    //                     &Patch::Apply(&meta),
+    //                 )
+    //                 .await
+    //             {
+    //                 Ok(_) => Ok(()),
+    //                 Err(e) => {
+    //                     warn!("reconcile_gateway_class: {controller_name} {resource_name} patch failed {e:?}");
+    //                     Err(ControllerError::PatchFailed)
+    //                 }
+    //             }
+    //         }
+    //     } else {
+    //         Err(ControllerError::UnknownResource)
+    //     }
+    // }
 }
