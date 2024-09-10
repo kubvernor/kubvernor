@@ -1,8 +1,8 @@
 use clap::Parser;
-use kubevernor::{start, Args};
+use kubvernor::{start, Args};
 
 #[tokio::main]
-async fn main() -> kubevernor::Result<()> {
+async fn main() -> kubvernor::Result<()> {
     let args = Args::parse();
     env_logger::init();
     start(args).await

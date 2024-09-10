@@ -290,9 +290,8 @@ impl HttpRouteController {
         if let Some(stored_route) = stored_route {
             if route.spec == stored_route.spec {
                 return ResourceState::Uptodate;
-            } else {
-                return ResourceState::SpecChanged;
             }
+            return ResourceState::SpecChanged;
         }
 
         if let Some(status) = route.status.as_ref() {
