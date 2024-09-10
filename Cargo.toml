@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 futures = "0.3"
-gateway-api = { version = "0.10.0", path = "../gateway-api-rs/gateway-api" }
+gateway-api = { version = "0.10.0", git = "https://github.com/dawid-nowak/gateway-api-rs" , branch = "dependency_bump" }
 k8s-openapi = { version = "0.22", features = ["v1_29", "schemars"] }
 kube = { version = "0.93", features = ["runtime", "client", "derive"] }
 thiserror = "1.0.63"

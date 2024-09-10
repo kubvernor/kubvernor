@@ -374,9 +374,9 @@ dependencies = [
 
 [[package]]
 name = "delegate"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e018fccbeeb50ff26562ece792ed06659b9c2dae79ece77c4456bb10d9bf79b"
+checksum = "5060bb0febb73fa907273f8a7ed17ab4bf831d585eac835b28ec24a1e2460956"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -582,6 +582,7 @@ dependencies = [
 [[package]]
 name = "gateway-api"
 version = "0.10.0"
+source = "git+https://github.com/dawid-nowak/gateway-api-rs?branch=dependency_bump#8caf11c17faeb910a4613a3af53fe661680b504f"
 dependencies = [
  "delegate",
  "k8s-openapi",
@@ -1018,7 +1019,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kubevernor"
+name = "kubvernor"
 version = "0.1.0"
 dependencies = [
  "clap",
