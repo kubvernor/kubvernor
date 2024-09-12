@@ -3,6 +3,8 @@ use std::{collections::HashMap, sync::Arc};
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute,
 };
+use kube::Resource;
+use multimap::MultiMap;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd)]
@@ -28,19 +30,21 @@ impl Default for ResourceKey {
 }
 
 pub struct State {
-    pub gateway_class_names: HashMap<Uuid, Arc<GatewayClass>>,
+    gateway_classes: HashMap<Uuid, Arc<GatewayClass>>,
     gateways: HashMap<Uuid, Arc<Gateway>>,
     gateways_by_id: HashMap<ResourceKey, Arc<Gateway>>,
     http_routes: HashMap<Uuid, Arc<HTTPRoute>>,
+    gateways_with_routes: MultiMap<Uuid, Arc<HTTPRoute>>,
 }
 
 impl State {
     pub fn new() -> Self {
         Self {
-            gateway_class_names: HashMap::new(),
+            gateway_classes: HashMap::new(),
             gateways: HashMap::new(),
             gateways_by_id: HashMap::new(),
             http_routes: HashMap::new(),
+            gateways_with_routes: MultiMap::new(),
         }
     }
     pub fn save_gateway(&mut self, id: Uuid, gateway: &Arc<Gateway>) {
@@ -70,8 +74,42 @@ impl State {
 
     pub fn save_http_route(&mut self, id: Uuid, route: &Arc<HTTPRoute>) {
         self.http_routes.insert(id, Arc::clone(route));
-        // self.gateways_by_id
-        //     .insert(ResourceKey::from(gateway.as_ref()), Arc::clone(gateway));
+    }
+
+    pub fn attach_http_route_to_gateway(&mut self, gateway_id: Uuid, route: &Arc<HTTPRoute>) {
+        self.gateways_with_routes
+            .insert(gateway_id, Arc::clone(route));
+    }
+
+    pub fn detach_http_route_from_gateway(&mut self, gateway_id: Uuid, route_id: &Uuid) {
+        if let Some(routes) = self.gateways_with_routes.get_vec_mut(&gateway_id) {
+            routes.retain(|f| f.meta().uid != Some(route_id.to_string()));
+        }
+    }
+
+    pub fn get_http_routes_attached_to_gateway(
+        &self,
+        gateway_id: Uuid,
+    ) -> Option<&Vec<Arc<HTTPRoute>>> {
+        self.gateways_with_routes.get_vec(&gateway_id)
+    }
+
+    pub fn save_gateway_class(&mut self, id: Uuid, gateway_class: &Arc<GatewayClass>) {
+        self.gateway_classes.insert(id, Arc::clone(gateway_class));
+    }
+
+    pub fn get_gateway_class_by_id(&self, id: Uuid) -> Option<&Arc<GatewayClass>> {
+        self.gateway_classes.get(&id)
+    }
+
+    pub fn get_gateway_classes(
+        &self,
+    ) -> std::collections::hash_map::Values<'_, Uuid, Arc<GatewayClass>> {
+        self.gateway_classes.values()
+    }
+
+    pub fn delete_gateway_class(&mut self, id: Uuid) {
+        self.gateway_classes.remove(&id);
     }
 
     pub fn delete_http_route(&mut self, id: Uuid) {

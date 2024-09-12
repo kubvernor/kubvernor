@@ -2,7 +2,7 @@ use std::time::Duration;
 pub mod gateway;
 pub mod gateway_class;
 pub mod http_route;
-//mod resource_handler;
+mod resource_handler;
 mod utils;
 
 #[allow(dead_code)]

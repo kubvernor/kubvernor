@@ -46,19 +46,9 @@ impl Display for ProtocolType {
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct RouteConfig {
-    name: String,
-    port: i32,
-    hostname: Option<String>,
-}
-
-impl RouteConfig {
-    pub fn new(name: String, port: i32, hostname: Option<String>) -> Self {
-        Self {
-            name,
-            port,
-            hostname,
-        }
-    }
+    pub name: String,
+    pub port: i32,
+    pub hostname: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]

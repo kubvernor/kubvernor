@@ -2,39 +2,25 @@ use std::sync::Arc;
 
 use kube::{
     api::{Patch, PatchParams},
+    runtime::{
+        controller::Action,
+        finalizer::{self, Error},
+    },
     Api, Resource, ResourceExt,
 };
 use kube_core::{PartialObjectMeta, PartialObjectMetaExt};
 use log::{debug, warn};
+use serde::Serialize;
 
 use crate::controllers::ControllerError;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum ResourceState {
     New,
-    Changed,
-    Uptodate,
+    SpecUnchanged,
     Deleted,
     SpecChanged,
-}
-
-impl ResourceState {
-    pub fn check_state(
-        resource: &impl ResourceExt,
-        maybe_added: Option<&Arc<impl ResourceExt>>,
-    ) -> ResourceState {
-        if !resource.finalizers().is_empty() && resource.meta().deletion_timestamp.is_some() {
-            return ResourceState::Deleted;
-        }
-
-        if let Some(stored_object) = maybe_added {
-            if stored_object.meta().resource_version == resource.meta().resource_version {
-                return ResourceState::Uptodate;
-            }
-        }
-
-        ResourceState::New
-    }
+    VersionUnchanged,
 }
 
 pub struct VerifiyItems;
@@ -53,9 +39,9 @@ impl VerifiyItems {
     }
 }
 
-pub struct MetadataPatcher {}
+pub struct FinalizerPatcher {}
 
-impl MetadataPatcher {
+impl FinalizerPatcher {
     pub async fn patch_finalizer<T>(
         api: &Api<T>,
         resource_name: &str,
@@ -101,5 +87,68 @@ impl MetadataPatcher {
         } else {
             Err(ControllerError::UnknownResource)
         }
+    }
+}
+
+pub type SpecCheckerArgs<'a, T> = (&'a Arc<T>, Arc<T>);
+pub type SpecChecker<T> = fn(args: SpecCheckerArgs<T>) -> ResourceState;
+
+pub struct ResourceStateChecker {}
+
+impl ResourceStateChecker {
+    pub fn check_status<R>(
+        resource: &Arc<R>,
+        maybe_stored_resource: Option<Arc<R>>,
+        resource_spec_checker: SpecChecker<R>,
+    ) -> ResourceState
+    where
+        R: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug,
+        R: ResourceExt,
+        R: Resource<DynamicType = ()>,
+    {
+        if !resource.finalizers().is_empty() && resource.meta().deletion_timestamp.is_some() {
+            return ResourceState::Deleted;
+        }
+
+        if let Some(stored_object) = maybe_stored_resource {
+            if stored_object.meta().resource_version == resource.meta().resource_version {
+                return ResourceState::VersionUnchanged;
+            }
+            resource_spec_checker((resource, stored_object))
+        } else {
+            ResourceState::New
+        }
+    }
+}
+
+pub struct ResourceFinalizer {}
+
+impl ResourceFinalizer {
+    pub async fn delete_resource<R, ReconcileErr>(
+        api: &Api<R>,
+        finalizer_name: &str,
+        resource: &Arc<R>,
+    ) -> std::result::Result<Action, Error<ReconcileErr>>
+    where
+        R: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug,
+        R: ResourceExt,
+        R: Resource<DynamicType = ()>,
+        R: Serialize,
+        ReconcileErr: std::error::Error + 'static,
+    {
+        let res: std::result::Result<Action, Error<_>> = finalizer::finalizer(
+            api,
+            finalizer_name,
+            Arc::clone(resource),
+            |event| async move {
+                match event {
+                    finalizer::Event::Apply(_) | finalizer::Event::Cleanup(_) => {
+                        Result::<Action, ReconcileErr>::Ok(Action::await_change())
+                    }
+                }
+            },
+        )
+        .await;
+        res
     }
 }

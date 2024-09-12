@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::apis::standard::{
     gateways::{Gateway, GatewayListeners},
@@ -26,10 +27,14 @@ use tokio::sync::{
 };
 use uuid::Uuid;
 
-use super::{utils::ResourceState, ControllerError, RECONCILE_LONG_WAIT};
+use super::{
+    resource_handler::ResourceHandler,
+    utils::{ResourceState, SpecCheckerArgs},
+    ControllerError, RECONCILE_LONG_WAIT,
+};
 use crate::{
     backends::gateways::{GatewayEvent, GatewayResponse, Listener, Route, RouteConfig},
-    controllers::utils::MetadataPatcher,
+    controllers::utils::{FinalizerPatcher, ResourceFinalizer},
     state::{ResourceKey, State, DEFAULT_GROUP_NAME, DEFAULT_KIND_NAME, DEFAULT_NAMESPACE_NAME},
 };
 
@@ -109,219 +114,197 @@ impl HttpRouteController {
     }
 
     async fn reconcile_http_route(
-        route: Arc<httproutes::HTTPRoute>,
+        resource: Arc<httproutes::HTTPRoute>,
         ctx: Arc<Context>,
     ) -> Result<Action> {
         let client = &ctx.client;
-        let controller_name = &ctx.controller_name;
-        let resource_version = &route.metadata.resource_version;
-        let resource_name = route.name_any();
-        let state = &ctx.state;
-        let sender = &ctx.gateway_channel_sender;
+        let controller_name = ctx.controller_name.clone();
 
-        let id = Uuid::parse_str(&route.metadata.uid.clone().ok_or(
-            ControllerError::InvalidPayload("Uid must be present".to_owned()),
-        )?)
-        .map_err(|e| ControllerError::InvalidPayload(format!("Uid in wrong format {e}")))?;
+        let Some(name) = resource.meta().name.clone() else {
+            return Err(ControllerError::InvalidPayload(
+                "Resource name is not provided".to_owned(),
+            ));
+        };
 
-        info!("reconcile_route: {controller_name} {id} {resource_name} {resource_version:?}");
+        let Some(maybe_id) = resource.metadata.uid.clone() else {
+            return Err(ControllerError::InvalidPayload(
+                "Uid must be present".to_owned(),
+            ));
+        };
 
-        let mut state = state.lock().await;
-        let stored_route = state.get_http_route_by_id(id);
+        let Ok(id) = Uuid::parse_str(&maybe_id) else {
+            return Err(ControllerError::InvalidPayload(
+                "Uid in wrong format".to_owned(),
+            ));
+        };
 
-        let route_state = Self::check_state(&route, stored_route);
-        info!(
-            "reconcile_route: {controller_name} {id} {resource_name} {resource_version:?} {route_state:?}",
-        );
-        let api = Api::<HTTPRoute>::namespaced(
+        let state = Arc::clone(&ctx.state);
+        let version = resource.meta().resource_version.clone();
+
+        let maybe_stored_route = {
+            let state = state.lock().await;
+            state.get_http_route_by_id(id).cloned()
+        };
+
+        let api = Api::namespaced(
             client.clone(),
-            &route
-                .metadata
+            &resource
+                .meta()
                 .namespace
                 .clone()
                 .unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
         );
 
-        match route_state {
-            ResourceState::New | ResourceState::Changed | ResourceState::SpecChanged => {
-                let empty = vec![];
-                let parent_gateway_refs = route.spec.parent_refs.as_ref().unwrap_or(&empty);
-                let gateways: Vec<(Arc<Gateway>, Vec<GatewayListeners>)> = parent_gateway_refs
-                    .iter()
-                    .map(|parent_ref| {
-                        (
-                            parent_ref,
-                            route
-                                .metadata
-                                .namespace
-                                .clone()
-                                .unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
-                        )
-                    })
-                    .map(|(parent_ref, namespace)| {
-                        (parent_ref, ResourceKey::from((parent_ref, namespace)))
-                    })
-                    .map(|(parent_ref, key)| {
-                        (parent_ref, state.get_gateway_by_resource(&key).cloned())
-                    })
-                    .filter_map(|(parent_ref, maybe_gateway)| {
-                        if let Some(gateway) = maybe_gateway {
-                            match (parent_ref.port, &parent_ref.section_name) {
-                                (Some(port), Some(section_name)) => Some((
-                                    Arc::clone(&gateway),
-                                    Self::filter_listeners_by_name_or_port(&gateway, |gl| {
-                                        gl.port == port && gl.name == *section_name
-                                    }),
-                                )),
-                                (Some(port), None) => Some((
-                                    Arc::clone(&gateway),
-                                    Self::filter_listeners_by_name_or_port(&gateway, |gl| {
-                                        gl.port == port
-                                    }),
-                                )),
-                                (None, Some(section_name)) => Some((
-                                    Arc::clone(&gateway),
-                                    Self::filter_listeners_by_name_or_port(&gateway, |gl| {
-                                        gl.name == *section_name
-                                    }),
-                                )),
-                                (None, None) => Some((
-                                    Arc::clone(&gateway),
-                                    Self::filter_listeners_by_name_or_port(&gateway, |_| true),
-                                )),
-                            }
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                let ctx = &(controller_name, id, &resource_name, resource_version);
-
-                let mut parents = vec![];
-                for (gateway, listeners) in gateways {
-                    if let Ok(status) =
-                        Self::update_route(ctx, sender, &gateway, &listeners, &route).await
-                    {
-                        debug!("Added to parents {status:?}");
-                        state.save_http_route(id, &route);
-                        parents.push(status);
-                    }
-                }
-                let route_status = HTTPRouteStatus { parents };
-                let mut updated_route = (*route).clone();
-                updated_route.metadata.managed_fields = None;
-                updated_route.status = Some(route_status);
-
-                let patch_params = PatchParams::apply(controller_name).force();
-
-                let res = api
-                    .patch_status(
-                        &route.name_any(),
-                        &patch_params,
-                        &Patch::Apply(updated_route),
-                    )
-                    .await;
-                match res {
-                    Ok(_updated_route) => {
-                        let _res = MetadataPatcher::patch_finalizer(
-                            &api,
-                            &resource_name,
-                            controller_name,
-                            controller_name,
-                        )
-                        .await;
-                        Ok(Action::await_change())
-                    }
-
-                    Err(e) => {
-                        info!(
-                            "reconcile_route: {controller_name} {id} {resource_name} {resource_version:?} {route_state:?} {e}",
-                        );
-                        Err(ControllerError::PatchFailed)
-                    }
-                }
-            }
-
-            ResourceState::Uptodate => Err(ControllerError::AlreadyAdded),
-
-            ResourceState::Deleted => {
-                state.delete_http_route(id);
-                let res: std::result::Result<Action, finalizer::Error<_>> = finalizer::finalizer(
-                    &api,
-                    controller_name,
-                    Arc::clone(&route),
-                    |event| async move {
-                        match event {
-                            finalizer::Event::Apply(_) | finalizer::Event::Cleanup(_) => {
-                                Result::<Action>::Ok(Action::await_change())
-                            }
-                        }
-                    },
-                )
-                .await;
-                res.map_err(|e| ControllerError::FinalizerPatchFailed(e.to_string()))
-            }
-        }
-    }
-
-    fn filter_listeners_by_name_or_port<F>(
-        gateway: &Arc<Gateway>,
-        filter: F,
-    ) -> Vec<GatewayListeners>
-    where
-        F: Fn(&GatewayListeners) -> bool,
-    {
-        gateway
-            .spec
-            .listeners
-            .iter()
-            .filter(|f| filter(f))
-            .cloned()
-            .collect()
-    }
-
-    fn check_state(route: &HTTPRoute, stored_route: Option<&Arc<HTTPRoute>>) -> ResourceState {
-        let state = ResourceState::check_state(route, stored_route);
-
-        if ResourceState::New != state {
-            return state;
-        }
-
-        if let Some(stored_route) = stored_route {
-            if route.spec == stored_route.spec {
-                return ResourceState::Uptodate;
-            }
-            return ResourceState::SpecChanged;
-        }
-
-        if let Some(status) = route.status.as_ref() {
-            if !status.parents.is_empty() {
-                return ResourceState::Changed;
-            }
+        let handler = HTTPRouteHandler {
+            state: Arc::clone(&ctx.state),
+            id,
+            controller_name: controller_name.clone(),
+            resource,
+            name,
+            version,
+            api,
+            gateway_channel_sender: ctx.gateway_channel_sender.clone(),
         };
+        handler.process(maybe_stored_route, Self::check_spec).await
+    }
 
-        state
+    fn check_spec(args: SpecCheckerArgs<HTTPRoute>) -> ResourceState {
+        let (resource, stored_resource) = args;
+        if resource.spec == stored_resource.spec {
+            ResourceState::SpecUnchanged
+        } else {
+            ResourceState::SpecChanged
+        }
+    }
+}
+
+struct HTTPRouteHandler<R> {
+    state: Arc<Mutex<State>>,
+    id: Uuid,
+    controller_name: String,
+    resource: Arc<R>,
+    name: String,
+    version: Option<String>,
+    api: Api<R>,
+    gateway_channel_sender: mpsc::Sender<GatewayEvent>,
+}
+
+impl HTTPRouteHandler<HTTPRoute> {
+    async fn on_new_or_changed(
+        &self,
+        id: Uuid,
+        resource: &Arc<HTTPRoute>,
+        state: &mut State,
+    ) -> Result<Action> {
+        let log_context = self.log_context();
+        let controller_name = &self.controller_name;
+        let api = &self.api;
+        let name = &self.name;
+        let gateway_channel_sender = &self.gateway_channel_sender;
+
+        let empty = vec![];
+        let parent_gateway_refs = resource.spec.parent_refs.as_ref().unwrap_or(&empty);
+        let gateways: Vec<(Arc<Gateway>, Vec<GatewayListeners>)> = parent_gateway_refs
+            .iter()
+            .map(|parent_ref| {
+                (
+                    parent_ref,
+                    resource
+                        .meta()
+                        .namespace
+                        .clone()
+                        .unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
+                )
+            })
+            .map(|(parent_ref, namespace)| (parent_ref, ResourceKey::from((parent_ref, namespace))))
+            .map(|(parent_ref, key)| (parent_ref, state.get_gateway_by_resource(&key).cloned()))
+            .filter_map(|(parent_ref, maybe_gateway)| {
+                if let Some(gateway) = maybe_gateway {
+                    match (parent_ref.port, &parent_ref.section_name) {
+                        (Some(port), Some(section_name)) => Some((
+                            Arc::clone(&gateway),
+                            Self::filter_listeners_by_name_or_port(&gateway, |gl| {
+                                gl.port == port && gl.name == *section_name
+                            }),
+                        )),
+                        (Some(port), None) => Some((
+                            Arc::clone(&gateway),
+                            Self::filter_listeners_by_name_or_port(&gateway, |gl| gl.port == port),
+                        )),
+                        (None, Some(section_name)) => Some((
+                            Arc::clone(&gateway),
+                            Self::filter_listeners_by_name_or_port(&gateway, |gl| {
+                                gl.name == *section_name
+                            }),
+                        )),
+                        (None, None) => Some((
+                            Arc::clone(&gateway),
+                            Self::filter_listeners_by_name_or_port(&gateway, |_| true),
+                        )),
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut parents = vec![];
+        for (gateway, listeners) in gateways {
+            if let Ok(status) = self
+                .update_route(gateway_channel_sender, &gateway, &listeners, resource)
+                .await
+            {
+                debug!("{log_context} Added to parents {status:?}");
+                state.save_http_route(id, resource);
+                parents.push(status);
+            }
+        }
+
+        let res = api
+            .patch_status(
+                &resource.name_any(),
+                &PatchParams::apply(controller_name),
+                &Patch::Apply(Self::update_status_conditions(
+                    (**resource).clone(),
+                    HTTPRouteStatus { parents },
+                )),
+            )
+            .await;
+        match res {
+            Ok(_updated_route) => {
+                let _res =
+                    FinalizerPatcher::patch_finalizer(api, name, controller_name, controller_name)
+                        .await;
+                Ok(Action::await_change())
+            }
+
+            Err(e) => {
+                info!("{log_context} {e}",);
+                Err(ControllerError::PatchFailed)
+            }
+        }
     }
 
     async fn update_route(
-        ctx: &(&String, Uuid, &String, &Option<String>),
+        &self,
         sender: &Sender<GatewayEvent>,
         gateway: &Gateway,
         listeners: &[GatewayListeners],
         http_route: &Arc<HTTPRoute>,
     ) -> Result<HTTPRouteStatusParents> {
-        let (controller_name, id, resource_name, resource_version) = ctx;
-
+        let log_context = self.log_context();
+        let controller_name = &self.controller_name;
         let gateway_name = gateway.name_any();
         let (response_sender, response_receiver) = oneshot::channel();
+        let listeners = listeners
+            .iter()
+            .map(Listener::try_from)
+            .filter_map(std::result::Result::ok)
+            .collect::<Vec<_>>();
         let route_event = GatewayEvent::RouteChanged((
             response_sender,
             gateway_name.clone(),
-            listeners
-                .iter()
-                .map(Listener::try_from)
-                .filter_map(std::result::Result::ok)
-                .collect(),
+            listeners,
             Route::Http(RouteConfig::new(http_route.name_any())),
         ));
         let _ = sender.send(route_event).await;
@@ -329,9 +312,7 @@ impl HttpRouteController {
         if let Ok(GatewayResponse::RouteProcessed(route_status)) = response {
             match route_status {
                 crate::backends::gateways::RouteStatus::Attached => {
-                    debug!(
-                            "reconcile_route: {controller_name} {id} {resource_name} {resource_version:?} Route attached to {gateway_name}",
-                        );
+                    debug!("{log_context} Route attached to {gateway_name}",);
                     Ok(HTTPRouteStatusParents {
                         conditions: Some(vec![Condition {
                             last_transition_time: Time(Utc::now()),
@@ -351,9 +332,7 @@ impl HttpRouteController {
                 }
 
                 crate::backends::gateways::RouteStatus::Ignored => {
-                    debug!(
-                        "reconcile_route: {controller_name} {id} {resource_name} {resource_version:?} Route rejected by {gateway_name}",
-                    );
+                    debug!("{log_context} Route rejected by {gateway_name}",);
                     Ok(HTTPRouteStatusParents {
                         conditions: Some(vec![Condition {
                             last_transition_time: Time(Utc::now()),
@@ -373,10 +352,114 @@ impl HttpRouteController {
                 }
             }
         } else {
-            warn!(
-                "reconcile_route: {controller_name} {id} {resource_name} {resource_version:?} {response:?} ... Problem"
-            );
+            warn!("{log_context} ... Problem {response:?}");
             Err(ControllerError::BackendError)
         }
+    }
+
+    fn update_status_conditions(mut route: HTTPRoute, route_status: HTTPRouteStatus) -> HTTPRoute {
+        route.status = Some(route_status);
+        route.metadata.managed_fields = None;
+        route
+    }
+
+    fn filter_listeners_by_name_or_port<F>(
+        gateway: &Arc<Gateway>,
+        filter: F,
+    ) -> Vec<GatewayListeners>
+    where
+        F: Fn(&GatewayListeners) -> bool,
+    {
+        gateway
+            .spec
+            .listeners
+            .iter()
+            .filter(|f| filter(f))
+            .cloned()
+            .collect()
+    }
+}
+
+struct LogContext<'a> {
+    controller_name: &'a str,
+    id: Uuid,
+    name: &'a str,
+    version: Option<String>,
+}
+
+impl std::fmt::Display for LogContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "reconcile_http_route: controller_name: {} id: {}, name: {} version: {:?}",
+            self.controller_name, self.id, self.name, self.version
+        )
+    }
+}
+
+#[async_trait]
+impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
+    fn log_context(&self) -> impl std::fmt::Display {
+        LogContext {
+            controller_name: &self.controller_name,
+            id: self.id,
+            name: &self.name,
+            version: self.version.clone(),
+        }
+    }
+
+    fn state(&self) -> &Arc<Mutex<State>> {
+        &self.state
+    }
+
+    fn id(&self) -> Uuid {
+        self.id
+    }
+    fn resource(&self) -> Arc<HTTPRoute> {
+        Arc::clone(&self.resource)
+    }
+
+    async fn on_spec_unchanged(
+        &self,
+        id: Uuid,
+        resource: &Arc<HTTPRoute>,
+        state: &mut State,
+    ) -> Result<Action> {
+        state.save_http_route(id, resource);
+        Err(ControllerError::AlreadyAdded)
+    }
+
+    async fn on_new(
+        &self,
+        id: Uuid,
+        resource: &Arc<HTTPRoute>,
+        state: &mut State,
+    ) -> Result<Action> {
+        self.on_new_or_changed(id, resource, state).await
+    }
+
+    async fn on_spec_changed(
+        &self,
+        id: Uuid,
+        resource: &Arc<HTTPRoute>,
+        state: &mut State,
+    ) -> Result<Action> {
+        self.on_new_or_changed(id, resource, state).await
+    }
+
+    async fn on_deleted(
+        &self,
+        id: Uuid,
+        resource: &Arc<HTTPRoute>,
+        state: &mut State,
+    ) -> Result<Action> {
+        let controller_name = &self.controller_name;
+        let api = &self.api;
+
+        state.delete_http_route(id);
+        let res = ResourceFinalizer::delete_resource(api, controller_name, resource).await;
+        res.map_err(|e: finalizer::Error<ControllerError>| {
+            ControllerError::FinalizerPatchFailed(e.to_string())
+        })
     }
 }

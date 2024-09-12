@@ -291,7 +291,14 @@ pub enum GatewayResponse {
 }
 
 pub enum GatewayEvent {
-    GatewayChanged((oneshot::Sender<GatewayResponse>, String, Vec<Listener>)),
+    GatewayChanged(
+        (
+            oneshot::Sender<GatewayResponse>,
+            String,
+            Vec<Listener>,
+            Vec<Route>,
+        ),
+    ),
     GatewayDeleted((oneshot::Sender<GatewayResponse>, String)),
     RouteChanged(
         (
@@ -301,7 +308,6 @@ pub enum GatewayEvent {
             Route,
         ),
     ),
-    RouteRemoved((oneshot::Sender<GatewayResponse>, String, String)),
 }
 
 pub struct GatewayChannelHandler {
@@ -326,7 +332,7 @@ impl GatewayChannelHandler {
             tokio::select! {
                     Some(event) = self.event_receiver.recv() => {
                          match event{
-                            GatewayEvent::GatewayChanged((response_sender, gateway, listeners)) => {
+                            GatewayEvent::GatewayChanged((response_sender, gateway, listeners, routes)) => {
                                 let processed = self.gateways.update_listeners(gateway,listeners);
                                 let sent = response_sender.send(GatewayResponse::GatewayProcessed(processed));
                                 if let Err(e) = sent{
@@ -360,20 +366,20 @@ impl GatewayChannelHandler {
                                 // }
                             }
 
-                            GatewayEvent::RouteRemoved((response_sender, gateway, route)) => {
-                                warn!("Route added {gateway} {route:?}");
-                                let sent = response_sender.send(GatewayResponse::RouteDeleted);
-                                if let Err(e) = sent{
-                                    info!("Listener handler closed {e:?}");
-                                    return;
-                                }
-                                // let processed = self.gateways.update_listeners(gateway,listeners);
-                                // let sent = response_sender.send(GatewayResponse::Processed(processed));
-                                // if let Err(e) = sent{
-                                //     info!("Listener handler closed {e:?}");
-                                //     return;
-                                // }
-                            }
+                            // GatewayEvent::RouteRemoved((response_sender, gateway, route)) => {
+                            //     warn!("Route added {gateway} {route:?}");
+                            //     let sent = response_sender.send(GatewayResponse::RouteDeleted);
+                            //     if let Err(e) = sent{
+                            //         info!("Listener handler closed {e:?}");
+                            //         return;
+                            //     }
+                            //     // let processed = self.gateways.update_listeners(gateway,listeners);
+                            //     // let sent = response_sender.send(GatewayResponse::Processed(processed));
+                            //     // if let Err(e) = sent{
+                            //     //     info!("Listener handler closed {e:?}");
+                            //     //     return;
+                            //     // }
+                            // }
                         }
                     }
                     else => {
