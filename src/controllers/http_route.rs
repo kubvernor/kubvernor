@@ -18,9 +18,7 @@ use kube::{
     runtime::{controller::Action, finalizer, watcher::Config, Controller},
     Api, Resource, ResourceExt,
 };
-
 use log::{debug, info, warn};
-
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot, Mutex,
@@ -29,11 +27,13 @@ use uuid::Uuid;
 
 use super::{
     resource_handler::ResourceHandler,
-    utils::{ResourceState, SpecCheckerArgs},
+    utils::{ResourceState, SpecCheckerArgs, VerifiyItems},
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    backends::gateways::{GatewayEvent, GatewayResponse, Listener, Route, RouteConfig},
+    backends::gateways::{
+        GatewayEvent, GatewayResponse, Listener, Route, RouteConfig, RouteProcessedPayload,
+    },
     controllers::utils::{FinalizerPatcher, ResourceFinalizer},
     state::{ResourceKey, State, DEFAULT_GROUP_NAME, DEFAULT_KIND_NAME, DEFAULT_NAMESPACE_NAME},
 };
@@ -204,7 +204,8 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let empty = vec![];
         let parent_gateway_refs = resource.spec.parent_refs.as_ref().unwrap_or(&empty);
-        let gateways: Vec<(Arc<Gateway>, Vec<GatewayListeners>)> = parent_gateway_refs
+
+        let parent_gateway_refs = parent_gateway_refs
             .iter()
             .map(|parent_ref| {
                 (
@@ -218,40 +219,16 @@ impl HTTPRouteHandler<HTTPRoute> {
             })
             .map(|(parent_ref, namespace)| (parent_ref, ResourceKey::from((parent_ref, namespace))))
             .map(|(parent_ref, key)| (parent_ref, state.get_gateway_by_resource(&key).cloned()))
-            .filter_map(|(parent_ref, maybe_gateway)| {
-                if let Some(gateway) = maybe_gateway {
-                    match (parent_ref.port, &parent_ref.section_name) {
-                        (Some(port), Some(section_name)) => Some((
-                            Arc::clone(&gateway),
-                            Self::filter_listeners_by_name_or_port(&gateway, |gl| {
-                                gl.port == port && gl.name == *section_name
-                            }),
-                        )),
-                        (Some(port), None) => Some((
-                            Arc::clone(&gateway),
-                            Self::filter_listeners_by_name_or_port(&gateway, |gl| gl.port == port),
-                        )),
-                        (None, Some(section_name)) => Some((
-                            Arc::clone(&gateway),
-                            Self::filter_listeners_by_name_or_port(&gateway, |gl| {
-                                gl.name == *section_name
-                            }),
-                        )),
-                        (None, None) => Some((
-                            Arc::clone(&gateway),
-                            Self::filter_listeners_by_name_or_port(&gateway, |_| true),
-                        )),
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect();
+            .map(|i| if i.1.is_some() { Ok(i) } else { Err(i) });
+
+        let (resolved_gateways, unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
+
+        let matching_gateways = Self::filterd_matching_gateways(&resolved_gateways);
 
         let mut parents = vec![];
-        for (gateway, listeners) in gateways {
+        for (gateway, listeners) in matching_gateways {
             if let Ok(status) = self
-                .update_route(gateway_channel_sender, &gateway, &listeners, resource)
+                .deploy_route(gateway_channel_sender, &gateway, listeners, resource)
                 .await
             {
                 debug!("{log_context} Added to parents {status:?}");
@@ -259,6 +236,13 @@ impl HTTPRouteHandler<HTTPRoute> {
                 parents.push(status);
             }
         }
+
+        parents.append(
+            &mut self.generate_status_for_unknown_gateways(
+                &unknown_gateways,
+                resource.metadata.generation,
+            ),
+        );
 
         let res = api
             .patch_status(
@@ -285,11 +269,76 @@ impl HTTPRouteHandler<HTTPRoute> {
         }
     }
 
-    async fn update_route(
+    fn filterd_matching_gateways(
+        resolved_gateways: &[(&HTTPRouteParentRefs, Option<Arc<Gateway>>)],
+    ) -> Vec<(Arc<Gateway>, Vec<GatewayListeners>)> {
+        resolved_gateways
+            .iter()
+            .filter_map(|(parent_ref, maybe_gateway)| {
+                if let Some(gateway) = maybe_gateway {
+                    match (parent_ref.port, &parent_ref.section_name) {
+                        (Some(port), Some(section_name)) => Some((
+                            Arc::clone(gateway),
+                            Self::filter_listeners_by_name_or_port(gateway, |gl| {
+                                gl.port == port && gl.name == *section_name
+                            }),
+                        )),
+                        (Some(port), None) => Some((
+                            Arc::clone(gateway),
+                            Self::filter_listeners_by_name_or_port(gateway, |gl| gl.port == port),
+                        )),
+                        (None, Some(section_name)) => Some((
+                            Arc::clone(gateway),
+                            Self::filter_listeners_by_name_or_port(&gateway, |gl| {
+                                gl.name == *section_name
+                            }),
+                        )),
+                        (None, None) => Some((
+                            Arc::clone(gateway),
+                            Self::filter_listeners_by_name_or_port(gateway, |_| true),
+                        )),
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn generate_status_for_unknown_gateways(
+        &self,
+        gateways: &[(&HTTPRouteParentRefs, Option<Arc<Gateway>>)],
+        generation: Option<i64>,
+    ) -> Vec<HTTPRouteStatusParents> {
+        gateways
+            .iter()
+            .map(|(gateway, _)| HTTPRouteStatusParents {
+                conditions: Some(vec![Condition {
+                    last_transition_time: Time(Utc::now()),
+                    message: "Updated by controller".to_owned(),
+                    observed_generation: generation,
+                    reason: "BackendNotFound".to_owned(),
+                    status: "False".to_owned(),
+                    type_: "ResolvedRefs".to_owned(),
+                }]),
+                controller_name: self.controller_name.clone(),
+                parent_ref: HTTPRouteStatusParentsParentRef {
+                    group: gateway.group.clone(),
+                    kind: gateway.kind.clone(),
+                    name: gateway.name.clone(),
+                    namespace: gateway.namespace.clone(),
+                    port: gateway.port,
+                    section_name: gateway.section_name.clone(),
+                },
+            })
+            .collect()
+    }
+
+    async fn deploy_route(
         &self,
         sender: &Sender<GatewayEvent>,
         gateway: &Gateway,
-        listeners: &[GatewayListeners],
+        listeners: Vec<GatewayListeners>,
         http_route: &Arc<HTTPRoute>,
     ) -> Result<HTTPRouteStatusParents> {
         let log_context = self.log_context();
@@ -309,8 +358,12 @@ impl HTTPRouteHandler<HTTPRoute> {
         ));
         let _ = sender.send(route_event).await;
         let response = response_receiver.await;
-        if let Ok(GatewayResponse::RouteProcessed(route_status)) = response {
-            match route_status {
+        if let Ok(GatewayResponse::RouteProcessed(RouteProcessedPayload {
+            status,
+            listeners: _,
+        })) = response
+        {
+            match status {
                 crate::backends::gateways::RouteStatus::Attached => {
                     debug!("{log_context} Route attached to {gateway_name}",);
                     Ok(HTTPRouteStatusParents {
@@ -338,9 +391,9 @@ impl HTTPRouteHandler<HTTPRoute> {
                             last_transition_time: Time(Utc::now()),
                             message: "Updated by controller".to_owned(),
                             observed_generation: gateway.metadata.generation,
-                            reason: "Rejected".to_owned(),
+                            reason: "NotAllowedByListeners".to_owned(),
                             status: "False".to_owned(),
-                            type_: "Rejected".to_owned(),
+                            type_: "Accepted".to_owned(),
                         }]),
                         controller_name: (*controller_name).clone(),
                         parent_ref: HTTPRouteStatusParentsParentRef {

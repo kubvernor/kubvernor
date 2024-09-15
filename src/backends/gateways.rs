@@ -283,13 +283,41 @@ impl Listeners {
 }
 
 #[derive(Debug)]
+pub struct GatewayProcessedPayload {
+    pub listeners: Vec<(String, Result<ListenerStatus, ListenerError>)>,
+    pub routes: Vec<Route>,
+}
+
+impl GatewayProcessedPayload {
+    pub fn new(
+        listeners: Vec<(String, Result<ListenerStatus, ListenerError>)>,
+        routes: Vec<Route>,
+    ) -> Self {
+        Self { listeners, routes }
+    }
+}
+
+#[derive(Debug)]
+pub struct RouteProcessedPayload {
+    pub status: RouteStatus,
+    pub listeners: Vec<String>,
+}
+
+impl RouteProcessedPayload {
+    pub fn new(status: RouteStatus, listeners: Vec<String>) -> Self {
+        Self { status, listeners }
+    }
+}
+
+#[derive(Debug)]
 pub enum GatewayResponse {
-    GatewayProcessed(Vec<(String, Result<ListenerStatus, ListenerError>)>),
+    GatewayProcessed(GatewayProcessedPayload),
     GatewayDeleted,
-    RouteProcessed(RouteStatus),
+    RouteProcessed(RouteProcessedPayload),
     RouteDeleted,
 }
 
+#[derive(Debug)]
 pub enum GatewayEvent {
     GatewayChanged(
         (
@@ -308,6 +336,25 @@ pub enum GatewayEvent {
             Route,
         ),
     ),
+}
+
+impl Display for GatewayEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GatewayEvent::GatewayChanged((_, gateway, listeners, routes)) => write!(
+                f,
+                "GatewayEvent::GatewayChanged {gateway} listeners {listeners:?} routes {routes:?}"
+            ),
+            GatewayEvent::GatewayDeleted((_, gateway)) => {
+                write!(f, "GatewayEvent::GatewayDeleted {gateway}")
+            }
+
+            GatewayEvent::RouteChanged((_, gateway, listeners, routes)) => write!(
+                f,
+                "GatewayEvent::RouteChanged {gateway} listeners {listeners:?} routes {routes:?}"
+            ),
+        }
+    }
 }
 
 pub struct GatewayChannelHandler {
@@ -331,10 +378,11 @@ impl GatewayChannelHandler {
         loop {
             tokio::select! {
                     Some(event) = self.event_receiver.recv() => {
+                        info!("Backend got gateway {event:#}");
                          match event{
                             GatewayEvent::GatewayChanged((response_sender, gateway, listeners, routes)) => {
                                 let processed = self.gateways.update_listeners(gateway,listeners);
-                                let sent = response_sender.send(GatewayResponse::GatewayProcessed(processed));
+                                let sent = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload::new(processed, routes)));
                                 if let Err(e) = sent{
                                     info!("Listener handler closed {e:?}");
                                     return;
@@ -352,8 +400,8 @@ impl GatewayChannelHandler {
 
                             GatewayEvent::RouteChanged((response_sender, gateway, listeners, route)) => {
                                 let gateway_name = gateway;
-                                warn!("Route added {gateway_name:?} {route:?}");
-                                let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteStatus::Attached));
+
+                                let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload::new(RouteStatus::Attached, vec![])));
                                 if let Err(e) = sent{
                                     info!("Listener handler closed {e:?}");
                                     return;

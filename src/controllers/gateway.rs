@@ -5,6 +5,7 @@ use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
     gateways::{Gateway, GatewayListeners, GatewayStatus},
+    httproutes::HTTPRoute,
 };
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
@@ -29,7 +30,8 @@ use super::{
 };
 use crate::{
     backends::gateways::{
-        GatewayEvent, GatewayResponse, Listener, ListenerConfig, ListenerError, Route, RouteConfig,
+        GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener, ListenerConfig,
+        ListenerError, Route, RouteConfig,
     },
     controllers::utils::{FinalizerPatcher, ResourceFinalizer, VerifiyItems},
     state::{ResourceKey, State, DEFAULT_GROUP_NAME, DEFAULT_KIND_NAME, DEFAULT_NAMESPACE_NAME},
@@ -258,12 +260,12 @@ impl std::fmt::Display for LogContext<'_> {
 }
 
 impl GatewayResourceHandler<Gateway> {
-    async fn update_gateway(
+    async fn deploy_gateway(
         &self,
         sender: &Sender<GatewayEvent>,
         gateway: &Arc<Gateway>,
         state: &State,
-    ) -> GatewayStatus {
+    ) -> Result<Gateway> {
         let log_context = self.log_context();
         let name = self.name.clone();
         let id = self.id;
@@ -275,38 +277,43 @@ impl GatewayResourceHandler<Gateway> {
             debug!("{log_context} Properly configured listeners {listeners:?}");
             warn!("{log_context} Misconfigured  listeners {listener_validation_errrors:?}");
         }
-        let attached_routes = state
-            .get_http_routes_attached_to_gateway(id)
+
+        let linked_routes = Self::find_linked_routes(state, id);
+        let (response_sender, response_receiver) = oneshot::channel();
+        let listener_event =
+            GatewayEvent::GatewayChanged((response_sender, name, listeners, linked_routes));
+        let _ = sender.send(listener_event).await;
+        let response = response_receiver.await;
+
+        if let Ok(GatewayResponse::GatewayProcessed(GatewayProcessedPayload {
+            listeners: processed_listeners,
+            routes: attached_routes,
+        })) = response
+        {
+            let updated_gateway = self.update_gateway_resource(processed_listeners);
+
+            for attached_route in attached_routes {
+                debug!("{log_context} attached route {attached_route:?}");
+                let updated_routes = self.update_route_resource(attached_route);
+            }
+
+            Ok(updated_gateway)
+        } else {
+            warn!("{log_context} {response:?} ... Problem {response:?}");
+            Err(ControllerError::BackendError)
+        }
+    }
+
+    fn find_linked_routes(state: &State, gateway_id: Uuid) -> Vec<Route> {
+        state
+            .get_http_routes_attached_to_gateway(gateway_id)
             .map(|routes| {
                 routes
                     .iter()
                     .map(|r| Route::Http(RouteConfig::new(r.name_any())))
                     .collect()
             })
-            .unwrap_or_default();
-
-        let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event =
-            GatewayEvent::GatewayChanged((response_sender, name, listeners, attached_routes));
-        let _ = sender.send(listener_event).await;
-        let response = response_receiver.await;
-        if let Ok(GatewayResponse::GatewayProcessed(processed)) = response {
-            for (configured_name, status) in processed {
-                match status {
-                    Ok(good) => {
-                        debug!("{log_context} Gateway added listeners {configured_name} {good:?}",);
-                    }
-                    Err(bad) => {
-                        debug!(
-                            "{log_context} Gateway misconfigured listeners {configured_name} {bad:?}");
-                    }
-                }
-            }
-            GatewayStatus::default()
-        } else {
-            warn!("{log_context} {response:?} ... Problem");
-            GatewayStatus::default()
-        }
+            .unwrap_or_default()
     }
 
     fn update_status_conditions(
@@ -338,17 +345,14 @@ impl GatewayResourceHandler<Gateway> {
         state: &mut State,
     ) -> Result<Action> {
         let log_context = self.log_context();
-
         let api = &self.api;
         let name = &self.name;
         let controller_name = &self.controller_name;
         let gateway_class_name = &self.gateway_class_name;
         let sender = &self.gateway_channel_sender;
 
-        let gateway_status = self.update_gateway(sender, resource, state).await;
+        let updated_gateway = self.deploy_gateway(sender, resource, state).await?;
 
-        let updated_gateway: Gateway =
-            Self::update_status_conditions((**resource).clone(), gateway_status);
         let patch_params = PatchParams::apply(&self.controller_name).force();
 
         match api
@@ -359,42 +363,80 @@ impl GatewayResourceHandler<Gateway> {
                 info!("{log_context} patch status result ok");
 
                 state.save_gateway(id, &Arc::new(new_gateway));
-                let gateway_class_api = Api::<GatewayClass>::all(self.client.clone());
-                let res = FinalizerPatcher::patch_finalizer(
-                    &gateway_class_api,
-                    gateway_class_name,
-                    controller_name,
-                    GATEWAY_CLASS_FINALIZER_NAME,
-                )
-                .await;
-
-                if res.is_err() {
-                    warn!("{log_context} couldn't patch gateway class name {res:?}");
-                }
-
-                let res =
-                    FinalizerPatcher::patch_finalizer(api, name, controller_name, controller_name)
-                        .await;
-
-                match res {
-                    Ok(()) => {
-                        info!("{log_context} meta patch status result ok");
-                        if res.is_err() {
-                            warn!("{log_context} couldn't patch meta");
-                        }
-                        Ok(Action::requeue(RECONCILE_LONG_WAIT))
-                    }
-                    Err(e) => {
-                        warn!("{log_context} patch status failed {e:?}");
-                        Err(ControllerError::PatchFailed)
-                    }
-                }
+                self.change_gateway_class(gateway_class_name).await;
+                self.add_finalizer(controller_name).await
             }
             Err(e) => {
                 warn!("{log_context} patch status failed {e:?}");
                 Err(ControllerError::PatchFailed)
             }
         }
+    }
+
+    async fn add_finalizer(&self, controller_name: &str) -> Result<Action> {
+        let log_context = self.log_context();
+        let api = &self.api;
+        let name = &self.name;
+        let res =
+            FinalizerPatcher::patch_finalizer(api, name, controller_name, controller_name).await;
+
+        match res {
+            Ok(()) => {
+                info!("{log_context} meta patch status result ok");
+                if res.is_err() {
+                    warn!("{log_context} couldn't patch meta");
+                }
+                Ok(Action::requeue(RECONCILE_LONG_WAIT))
+            }
+            Err(e) => {
+                warn!("{log_context} patch status failed {e:?}");
+                Err(ControllerError::PatchFailed)
+            }
+        }
+    }
+
+    async fn change_gateway_class(&self, gateway_class_name: &str) {
+        let log_context = self.log_context();
+        let gateway_class_api = Api::<GatewayClass>::all(self.client.clone());
+        let res = FinalizerPatcher::patch_finalizer(
+            &gateway_class_api,
+            gateway_class_name,
+            &self.controller_name,
+            GATEWAY_CLASS_FINALIZER_NAME,
+        )
+        .await;
+
+        if res.is_err() {
+            warn!("{log_context} couldn't patch gateway class name {res:?}");
+        }
+    }
+
+    fn update_gateway_resource(
+        &self,
+        processed_listeners: Vec<(
+            String,
+            std::result::Result<crate::backends::gateways::ListenerStatus, ListenerError>,
+        )>,
+    ) -> Gateway {
+        let log_context = self.log_context();
+        for (configured_name, status) in processed_listeners {
+            match status {
+                Ok(good) => {
+                    debug!("{log_context} Gateway added listeners {configured_name} {good:?}",);
+                }
+                Err(bad) => {
+                    debug!(
+                        "{log_context} Gateway misconfigured listeners {configured_name} {bad:?}"
+                    );
+                }
+            }
+        }
+        let gateway_status = GatewayStatus::default();
+        Self::update_status_conditions(((*self.resource).clone()).clone(), gateway_status)
+    }
+
+    fn update_route_resource(&self, attached_route: Route) -> HTTPRoute {
+        HTTPRoute::default()
     }
 }
 #[async_trait]

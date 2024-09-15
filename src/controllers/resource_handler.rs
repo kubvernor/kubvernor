@@ -6,12 +6,11 @@ use log::info;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::state::State;
-
 use super::{
     utils::{ResourceState, ResourceStateChecker, SpecChecker},
     ControllerError,
 };
+use crate::state::State;
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
