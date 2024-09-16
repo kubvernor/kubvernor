@@ -1,0 +1,22 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: route-one
+spec:
+  parentRefs:
+  - name: gateway-one
+  - name: gateway-two
+  hostnames:
+  - "www.example.com"
+  - "www.example2.com"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /login
+    - path:
+        type: PathPrefix
+        value: /data     
+    backendRefs:
+    - name: example-svc
+      port: 8080
