@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
-    gateways::{Gateway, GatewayListeners, GatewayStatus},
+    gateways::{Gateway, GatewayListeners, GatewayStatus, GatewayStatusListeners},
     httproutes::HTTPRoute,
 };
 use k8s_openapi::{
@@ -29,9 +29,12 @@ use super::{
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    backends::gateway_deployer::{
-        GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener, ListenerConfig,
-        ListenerError, Route, RouteConfig,
+    backends::{
+        self,
+        gateway_deployer::{
+            GatewayError, GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener,
+            ListenerConfig, ListenerError, ListenerStatus, Route, RouteConfig,
+        },
     },
     controllers::utils::{FinalizerPatcher, ResourceFinalizer, VerifiyItems},
     state::{ResourceKey, State, DEFAULT_GROUP_NAME, DEFAULT_KIND_NAME, DEFAULT_NAMESPACE_NAME},
@@ -96,6 +99,41 @@ impl TryFrom<&GatewayListeners> for Listener {
                 gateway_listener.protocol.clone(),
             )),
         }
+    }
+}
+
+impl TryFrom<&Gateway> for backends::gateway_deployer::Gateway {
+    type Error = GatewayError;
+
+    fn try_from(gateway: &Gateway) -> std::result::Result<Self, Self::Error> {
+        let id = Uuid::parse_str(&gateway.metadata.uid.clone().unwrap_or_default())
+            .map_err(|_| GatewayError::ConversionProblem("Can't parse uuid".to_owned()))?;
+        let name = gateway.metadata.name.clone().unwrap_or_default();
+        if name.is_empty() {
+            return Err(GatewayError::ConversionProblem(
+                "Name can't be empty".to_owned(),
+            ));
+        }
+        let namespace = gateway
+            .metadata
+            .namespace
+            .clone()
+            .unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+
+        let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) =
+            VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
+        if !listener_validation_errrors.is_empty() {
+            return Err(GatewayError::ConversionProblem(
+                "Misconfigured listeners".to_owned(),
+            ));
+        }
+
+        Ok(Self {
+            id,
+            name,
+            namespace,
+            listeners,
+        })
     }
 }
 
@@ -267,29 +305,30 @@ impl GatewayResourceHandler<Gateway> {
         state: &State,
     ) -> Result<Gateway> {
         let log_context = self.log_context();
-        let name = self.name.clone();
         let id = self.id;
 
-        let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) =
-            VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
+        let maybe_gateway = backends::gateway_deployer::Gateway::try_from(&**gateway);
+        let Ok(backend_gateway) = maybe_gateway else {
+            warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
+            return Err(ControllerError::InvalidPayload(
+                "Misconfigured gateway".to_owned(),
+            ));
+        };
+        let resource_key = ResourceKey::from(&**gateway);
 
-        if !listener_validation_errrors.is_empty() {
-            warn!("{log_context} Misconfigured  listeners {listener_validation_errrors:?}");
-        }
-
-        let linked_routes = Self::find_linked_routes(state, id);
+        let linked_routes = Self::find_linked_routes(state, &resource_key);
         let (response_sender, response_receiver) = oneshot::channel();
         let listener_event =
-            GatewayEvent::GatewayChanged((response_sender, name, listeners, linked_routes));
+            GatewayEvent::GatewayChanged((response_sender, backend_gateway, linked_routes));
         let _ = sender.send(listener_event).await;
         let response = response_receiver.await;
 
         if let Ok(GatewayResponse::GatewayProcessed(GatewayProcessedPayload {
-            listeners: processed_listeners,
+            gateway_status,
             routes: attached_routes,
         })) = response
         {
-            let updated_gateway = self.update_gateway_resource(processed_listeners);
+            let updated_gateway = self.update_gateway_resource(gateway, gateway_status.listeners);
 
             for attached_route in attached_routes {
                 debug!("{log_context} attached route {attached_route:?}");
@@ -303,7 +342,9 @@ impl GatewayResourceHandler<Gateway> {
         }
     }
 
-    fn find_linked_routes(state: &State, gateway_id: Uuid) -> Vec<Route> {
+    fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route> {
+        /// TODO: THIS IS EMPTY;
+        /// WE NEED A LIST OF ROUTES WHICH COULD BE ATTACHED TO GATEWAY
         state
             .get_http_routes_attached_to_gateway(gateway_id)
             .map(|routes| {
@@ -337,6 +378,12 @@ impl GatewayResourceHandler<Gateway> {
         gateway
     }
 
+    /// * on new gateway we need to find all the relevant data such as routes that might be referencing this gateway
+    /// * send all necessary information to the backend
+    /// * backend should return information whether the routes was attached to the gateway or not and to which listener/listeners
+    /// * we should update gatway's status if the route count has changed for a listener
+    /// * we should update the route's status and reflect that the ownership might changed
+    ///
     async fn on_new_or_changed(
         &self,
         id: Uuid,
@@ -412,25 +459,50 @@ impl GatewayResourceHandler<Gateway> {
 
     fn update_gateway_resource(
         &self,
-        processed_listeners: Vec<(
-            String,
-            std::result::Result<crate::backends::gateway_deployer::ListenerStatus, ListenerError>,
-        )>,
+        gateway: &Gateway,
+        processed_listeners: Vec<ListenerStatus>,
     ) -> Gateway {
         let log_context = self.log_context();
-        for (configured_name, status) in processed_listeners {
-            match status {
-                Ok(good) => {
-                    debug!("{log_context} Gateway added listeners {configured_name} {good:?}",);
-                }
-                Err(bad) => {
-                    debug!(
-                        "{log_context} Gateway misconfigured listeners {configured_name} {bad:?}"
-                    );
-                }
-            }
-        }
-        let gateway_status = GatewayStatus::default();
+        debug!("{log_context} listener statuses {processed_listeners:?}");
+        let listener_statuses: Vec<_> = processed_listeners
+            .into_iter()
+            .map(|status| match status {
+                ListenerStatus::Accepted((name, routes)) => GatewayStatusListeners {
+                    attached_routes: routes,
+                    conditions: vec![Condition {
+                        last_transition_time: Time(Utc::now()),
+                        message: "Updated by controller".to_owned(),
+                        observed_generation: gateway.metadata.generation,
+                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted
+                            .to_string(),
+                        status: "True".to_owned(),
+                        type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+                    }],
+                    name,
+                    supported_kinds: vec![],
+                },
+                ListenerStatus::Conflicted(name) => GatewayStatusListeners {
+                    attached_routes: 0,
+                    conditions: vec![Condition {
+                        last_transition_time: Time(Utc::now()),
+                        message: "Updated by controller".to_owned(),
+                        observed_generation: gateway.metadata.generation,
+                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted
+                            .to_string(),
+                        status: "False".to_owned(),
+                        type_: gateway_api::apis::standard::constants::ListenerConditionType::Conflicted.to_string(),
+                    }],
+                    name,
+                    supported_kinds: vec![],
+                },
+            })
+            .collect();
+
+        let gateway_status = GatewayStatus {
+            listeners: Some(listener_statuses),
+            ..Default::default()
+        };
+
         Self::update_status_conditions(((*self.resource).clone()).clone(), gateway_status)
     }
 

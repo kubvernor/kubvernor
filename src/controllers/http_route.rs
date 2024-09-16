@@ -31,8 +31,11 @@ use super::{
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    backends::gateway_deployer::{
-        GatewayEvent, GatewayResponse, Listener, Route, RouteConfig, RouteProcessedPayload,
+    backends::{
+        self,
+        gateway_deployer::{
+            GatewayEvent, GatewayResponse, Listener, Route, RouteConfig, RouteProcessedPayload,
+        },
     },
     controllers::utils::{FinalizerPatcher, ResourceFinalizer},
     state::{ResourceKey, State, DEFAULT_GROUP_NAME, DEFAULT_KIND_NAME, DEFAULT_NAMESPACE_NAME},
@@ -190,6 +193,11 @@ struct HTTPRouteHandler<R> {
 }
 
 impl HTTPRouteHandler<HTTPRoute> {
+    /// * on new route we need to find all the relevant data such as gateways based on parent refs
+    /// * send all necessary information to the backend
+    /// * backend should return information whether the route was attached to the gateway or not and to which listener/listeners
+    /// * we should update gatway's if the route count has changed for a listener
+    /// * we shoudl update the route's status
     async fn on_new_or_changed(
         &self,
         id: Uuid,
@@ -205,7 +213,7 @@ impl HTTPRouteHandler<HTTPRoute> {
         let empty = vec![];
         let parent_gateway_refs = resource.spec.parent_refs.as_ref().unwrap_or(&empty);
 
-        let parent_gateway_refs = parent_gateway_refs
+        let parent_gateway_refs_keys = parent_gateway_refs
             .iter()
             .map(|parent_ref| {
                 (
@@ -217,32 +225,30 @@ impl HTTPRouteHandler<HTTPRoute> {
                         .unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
                 )
             })
-            .map(|(parent_ref, namespace)| (parent_ref, ResourceKey::from((parent_ref, namespace))))
+            .map(|(parent_ref, namespace)| {
+                (parent_ref, ResourceKey::from((parent_ref, namespace)))
+            });
+
+        let parent_gateway_refs = parent_gateway_refs_keys
+            .clone()
             .map(|(parent_ref, key)| (parent_ref, state.get_gateway_by_resource(&key).cloned()))
             .map(|i| if i.1.is_some() { Ok(i) } else { Err(i) });
 
         let (resolved_gateways, unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
 
-        let matching_gateways = Self::filterd_matching_gateways(&resolved_gateways);
+        parent_gateway_refs_keys
+            .for_each(|(_ref, key)| state.attach_http_route_to_gateway(key, resource));
+
+        let matching_gateways = Self::filter_matching_gateways(&resolved_gateways);
 
         let mut parents = vec![];
-        for (gateway, listeners) in matching_gateways {
-            let linked_routes = Self::find_linked_routes(
-                state,
-                Uuid::parse_str(gateway.meta().uid.clone().unwrap_or_default().as_str()).unwrap(),
-            );
+        for (gateway, _listeners) in matching_gateways {
+            let linked_routes = Self::find_linked_routes(state, &ResourceKey::from(&*gateway));
             if let Ok(status) = self
-                .deploy_route(
-                    gateway_channel_sender,
-                    &gateway,
-                    listeners,
-                    resource,
-                    linked_routes,
-                )
+                .deploy_route(gateway_channel_sender, resource, &linked_routes, &gateway)
                 .await
             {
                 debug!("{log_context} Added to parents {status:?}");
-                state.save_http_route(id, resource);
                 parents.push(status);
             }
         }
@@ -253,6 +259,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                 resource.metadata.generation,
             ),
         );
+        state.save_http_route(id, resource);
 
         let res = api
             .patch_status(
@@ -279,7 +286,7 @@ impl HTTPRouteHandler<HTTPRoute> {
         }
     }
 
-    fn filterd_matching_gateways(
+    fn filter_matching_gateways(
         resolved_gateways: &[(&HTTPRouteParentRefs, Option<Arc<Gateway>>)],
     ) -> Vec<(Arc<Gateway>, Vec<GatewayListeners>)> {
         resolved_gateways
@@ -299,7 +306,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                         )),
                         (None, Some(section_name)) => Some((
                             Arc::clone(gateway),
-                            Self::filter_listeners_by_name_or_port(&gateway, |gl| {
+                            Self::filter_listeners_by_name_or_port(gateway, |gl| {
                                 gl.name == *section_name
                             }),
                         )),
@@ -344,7 +351,7 @@ impl HTTPRouteHandler<HTTPRoute> {
             .collect()
     }
 
-    fn find_linked_routes(state: &State, gateway_id: Uuid) -> Vec<Route> {
+    fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route> {
         state
             .get_http_routes_attached_to_gateway(gateway_id)
             .map(|routes| {
@@ -359,33 +366,34 @@ impl HTTPRouteHandler<HTTPRoute> {
     async fn deploy_route(
         &self,
         sender: &Sender<GatewayEvent>,
-        gateway: &Gateway,
-        listeners: Vec<GatewayListeners>,
         http_route: &Arc<HTTPRoute>,
-        linked_routes: Vec<Route>,
+        linked_routes: &[Route],
+        gateway: &Gateway,
     ) -> Result<HTTPRouteStatusParents> {
         let log_context = self.log_context();
         let controller_name = &self.controller_name;
-        let gateway_name = gateway.name_any();
+        let maybe_gateway = backends::gateway_deployer::Gateway::try_from(gateway);
+        let Ok(backend_gateway) = maybe_gateway else {
+            warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
+            return Err(ControllerError::InvalidPayload(
+                "Misconfigured gateway".to_owned(),
+            ));
+        };
+        let gateway_name = format!("{}:{}", backend_gateway.namespace, backend_gateway.name);
+
         let (response_sender, response_receiver) = oneshot::channel();
-        let listeners = listeners
-            .iter()
-            .map(Listener::try_from)
-            .filter_map(std::result::Result::ok)
-            .collect::<Vec<_>>();
 
         let route_event = GatewayEvent::RouteChanged((
             response_sender,
-            gateway_name.clone(),
-            listeners,
             Route::Http(RouteConfig::new(http_route.name_any())),
-            linked_routes,
+            linked_routes.to_vec(),
+            backend_gateway,
         ));
         let _ = sender.send(route_event).await;
         let response = response_receiver.await;
         if let Ok(GatewayResponse::RouteProcessed(RouteProcessedPayload {
             status,
-            listeners: _,
+            gateway_status: _,
         })) = response
         {
             match status {

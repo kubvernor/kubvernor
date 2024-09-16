@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute,
 };
-use kube::Resource;
+use kube::{Resource, ResourceExt};
 use multimap::MultiMap;
 use uuid::Uuid;
 
@@ -34,7 +34,7 @@ pub struct State {
     gateways: HashMap<Uuid, Arc<Gateway>>,
     gateways_by_id: HashMap<ResourceKey, Arc<Gateway>>,
     http_routes: HashMap<Uuid, Arc<HTTPRoute>>,
-    gateways_with_routes: MultiMap<Uuid, Arc<HTTPRoute>>,
+    gateways_with_routes: MultiMap<ResourceKey, Arc<HTTPRoute>>,
 }
 
 impl State {
@@ -76,12 +76,16 @@ impl State {
         self.http_routes.insert(id, Arc::clone(route));
     }
 
-    pub fn attach_http_route_to_gateway(&mut self, gateway_id: Uuid, route: &Arc<HTTPRoute>) {
+    pub fn attach_http_route_to_gateway(
+        &mut self,
+        gateway_id: ResourceKey,
+        route: &Arc<HTTPRoute>,
+    ) {
         self.gateways_with_routes
             .insert(gateway_id, Arc::clone(route));
     }
 
-    pub fn detach_http_route_from_gateway(&mut self, gateway_id: Uuid, route_id: &Uuid) {
+    pub fn detach_http_route_from_gateway(&mut self, gateway_id: ResourceKey, route_id: &Uuid) {
         if let Some(routes) = self.gateways_with_routes.get_vec_mut(&gateway_id) {
             routes.retain(|f| f.meta().uid != Some(route_id.to_string()));
         }
@@ -89,9 +93,9 @@ impl State {
 
     pub fn get_http_routes_attached_to_gateway(
         &self,
-        gateway_id: Uuid,
+        resource_key: &ResourceKey,
     ) -> Option<&Vec<Arc<HTTPRoute>>> {
-        self.gateways_with_routes.get_vec(&gateway_id)
+        self.gateways_with_routes.get_vec(&resource_key)
     }
 
     pub fn save_gateway_class(&mut self, id: Uuid, gateway_class: &Arc<GatewayClass>) {
