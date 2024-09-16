@@ -31,7 +31,7 @@ use super::{
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    backends::gateways::{
+    backends::gateway_deployer::{
         GatewayEvent, GatewayResponse, Listener, Route, RouteConfig, RouteProcessedPayload,
     },
     controllers::utils::{FinalizerPatcher, ResourceFinalizer},
@@ -227,8 +227,18 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let mut parents = vec![];
         for (gateway, listeners) in matching_gateways {
+            let linked_routes = Self::find_linked_routes(
+                state,
+                Uuid::parse_str(gateway.meta().uid.clone().unwrap_or_default().as_str()).unwrap(),
+            );
             if let Ok(status) = self
-                .deploy_route(gateway_channel_sender, &gateway, listeners, resource)
+                .deploy_route(
+                    gateway_channel_sender,
+                    &gateway,
+                    listeners,
+                    resource,
+                    linked_routes,
+                )
                 .await
             {
                 debug!("{log_context} Added to parents {status:?}");
@@ -334,12 +344,25 @@ impl HTTPRouteHandler<HTTPRoute> {
             .collect()
     }
 
+    fn find_linked_routes(state: &State, gateway_id: Uuid) -> Vec<Route> {
+        state
+            .get_http_routes_attached_to_gateway(gateway_id)
+            .map(|routes| {
+                routes
+                    .iter()
+                    .map(|r| Route::Http(RouteConfig::new(r.name_any())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     async fn deploy_route(
         &self,
         sender: &Sender<GatewayEvent>,
         gateway: &Gateway,
         listeners: Vec<GatewayListeners>,
         http_route: &Arc<HTTPRoute>,
+        linked_routes: Vec<Route>,
     ) -> Result<HTTPRouteStatusParents> {
         let log_context = self.log_context();
         let controller_name = &self.controller_name;
@@ -350,11 +373,13 @@ impl HTTPRouteHandler<HTTPRoute> {
             .map(Listener::try_from)
             .filter_map(std::result::Result::ok)
             .collect::<Vec<_>>();
+
         let route_event = GatewayEvent::RouteChanged((
             response_sender,
             gateway_name.clone(),
             listeners,
             Route::Http(RouteConfig::new(http_route.name_any())),
+            linked_routes,
         ));
         let _ = sender.send(route_event).await;
         let response = response_receiver.await;
@@ -364,7 +389,7 @@ impl HTTPRouteHandler<HTTPRoute> {
         })) = response
         {
             match status {
-                crate::backends::gateways::RouteStatus::Attached => {
+                crate::backends::gateway_deployer::RouteStatus::Attached => {
                     debug!("{log_context} Route attached to {gateway_name}",);
                     Ok(HTTPRouteStatusParents {
                         conditions: Some(vec![Condition {
@@ -384,7 +409,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                     })
                 }
 
-                crate::backends::gateways::RouteStatus::Ignored => {
+                crate::backends::gateway_deployer::RouteStatus::Ignored => {
                     debug!("{log_context} Route rejected by {gateway_name}",);
                     Ok(HTTPRouteStatusParents {
                         conditions: Some(vec![Condition {

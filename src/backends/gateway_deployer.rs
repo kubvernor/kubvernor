@@ -1,9 +1,6 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Display,
-};
+use std::fmt::Display;
 
-use log::{debug, info, warn};
+use log::{info, warn};
 use thiserror::Error;
 use tokio::sync::{
     mpsc::{self, Receiver},
@@ -28,9 +25,9 @@ pub enum RouteError {
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum ListenerStatus {
-    Added,
-    Updated,
-    AlreadyConfigured,
+    Added(i32),
+    Updated(i32),
+    AlreadyConfigured(i32),
 }
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
@@ -152,134 +149,15 @@ pub enum Route {
     Grpc(RouteConfig),
 }
 
-pub struct Gateway {
-    listeners: Listeners,
-}
-pub struct Gateways {
-    gateways: HashMap<String, Gateway>,
-}
+pub struct Gateway {}
 
-impl Gateways {
-    fn new() -> Self {
-        Self {
-            gateways: HashMap::new(),
-        }
-    }
-
-    pub fn update_listeners(
-        &mut self,
-        gateway_name: String,
-        listeners: Vec<Listener>,
-    ) -> Vec<(String, Result<ListenerStatus, ListenerError>)> {
-        if let Some(gateway) = self.gateways.get_mut(&gateway_name) {
-            gateway.listeners.update_listeners(listeners)
-        } else {
-            let mut gateway = Gateway {
-                listeners: Listeners::new(),
-            };
-            let updated = gateway.listeners.update_listeners(listeners);
-            self.gateways.insert(gateway_name, gateway);
-            updated
-        }
-    }
-
-    pub fn remove_listeners(&mut self, gateway: &str) {
-        if let Some(mut gateway) = self.gateways.remove(gateway) {
-            gateway.listeners.delete_listeners();
-        };
-    }
-}
-
-type PortProtocolHostname = (i32, ProtocolType, Option<String>);
-pub struct Listeners {
-    listeners_by_port_protocol_hostname: HashMap<PortProtocolHostname, String>,
-    listeners_by_name: HashMap<String, Listener>,
-}
-
-impl Default for Listeners {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Listeners {
-    pub fn new() -> Self {
-        Self {
-            listeners_by_name: HashMap::new(),
-            listeners_by_port_protocol_hostname: HashMap::new(),
-        }
-    }
-
-    pub fn update_listeners(
-        &mut self,
-        listeners: Vec<Listener>,
-    ) -> Vec<(String, Result<ListenerStatus, ListenerError>)> {
-        debug!("Updating listeners {}", listeners.len());
-        let existing_keys: HashSet<_> = self
-            .listeners_by_name
-            .keys()
-            .map(std::borrow::ToOwned::to_owned)
-            .collect();
-        let new_keys: HashSet<_> = listeners.iter().map(|l| l.name().to_owned()).collect();
-        for name in existing_keys.difference(&new_keys) {
-            debug!("Removing listener {name}");
-            let _ = self.remove(&name.to_string());
-        }
-
-        listeners
-            .into_iter()
-            .map(|l| (l.name().to_owned(), self.update(l)))
-            .collect()
-    }
-
-    pub fn delete_listeners(&mut self) {
-        debug!("Deleting listeners");
-        self.listeners_by_name.clear();
-        self.listeners_by_port_protocol_hostname.clear();
-    }
-
-    pub fn update(&mut self, listener: Listener) -> Result<ListenerStatus, ListenerError> {
-        let name = listener.name().to_owned();
-        let protocol = listener.protocol();
-        let port = listener.port();
-        let hostname = listener.hostname().cloned();
-        let key = (port, protocol, hostname);
-
-        let listener_exists = self.listeners_by_name.get_mut(&name);
-        let listener_duplicate = self.listeners_by_port_protocol_hostname.get(&key);
-
-        match (listener_exists, listener_duplicate) {
-            (None, None) => {
-                self.listeners_by_port_protocol_hostname
-                    .insert(key, name.clone());
-                self.listeners_by_name.insert(name, listener);
-                Ok(ListenerStatus::Added)
-            }
-            (None, Some(_)) => {
-                let (port, protocol, hostname) = key;
-                Err(ListenerError::NotDistinct(name, port, protocol, hostname))
-            }
-            (Some(existing_listener), None) => {
-                *existing_listener = listener;
-                Ok(ListenerStatus::Updated)
-            }
-            (Some(_), Some(_)) => Ok(ListenerStatus::AlreadyConfigured),
-        }
-    }
-
-    pub fn remove(&mut self, name: &String) -> Result<Option<Listener>, ListenerError> {
-        if let Some(gateway) = self.listeners_by_name.remove(name) {
-            let key = &(
-                gateway.port(),
-                gateway.protocol(),
-                gateway.hostname().cloned(),
-            );
-            self.listeners_by_port_protocol_hostname.remove(key);
-            Ok(Some(gateway))
-        } else {
-            Ok(None)
-        }
-    }
+pub fn deploy_gateway(
+    gateway_name: String,
+    listeners: Vec<Listener>,
+    routes: Vec<Route>,
+) -> Vec<(String, Result<ListenerStatus, ListenerError>)> {
+    info!("Got following info {gateway_name} {listeners:?} {routes:?}");
+    vec![]
 }
 
 #[derive(Debug)]
@@ -334,6 +212,7 @@ pub enum GatewayEvent {
             String,
             Vec<Listener>,
             Route,
+            Vec<Route>,
         ),
     ),
 }
@@ -349,16 +228,15 @@ impl Display for GatewayEvent {
                 write!(f, "GatewayEvent::GatewayDeleted {gateway}")
             }
 
-            GatewayEvent::RouteChanged((_, gateway, listeners, routes)) => write!(
+            GatewayEvent::RouteChanged((_, gateway, listeners, routes, linked_routes)) => write!(
                 f,
-                "GatewayEvent::RouteChanged {gateway} listeners {listeners:?} routes {routes:?}"
+                "GatewayEvent::RouteChanged {gateway} listeners {listeners:?} routes {routes:?} linked_routes {linked_routes:?}"
             ),
         }
     }
 }
 
 pub struct GatewayChannelHandler {
-    gateways: Gateways,
     event_receiver: Receiver<GatewayEvent>,
 }
 
@@ -368,7 +246,6 @@ impl GatewayChannelHandler {
         (
             sender,
             Self {
-                gateways: Gateways::new(),
                 event_receiver: receiver,
             },
         )
@@ -381,53 +258,36 @@ impl GatewayChannelHandler {
                         info!("Backend got gateway {event:#}");
                          match event{
                             GatewayEvent::GatewayChanged((response_sender, gateway, listeners, routes)) => {
-                                let processed = self.gateways.update_listeners(gateway,listeners);
-                                let sent = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload::new(processed, routes)));
+                                let processed = deploy_gateway(gateway,listeners,routes.clone());
+                                let sent = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload::new(processed, routes.clone())));
                                 if let Err(e) = sent{
-                                    info!("Listener handler closed {e:?}");
+                                    warn!("Gateway handler closed {e:?}");
                                     return;
                                 }
                             }
 
                             GatewayEvent::GatewayDeleted((response_sender, gateway)) => {
-                                self.gateways.remove_listeners(&gateway);
+                                let _processed = deploy_gateway(gateway,vec![],vec![]);
                                 let sent = response_sender.send(GatewayResponse::GatewayDeleted);
                                 if let Err(e) = sent{
-                                    info!("Listener handler closed {e:?}");
+                                    warn!("Gateway handler closed {e:?}");
                                     return;
                                 }
                             }
 
-                            GatewayEvent::RouteChanged((response_sender, gateway, listeners, route)) => {
-                                let gateway_name = gateway;
+                            GatewayEvent::RouteChanged((response_sender, gateway, listeners, route, mut linked_routes)) => {
+                                linked_routes.push(route);
+                                let all_routes = linked_routes;
+                                let _processed = deploy_gateway(gateway,listeners,all_routes);
 
                                 let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload::new(RouteStatus::Attached, vec![])));
                                 if let Err(e) = sent{
-                                    info!("Listener handler closed {e:?}");
+                                    warn!("Gateway handler closed {e:?}");
                                     return;
                                 }
-                                // let processed = self.gateways.update_listeners(gateway,listeners);
-                                // let sent = response_sender.send(GatewayResponse::Processed(processed));
-                                // if let Err(e) = sent{
-                                //     info!("Listener handler closed {e:?}");
-                                //     return;
-                                // }
+
                             }
 
-                            // GatewayEvent::RouteRemoved((response_sender, gateway, route)) => {
-                            //     warn!("Route added {gateway} {route:?}");
-                            //     let sent = response_sender.send(GatewayResponse::RouteDeleted);
-                            //     if let Err(e) = sent{
-                            //         info!("Listener handler closed {e:?}");
-                            //         return;
-                            //     }
-                            //     // let processed = self.gateways.update_listeners(gateway,listeners);
-                            //     // let sent = response_sender.send(GatewayResponse::Processed(processed));
-                            //     // if let Err(e) = sent{
-                            //     //     info!("Listener handler closed {e:?}");
-                            //     //     return;
-                            //     // }
-                            // }
                         }
                     }
                     else => {

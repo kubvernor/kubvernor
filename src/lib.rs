@@ -15,7 +15,7 @@ mod state;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 
-use backends::gateways::GatewayChannelHandler;
+use backends::gateway_deployer::GatewayChannelHandler;
 use controllers::{
     gateway::GatewayController, gateway_class::GatewayClassController,
     http_route::HttpRouteController,

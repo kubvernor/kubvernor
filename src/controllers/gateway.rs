@@ -29,7 +29,7 @@ use super::{
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    backends::gateways::{
+    backends::gateway_deployer::{
         GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener, ListenerConfig,
         ListenerError, Route, RouteConfig,
     },
@@ -274,7 +274,6 @@ impl GatewayResourceHandler<Gateway> {
             VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
 
         if !listener_validation_errrors.is_empty() {
-            debug!("{log_context} Properly configured listeners {listeners:?}");
             warn!("{log_context} Misconfigured  listeners {listener_validation_errrors:?}");
         }
 
@@ -294,7 +293,7 @@ impl GatewayResourceHandler<Gateway> {
 
             for attached_route in attached_routes {
                 debug!("{log_context} attached route {attached_route:?}");
-                let updated_routes = self.update_route_resource(attached_route);
+                let updated_routes = self.update_route_parents(attached_route, id.to_string());
             }
 
             Ok(updated_gateway)
@@ -415,7 +414,7 @@ impl GatewayResourceHandler<Gateway> {
         &self,
         processed_listeners: Vec<(
             String,
-            std::result::Result<crate::backends::gateways::ListenerStatus, ListenerError>,
+            std::result::Result<crate::backends::gateway_deployer::ListenerStatus, ListenerError>,
         )>,
     ) -> Gateway {
         let log_context = self.log_context();
@@ -435,7 +434,10 @@ impl GatewayResourceHandler<Gateway> {
         Self::update_status_conditions(((*self.resource).clone()).clone(), gateway_status)
     }
 
-    fn update_route_resource(&self, attached_route: Route) -> HTTPRoute {
+    fn update_route_parents(&self, attached_route: Route, gateway_id: String) -> HTTPRoute {
+        // placeholder
+        // unfortunately a route object can be created before gateway objects are created
+
         HTTPRoute::default()
     }
 }
