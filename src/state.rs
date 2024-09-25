@@ -95,7 +95,7 @@ impl State {
         &self,
         resource_key: &ResourceKey,
     ) -> Option<&Vec<Arc<HTTPRoute>>> {
-        self.gateways_with_routes.get_vec(&resource_key)
+        self.gateways_with_routes.get_vec(resource_key)
     }
 
     pub fn save_gateway_class(&mut self, id: Uuid, gateway_class: &Arc<GatewayClass>) {

@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 use super::{
     resource_handler::ResourceHandler,
-    utils::{ResourceState, SpecCheckerArgs},
+    utils::{self, ResourceState, SpecCheckerArgs},
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
@@ -33,7 +33,7 @@ use crate::{
         self,
         gateway_deployer::{
             GatewayError, GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener,
-            ListenerConfig, ListenerError, ListenerStatus, Route, RouteConfig,
+            ListenerConfig, ListenerError, ListenerStatus, Route,
         },
     },
     controllers::utils::{FinalizerPatcher, ResourceFinalizer, VerifiyItems},
@@ -316,7 +316,7 @@ impl GatewayResourceHandler<Gateway> {
         };
         let resource_key = ResourceKey::from(&**gateway);
 
-        let linked_routes = Self::find_linked_routes(state, &resource_key);
+        let linked_routes = utils::find_linked_routes(state, &resource_key);
         let (response_sender, response_receiver) = oneshot::channel();
         let listener_event =
             GatewayEvent::GatewayChanged((response_sender, backend_gateway, linked_routes));
@@ -332,7 +332,8 @@ impl GatewayResourceHandler<Gateway> {
 
             for attached_route in attached_routes {
                 debug!("{log_context} attached route {attached_route:?}");
-                let updated_routes = self.update_route_parents(attached_route, id.to_string());
+                let updated_routes =
+                    self.update_route_parents(state, attached_route, &resource_key);
             }
 
             Ok(updated_gateway)
@@ -340,20 +341,6 @@ impl GatewayResourceHandler<Gateway> {
             warn!("{log_context} {response:?} ... Problem {response:?}");
             Err(ControllerError::BackendError)
         }
-    }
-
-    fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route> {
-        /// TODO: THIS IS EMPTY;
-        /// WE NEED A LIST OF ROUTES WHICH COULD BE ATTACHED TO GATEWAY
-        state
-            .get_http_routes_attached_to_gateway(gateway_id)
-            .map(|routes| {
-                routes
-                    .iter()
-                    .map(|r| Route::Http(RouteConfig::new(r.name_any())))
-                    .collect()
-            })
-            .unwrap_or_default()
     }
 
     fn update_status_conditions(
@@ -506,7 +493,23 @@ impl GatewayResourceHandler<Gateway> {
         Self::update_status_conditions(((*self.resource).clone()).clone(), gateway_status)
     }
 
-    fn update_route_parents(&self, attached_route: Route, gateway_id: String) -> HTTPRoute {
+    fn update_route_parents(
+        &self,
+        state: &State,
+        attached_route: Route,
+        gateway_id: &ResourceKey,
+    ) -> HTTPRoute {
+        let routes = state.get_http_routes_attached_to_gateway(gateway_id);
+        if let Some(routes) = routes {
+            let route = routes.iter().find(|f| {
+                f.metadata.name == Some(attached_route.name().to_owned())
+                    && f.metadata.namespace == attached_route.namespace().cloned()
+            });
+            if let Some(route) = route {
+                //TODO:: update status here
+            }
+        }
+
         // placeholder
         // unfortunately a route object can be created before gateway objects are created
 

@@ -27,14 +27,14 @@ use uuid::Uuid;
 
 use super::{
     resource_handler::ResourceHandler,
-    utils::{ResourceState, SpecCheckerArgs, VerifiyItems},
+    utils::{self, ResourceState, SpecCheckerArgs, VerifiyItems},
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
     backends::{
         self,
         gateway_deployer::{
-            GatewayEvent, GatewayResponse, Listener, Route, RouteConfig, RouteProcessedPayload,
+            GatewayEvent, GatewayResponse, Route, RouteConfig, RouteProcessedPayload,
         },
     },
     controllers::utils::{FinalizerPatcher, ResourceFinalizer},
@@ -243,7 +243,7 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let mut parents = vec![];
         for (gateway, _listeners) in matching_gateways {
-            let linked_routes = Self::find_linked_routes(state, &ResourceKey::from(&*gateway));
+            let linked_routes = utils::find_linked_routes(state, &ResourceKey::from(&*gateway));
             if let Ok(status) = self
                 .deploy_route(gateway_channel_sender, resource, &linked_routes, &gateway)
                 .await
@@ -351,18 +351,6 @@ impl HTTPRouteHandler<HTTPRoute> {
             .collect()
     }
 
-    fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route> {
-        state
-            .get_http_routes_attached_to_gateway(gateway_id)
-            .map(|routes| {
-                routes
-                    .iter()
-                    .map(|r| Route::Http(RouteConfig::new(r.name_any())))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
     async fn deploy_route(
         &self,
         sender: &Sender<GatewayEvent>,
@@ -385,7 +373,10 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let route_event = GatewayEvent::RouteChanged((
             response_sender,
-            Route::Http(RouteConfig::new(http_route.name_any())),
+            Route::Http(RouteConfig::new(
+                http_route.name_any(),
+                http_route.namespace(),
+            )),
             linked_routes.to_vec(),
             backend_gateway,
         ));

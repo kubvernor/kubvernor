@@ -12,7 +12,11 @@ use kube_core::{PartialObjectMeta, PartialObjectMetaExt};
 use log::{debug, warn};
 use serde::Serialize;
 
-use crate::controllers::ControllerError;
+use crate::{
+    backends::gateway_deployer::{Route, RouteConfig},
+    controllers::ControllerError,
+    state::{ResourceKey, State},
+};
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum ResourceState {
@@ -151,4 +155,16 @@ impl ResourceFinalizer {
         .await;
         res
     }
+}
+
+pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route> {
+    state
+        .get_http_routes_attached_to_gateway(gateway_id)
+        .map(|routes| {
+            routes
+                .iter()
+                .map(|r| Route::Http(RouteConfig::new(r.name_any(), r.namespace())))
+                .collect()
+        })
+        .unwrap_or_default()
 }

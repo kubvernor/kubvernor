@@ -147,11 +147,12 @@ impl Listener {
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct RouteConfig {
     name: String,
+    namespace: Option<String>,
 }
 
 impl RouteConfig {
-    pub fn new(name: String) -> Self {
-        Self { name }
+    pub fn new(name: String, namespace: Option<String>) -> Self {
+        Self { name, namespace }
     }
 }
 
@@ -159,6 +160,20 @@ impl RouteConfig {
 pub enum Route {
     Http(RouteConfig),
     Grpc(RouteConfig),
+}
+
+impl Route {
+    pub fn name(&self) -> &str {
+        match self {
+            Route::Http(c) | Route::Grpc(c) => &c.name,
+        }
+    }
+
+    pub fn namespace(&self) -> Option<&String> {
+        match self {
+            Route::Http(c) | Route::Grpc(c) => c.namespace.as_ref(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
