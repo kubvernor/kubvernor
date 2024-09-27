@@ -18,16 +18,16 @@ use kube::{
     runtime::{controller::Action, finalizer, watcher::Config, Controller},
     Api, Resource, ResourceExt,
 };
-use log::{debug, info, warn};
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot, Mutex,
 };
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::{
     resource_handler::ResourceHandler,
-    utils::{self, ResourceState, SpecCheckerArgs, VerifiyItems},
+    utils::{self, LogContext, ResourceCheckerArgs, ResourceState, VerifiyItems},
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
@@ -135,18 +135,20 @@ impl HttpRouteController {
             ));
         };
 
-        let Ok(id) = Uuid::parse_str(&maybe_id) else {
+        let Ok(_) = Uuid::parse_str(&maybe_id) else {
             return Err(ControllerError::InvalidPayload(
                 "Uid in wrong format".to_owned(),
             ));
         };
+
+        let resource_key = ResourceKey::try_from(resource.meta())?;
 
         let state = Arc::clone(&ctx.state);
         let version = resource.meta().resource_version.clone();
 
         let maybe_stored_route = {
             let state = state.lock().await;
-            state.get_http_route_by_id(id).cloned()
+            state.get_http_route_by_id(&resource_key).cloned()
         };
 
         let api = Api::namespaced(
@@ -160,7 +162,7 @@ impl HttpRouteController {
 
         let handler = HTTPRouteHandler {
             state: Arc::clone(&ctx.state),
-            id,
+            resource_key,
             controller_name: controller_name.clone(),
             resource,
             name,
@@ -168,22 +170,33 @@ impl HttpRouteController {
             api,
             gateway_channel_sender: ctx.gateway_channel_sender.clone(),
         };
-        handler.process(maybe_stored_route, Self::check_spec).await
+        handler
+            .process(maybe_stored_route, Self::check_spec, Self::check_status)
+            .await
     }
 
-    fn check_spec(args: SpecCheckerArgs<HTTPRoute>) -> ResourceState {
+    fn check_spec(args: ResourceCheckerArgs<HTTPRoute>) -> ResourceState {
         let (resource, stored_resource) = args;
         if resource.spec == stored_resource.spec {
-            ResourceState::SpecUnchanged
+            ResourceState::SpecNotChanged
         } else {
             ResourceState::SpecChanged
+        }
+    }
+
+    fn check_status(args: ResourceCheckerArgs<HTTPRoute>) -> ResourceState {
+        let (resource, stored_resource) = args;
+        if resource.status == stored_resource.status {
+            ResourceState::StatusNotChanged
+        } else {
+            ResourceState::StatusChanged
         }
     }
 }
 
 struct HTTPRouteHandler<R> {
     state: Arc<Mutex<State>>,
-    id: Uuid,
+    resource_key: ResourceKey,
     controller_name: String,
     resource: Arc<R>,
     name: String,
@@ -200,7 +213,7 @@ impl HTTPRouteHandler<HTTPRoute> {
     /// * we shoudl update the route's status
     async fn on_new_or_changed(
         &self,
-        id: Uuid,
+        id: ResourceKey,
         resource: &Arc<HTTPRoute>,
         state: &mut State,
     ) -> Result<Action> {
@@ -231,13 +244,13 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let parent_gateway_refs = parent_gateway_refs_keys
             .clone()
-            .map(|(parent_ref, key)| (parent_ref, state.get_gateway_by_resource(&key).cloned()))
+            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(&key).cloned()))
             .map(|i| if i.1.is_some() { Ok(i) } else { Err(i) });
 
         let (resolved_gateways, unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
 
         parent_gateway_refs_keys
-            .for_each(|(_ref, key)| state.attach_http_route_to_gateway(key, resource));
+            .for_each(|(_ref, key)| state.attach_http_route_to_gateway(key, id.clone()));
 
         let matching_gateways = Self::filter_matching_gateways(&resolved_gateways);
 
@@ -259,7 +272,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                 resource.metadata.generation,
             ),
         );
-        state.save_http_route(id, resource);
+        state.save_http_route(id.clone(), resource);
 
         let res = api
             .patch_status(
@@ -272,10 +285,11 @@ impl HTTPRouteHandler<HTTPRoute> {
             )
             .await;
         match res {
-            Ok(_updated_route) => {
+            Ok(updated_route) => {
                 let _res =
                     FinalizerPatcher::patch_finalizer(api, name, controller_name, controller_name)
                         .await;
+                state.save_http_route(id.clone(), &Arc::new(updated_route));
                 Ok(Action::await_change())
             }
 
@@ -457,48 +471,46 @@ impl HTTPRouteHandler<HTTPRoute> {
     }
 }
 
-struct LogContext<'a> {
-    controller_name: &'a str,
-    id: Uuid,
-    name: &'a str,
-    version: Option<String>,
-}
-
-impl std::fmt::Display for LogContext<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "reconcile_http_route: controller_name: {} id: {}, name: {} version: {:?}",
-            self.controller_name, self.id, self.name, self.version
-        )
+impl<'a> LogContext<'a, HTTPRoute> {
+    fn new(
+        controller_name: &'a str,
+        resource_key: &'a ResourceKey,
+        version: Option<String>,
+    ) -> Self {
+        Self {
+            controller_name,
+            resource_key,
+            version,
+            resource_type: std::marker::PhantomData,
+        }
     }
 }
 
 #[async_trait]
 impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
     fn log_context(&self) -> impl std::fmt::Display {
-        LogContext {
-            controller_name: &self.controller_name,
-            id: self.id,
-            name: &self.name,
-            version: self.version.clone(),
-        }
+        LogContext::<HTTPRoute>::new(
+            &self.controller_name,
+            &self.resource_key,
+            self.version.clone(),
+        )
     }
 
     fn state(&self) -> &Arc<Mutex<State>> {
         &self.state
     }
 
-    fn id(&self) -> Uuid {
-        self.id
-    }
     fn resource(&self) -> Arc<HTTPRoute> {
         Arc::clone(&self.resource)
     }
 
-    async fn on_spec_unchanged(
+    fn resource_key(&self) -> ResourceKey {
+        self.resource_key.clone()
+    }
+
+    async fn on_spec_not_changed(
         &self,
-        id: Uuid,
+        id: ResourceKey,
         resource: &Arc<HTTPRoute>,
         state: &mut State,
     ) -> Result<Action> {
@@ -508,7 +520,7 @@ impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
 
     async fn on_new(
         &self,
-        id: Uuid,
+        id: ResourceKey,
         resource: &Arc<HTTPRoute>,
         state: &mut State,
     ) -> Result<Action> {
@@ -517,7 +529,7 @@ impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
 
     async fn on_spec_changed(
         &self,
-        id: Uuid,
+        id: ResourceKey,
         resource: &Arc<HTTPRoute>,
         state: &mut State,
     ) -> Result<Action> {
@@ -526,14 +538,14 @@ impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
 
     async fn on_deleted(
         &self,
-        id: Uuid,
+        id: ResourceKey,
         resource: &Arc<HTTPRoute>,
         state: &mut State,
     ) -> Result<Action> {
         let controller_name = &self.controller_name;
         let api = &self.api;
 
-        state.delete_http_route(id);
+        state.delete_http_route(&id);
         let res = ResourceFinalizer::delete_resource(api, controller_name, resource).await;
         res.map_err(|e: finalizer::Error<ControllerError>| {
             ControllerError::FinalizerPatchFailed(e.to_string())

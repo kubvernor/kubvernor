@@ -1,11 +1,11 @@
 use std::fmt::Display;
 
-use log::{info, warn};
 use thiserror::Error;
 use tokio::sync::{
     mpsc::{self, Receiver},
     oneshot,
 };
+use tracing::{info, warn};
 use uuid::Uuid;
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
@@ -221,14 +221,20 @@ pub fn deploy_route(
 #[derive(Debug)]
 pub struct GatewayProcessedPayload {
     pub gateway_status: GatewayStatus,
-    pub routes: Vec<Route>,
+    pub attached_routes: Vec<Route>,
+    pub ignored_routes: Vec<Route>,
 }
 
 impl GatewayProcessedPayload {
-    pub fn new(gateway_status: GatewayStatus, routes: Vec<Route>) -> Self {
+    pub fn new(
+        gateway_status: GatewayStatus,
+        attached_routes: Vec<Route>,
+        ignored_routes: Vec<Route>,
+    ) -> Self {
         Self {
             gateway_status,
-            routes,
+            attached_routes,
+            ignored_routes,
         }
     }
 }
@@ -294,11 +300,11 @@ impl Display for GatewayEvent {
     }
 }
 
-pub struct GatewayChannelHandler {
+pub struct GatewayDeployerChannelHandler {
     event_receiver: Receiver<GatewayEvent>,
 }
 
-impl GatewayChannelHandler {
+impl GatewayDeployerChannelHandler {
     pub fn new() -> (mpsc::Sender<GatewayEvent>, Self) {
         let (sender, receiver) = mpsc::channel(1024);
         (
@@ -316,9 +322,20 @@ impl GatewayChannelHandler {
                         info!("Backend got gateway {event:#}");
                          match event{
                             GatewayEvent::GatewayChanged((response_sender, gateway, routes)) => {
+                                let attached_routes = if routes.len() > 0{
+                                    &routes[1..]
+                                }else{
+                                    &[]
+                                };
+
+                                let ignored_routes = if routes.len() > 1{
+                                    &routes[0..1]
+                                }else{
+                                    &[]
+                                };
                                 let processed = deploy_gateway(&gateway,&routes);
                                 let gateway_status = GatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: processed};
-                                let sent = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload::new(gateway_status, routes)));
+                                let sent = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload::new(gateway_status, attached_routes.to_vec(), ignored_routes.to_vec())));
                                 if let Err(e) = sent{
                                     warn!("Gateway handler closed {e:?}");
                                     return;

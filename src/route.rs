@@ -4,9 +4,9 @@ use std::{
 };
 
 use futures::channel::oneshot;
-use log::{debug, info};
 use thiserror::Error;
 use tokio::sync::mpsc::{self, Receiver};
+use tracing::{debug, info};
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum RouteError {

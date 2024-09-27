@@ -4,6 +4,7 @@ pub mod gateway_class;
 pub mod http_route;
 mod resource_handler;
 mod utils;
+pub use utils::LogContext;
 
 #[allow(dead_code)]
 #[derive(thiserror::Error, Debug)]
@@ -17,6 +18,7 @@ pub enum ControllerError {
     UnknownResource,
     UnknownGatewayClass(String),
     ResourceInWrongState,
+    ResourceHasWrongStatus,
 }
 
 const RECONCILE_LONG_WAIT: Duration = Duration::from_secs(3600);

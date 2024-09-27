@@ -1,5 +1,6 @@
-use std::sync::Arc;
+use std::{marker::PhantomData, sync::Arc};
 
+use gateway_api::apis::standard::gateways::Gateway;
 use kube::{
     api::{Patch, PatchParams},
     runtime::{
@@ -9,8 +10,8 @@ use kube::{
     Api, Resource, ResourceExt,
 };
 use kube_core::{PartialObjectMeta, PartialObjectMetaExt};
-use log::{debug, warn};
 use serde::Serialize;
+use tracing::{debug, warn};
 
 use crate::{
     backends::gateway_deployer::{Route, RouteConfig},
@@ -21,10 +22,12 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum ResourceState {
     New,
-    SpecUnchanged,
+    SpecNotChanged,
     Deleted,
     SpecChanged,
-    VersionUnchanged,
+    VersionNotChanged,
+    StatusChanged,
+    StatusNotChanged,
 }
 
 pub struct VerifiyItems;
@@ -94,8 +97,8 @@ impl FinalizerPatcher {
     }
 }
 
-pub type SpecCheckerArgs<'a, T> = (&'a Arc<T>, Arc<T>);
-pub type SpecChecker<T> = fn(args: SpecCheckerArgs<T>) -> ResourceState;
+pub type ResourceCheckerArgs<'a, T> = (&'a Arc<T>, Arc<T>);
+pub type ResourceChecker<T> = fn(args: ResourceCheckerArgs<T>) -> ResourceState;
 
 pub struct ResourceStateChecker {}
 
@@ -103,7 +106,8 @@ impl ResourceStateChecker {
     pub fn check_status<R>(
         resource: &Arc<R>,
         maybe_stored_resource: Option<Arc<R>>,
-        resource_spec_checker: SpecChecker<R>,
+        resource_spec_checker: ResourceChecker<R>,
+        resource_status_checker: ResourceChecker<R>,
     ) -> ResourceState
     where
         R: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug,
@@ -116,9 +120,14 @@ impl ResourceStateChecker {
 
         if let Some(stored_object) = maybe_stored_resource {
             if stored_object.meta().resource_version == resource.meta().resource_version {
-                return ResourceState::VersionUnchanged;
+                return ResourceState::VersionNotChanged;
             }
-            resource_spec_checker((resource, stored_object))
+            let status = resource_spec_checker((resource, Arc::clone(&stored_object)));
+            if ResourceState::SpecNotChanged == status {
+                resource_status_checker((resource, stored_object))
+            } else {
+                status
+            }
         } else {
             ResourceState::New
         }
@@ -167,4 +176,36 @@ pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route>
                 .collect()
         })
         .unwrap_or_default()
+}
+
+pub struct LogContext<'a, T> {
+    pub controller_name: &'a str,
+    pub resource_key: &'a ResourceKey,
+    pub version: Option<String>,
+    pub resource_type: PhantomData<T>,
+}
+
+impl<T> std::fmt::Display for LogContext<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "reconcile {:?}: resource_id: {},  version: {:?}",
+            self.resource_type, self.resource_key, self.version
+        )
+    }
+}
+
+impl<'a> LogContext<'a, Gateway> {
+    pub fn new(
+        controller_name: &'a str,
+        resource_key: &'a ResourceKey,
+        version: Option<String>,
+    ) -> Self {
+        Self {
+            controller_name,
+            resource_key,
+            version,
+            resource_type: std::marker::PhantomData,
+        }
+    }
 }
