@@ -21,12 +21,7 @@ where
     R: Resource<DynamicType = ()>,
     R: Send + Sync + 'static,
 {
-    async fn process(
-        &self,
-        stored_resource: Option<Arc<R>>,
-        resource_spec_checker: ResourceChecker<R>,
-        resource_status_checker: ResourceChecker<R>,
-    ) -> Result<Action> {
+    async fn process(&self, stored_resource: Option<Arc<R>>, resource_spec_checker: ResourceChecker<R>, resource_status_checker: ResourceChecker<R>) -> Result<Action> {
         let resource = &Arc::clone(&self.resource());
         let id = self.resource_key();
         let state = self.state();
@@ -34,45 +29,26 @@ where
         let state = &mut state;
         let log_context = self.log_context();
 
-        let resource_state = ResourceStateChecker::check_status(
-            resource,
-            stored_resource.clone(),
-            resource_spec_checker,
-            resource_status_checker,
-        );
+        let resource_state = ResourceStateChecker::check_status(resource, stored_resource.clone(), resource_spec_checker, resource_status_checker);
 
         info!("{log_context} Resource state {resource_state:?}");
 
         match resource_state {
-            ResourceState::VersionNotChanged => {
-                self.on_version_not_changed(id, resource, state).await
-            }
+            ResourceState::VersionNotChanged => self.on_version_not_changed(id, resource, state).await,
             ResourceState::SpecNotChanged => self.on_spec_not_changed(id, resource, state).await,
             ResourceState::New => self.on_new(id, resource, state).await,
             ResourceState::SpecChanged => self.on_spec_changed(id, resource, state).await,
             ResourceState::StatusChanged => self.on_status_changed(id, resource, state).await,
-            ResourceState::StatusNotChanged => {
-                self.on_status_not_changed(id, resource, state).await
-            }
+            ResourceState::StatusNotChanged => self.on_status_not_changed(id, resource, state).await,
             ResourceState::Deleted => self.on_deleted(id, resource, state).await,
         }
     }
 
-    async fn on_version_not_changed(
-        &self,
-        _: ResourceKey,
-        _: &Arc<R>,
-        _: &mut State,
-    ) -> Result<Action> {
+    async fn on_version_not_changed(&self, _: ResourceKey, _: &Arc<R>, _: &mut State) -> Result<Action> {
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_spec_not_changed(
-        &self,
-        _: ResourceKey,
-        _: &Arc<R>,
-        _: &mut State,
-    ) -> Result<Action> {
+    async fn on_spec_not_changed(&self, _: ResourceKey, _: &Arc<R>, _: &mut State) -> Result<Action> {
         Err(ControllerError::AlreadyAdded)
     }
 
@@ -88,12 +64,7 @@ where
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_status_not_changed(
-        &self,
-        _: ResourceKey,
-        _: &Arc<R>,
-        _: &mut State,
-    ) -> Result<Action> {
+    async fn on_status_not_changed(&self, _: ResourceKey, _: &Arc<R>, _: &mut State) -> Result<Action> {
         Err(ControllerError::AlreadyAdded)
     }
 

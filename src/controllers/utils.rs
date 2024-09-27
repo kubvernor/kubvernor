@@ -49,12 +49,7 @@ impl VerifiyItems {
 pub struct FinalizerPatcher {}
 
 impl FinalizerPatcher {
-    pub async fn patch_finalizer<T>(
-        api: &Api<T>,
-        resource_name: &str,
-        controller_name: &str,
-        finalizer_name: &str,
-    ) -> std::result::Result<(), ControllerError>
+    pub async fn patch_finalizer<T>(api: &Api<T>, resource_name: &str, controller_name: &str, finalizer_name: &str) -> std::result::Result<(), ControllerError>
     where
         T: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug,
         T: ResourceExt,
@@ -74,19 +69,10 @@ impl FinalizerPatcher {
                 object_meta.managed_fields = None;
                 let meta: PartialObjectMeta<T> = object_meta.into_request_partial::<_>();
 
-                match api
-                    .patch_metadata(
-                        resource_name,
-                        &PatchParams::apply(controller_name),
-                        &Patch::Apply(&meta),
-                    )
-                    .await
-                {
+                match api.patch_metadata(resource_name, &PatchParams::apply(controller_name), &Patch::Apply(&meta)).await {
                     Ok(_) => Ok(()),
                     Err(e) => {
-                        warn!(
-                            "patch_finalizer: {type_name} {controller_name} {resource_name} patch failed {e:?}", 
-                        );
+                        warn!("patch_finalizer: {type_name} {controller_name} {resource_name} patch failed {e:?}",);
                         Err(ControllerError::PatchFailed)
                     }
                 }
@@ -103,12 +89,7 @@ pub type ResourceChecker<T> = fn(args: ResourceCheckerArgs<T>) -> ResourceState;
 pub struct ResourceStateChecker {}
 
 impl ResourceStateChecker {
-    pub fn check_status<R>(
-        resource: &Arc<R>,
-        maybe_stored_resource: Option<Arc<R>>,
-        resource_spec_checker: ResourceChecker<R>,
-        resource_status_checker: ResourceChecker<R>,
-    ) -> ResourceState
+    pub fn check_status<R>(resource: &Arc<R>, maybe_stored_resource: Option<Arc<R>>, resource_spec_checker: ResourceChecker<R>, resource_status_checker: ResourceChecker<R>) -> ResourceState
     where
         R: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug,
         R: ResourceExt,
@@ -137,11 +118,7 @@ impl ResourceStateChecker {
 pub struct ResourceFinalizer {}
 
 impl ResourceFinalizer {
-    pub async fn delete_resource<R, ReconcileErr>(
-        api: &Api<R>,
-        finalizer_name: &str,
-        resource: &Arc<R>,
-    ) -> std::result::Result<Action, Error<ReconcileErr>>
+    pub async fn delete_resource<R, ReconcileErr>(api: &Api<R>, finalizer_name: &str, resource: &Arc<R>) -> std::result::Result<Action, Error<ReconcileErr>>
     where
         R: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug,
         R: ResourceExt,
@@ -149,18 +126,11 @@ impl ResourceFinalizer {
         R: Serialize,
         ReconcileErr: std::error::Error + 'static,
     {
-        let res: std::result::Result<Action, Error<_>> = finalizer::finalizer(
-            api,
-            finalizer_name,
-            Arc::clone(resource),
-            |event| async move {
-                match event {
-                    finalizer::Event::Apply(_) | finalizer::Event::Cleanup(_) => {
-                        Result::<Action, ReconcileErr>::Ok(Action::await_change())
-                    }
-                }
-            },
-        )
+        let res: std::result::Result<Action, Error<_>> = finalizer::finalizer(api, finalizer_name, Arc::clone(resource), |event| async move {
+            match event {
+                finalizer::Event::Apply(_) | finalizer::Event::Cleanup(_) => Result::<Action, ReconcileErr>::Ok(Action::await_change()),
+            }
+        })
         .await;
         res
     }
@@ -169,12 +139,7 @@ impl ResourceFinalizer {
 pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route> {
     state
         .get_http_routes_attached_to_gateway(gateway_id)
-        .map(|routes| {
-            routes
-                .iter()
-                .map(|r| Route::Http(RouteConfig::new(r.name_any(), r.namespace())))
-                .collect()
-        })
+        .map(|routes| routes.iter().map(|r| Route::Http(RouteConfig::new(r.name_any(), r.namespace()))).collect())
         .unwrap_or_default()
 }
 
@@ -187,20 +152,12 @@ pub struct LogContext<'a, T> {
 
 impl<T> std::fmt::Display for LogContext<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{:?}: resource_id: {},  version: {:?}",
-            self.resource_type, self.resource_key, self.version
-        )
+        write!(f, "{:?}: resource_id: {},  version: {:?}", self.resource_type, self.resource_key, self.version)
     }
 }
 
 impl<'a> LogContext<'a, Gateway> {
-    pub fn new(
-        controller_name: &'a str,
-        resource_key: &'a ResourceKey,
-        version: Option<String>,
-    ) -> Self {
+    pub fn new(controller_name: &'a str, resource_key: &'a ResourceKey, version: Option<String>) -> Self {
         Self {
             controller_name,
             resource_key,

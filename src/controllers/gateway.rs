@@ -5,9 +5,7 @@ use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
     gateways::{Gateway, GatewayListeners, GatewayStatus, GatewayStatusListeners},
-    httproutes::{
-        HTTPRoute, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef,
-    },
+    httproutes::{HTTPRoute, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
 };
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
@@ -33,10 +31,7 @@ use super::{
 use crate::{
     backends::{
         self,
-        gateway_deployer::{
-            GatewayError, GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener,
-            ListenerConfig, ListenerError, ListenerStatus, Route,
-        },
+        gateway_deployer::{GatewayError, GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener, ListenerConfig, ListenerError, ListenerStatus, Route},
     },
     controllers::utils::VerifiyItems,
     patchers::{FinalizerContext, Operation, PatchContext},
@@ -67,19 +62,11 @@ pub struct GatewayController {
 
 impl From<&Gateway> for ResourceKey {
     fn from(value: &Gateway) -> Self {
-        let namespace = value
-            .meta()
-            .namespace
-            .clone()
-            .unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+        let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
 
         Self {
             group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace: if namespace.is_empty() {
-                DEFAULT_NAMESPACE_NAME.to_owned()
-            } else {
-                namespace
-            },
+            namespace: if namespace.is_empty() { DEFAULT_NAMESPACE_NAME.to_owned() } else { namespace },
             name: value.name_any(),
             kind: DEFAULT_KIND_NAME.to_owned(),
         }
@@ -90,11 +77,7 @@ impl TryFrom<&GatewayListeners> for Listener {
     type Error = ListenerError;
 
     fn try_from(gateway_listener: &GatewayListeners) -> std::result::Result<Self, Self::Error> {
-        let config = ListenerConfig::new(
-            gateway_listener.name.clone(),
-            gateway_listener.port,
-            gateway_listener.hostname.clone(),
-        );
+        let config = ListenerConfig::new(gateway_listener.name.clone(), gateway_listener.port, gateway_listener.hostname.clone());
 
         match gateway_listener.protocol.as_str() {
             "HTTP" => Ok(Self::Http(config)),
@@ -102,9 +85,7 @@ impl TryFrom<&GatewayListeners> for Listener {
             "TCP" => Ok(Self::Tcp(config)),
             "TLS" => Ok(Self::Tls(config)),
             "UDP" => Ok(Self::Udp(config)),
-            _ => Err(ListenerError::UnknownProtocol(
-                gateway_listener.protocol.clone(),
-            )),
+            _ => Err(ListenerError::UnknownProtocol(gateway_listener.protocol.clone())),
         }
     }
 }
@@ -113,34 +94,19 @@ impl TryFrom<&Gateway> for backends::gateway_deployer::Gateway {
     type Error = GatewayError;
 
     fn try_from(gateway: &Gateway) -> std::result::Result<Self, Self::Error> {
-        let id = Uuid::parse_str(&gateway.metadata.uid.clone().unwrap_or_default())
-            .map_err(|_| GatewayError::ConversionProblem("Can't parse uuid".to_owned()))?;
+        let id = Uuid::parse_str(&gateway.metadata.uid.clone().unwrap_or_default()).map_err(|_| GatewayError::ConversionProblem("Can't parse uuid".to_owned()))?;
         let name = gateway.metadata.name.clone().unwrap_or_default();
         if name.is_empty() {
-            return Err(GatewayError::ConversionProblem(
-                "Name can't be empty".to_owned(),
-            ));
+            return Err(GatewayError::ConversionProblem("Name can't be empty".to_owned()));
         }
-        let namespace = gateway
-            .metadata
-            .namespace
-            .clone()
-            .unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+        let namespace = gateway.metadata.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
 
-        let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) =
-            VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
+        let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) = VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
         if !listener_validation_errrors.is_empty() {
-            return Err(GatewayError::ConversionProblem(
-                "Misconfigured listeners".to_owned(),
-            ));
+            return Err(GatewayError::ConversionProblem("Misconfigured listeners".to_owned()));
         }
 
-        Ok(Self {
-            id,
-            name,
-            namespace,
-            listeners,
-        })
+        Ok(Self { id, name, namespace, listeners })
     }
 }
 
@@ -174,11 +140,7 @@ impl GatewayController {
         });
 
         Controller::new(self.api.clone(), Config::default())
-            .run(
-                Self::reconcile_gateway,
-                Self::error_policy,
-                Arc::clone(&context),
-            )
+            .run(Self::reconcile_gateway, Self::error_policy, Arc::clone(&context))
             .for_each(|_| futures::future::ready(()))
             .boxed()
     }
@@ -193,9 +155,7 @@ impl GatewayController {
             | ControllerError::FinalizerPatchFailed(_)
             | ControllerError::BackendError
             | ControllerError::UnknownResource => Action::requeue(RECONCILE_LONG_WAIT),
-            ControllerError::UnknownGatewayClass(_)
-            | ControllerError::ResourceInWrongState
-            | ControllerError::ResourceHasWrongStatus => Action::requeue(RECONCILE_ERROR_WAIT),
+            ControllerError::UnknownGatewayClass(_) | ControllerError::ResourceInWrongState | ControllerError::ResourceHasWrongStatus => Action::requeue(RECONCILE_ERROR_WAIT),
         }
     }
 
@@ -206,21 +166,15 @@ impl GatewayController {
         let gateway_class_patcher = ctx.gateway_class_patcher.clone();
 
         let Some(name) = resource.meta().name.clone() else {
-            return Err(ControllerError::InvalidPayload(
-                "Resource name is not provided".to_owned(),
-            ));
+            return Err(ControllerError::InvalidPayload("Resource name is not provided".to_owned()));
         };
 
         let Some(maybe_id) = resource.metadata.uid.clone() else {
-            return Err(ControllerError::InvalidPayload(
-                "Uid must be present".to_owned(),
-            ));
+            return Err(ControllerError::InvalidPayload("Uid must be present".to_owned()));
         };
 
         let Ok(_) = Uuid::parse_str(&maybe_id) else {
-            return Err(ControllerError::InvalidPayload(
-                "Uid in wrong format".to_owned(),
-            ));
+            return Err(ControllerError::InvalidPayload("Uid in wrong format".to_owned()));
         };
         let resource_key = ResourceKey::try_from(resource.meta())?;
 
@@ -230,14 +184,9 @@ impl GatewayController {
         let gateway_class_name = {
             let gateway_class_name = &resource.spec.gateway_class_name;
             let state = state.lock().await;
-            if !state
-                .get_gateway_classes()
-                .any(|gc| gc.metadata.name == Some(gateway_class_name.to_string()))
-            {
+            if !state.get_gateway_classes().any(|gc| gc.metadata.name == Some(gateway_class_name.to_string())) {
                 warn!("reconcile_gateway: {controller_name} {name} Unknown gateway class name {gateway_class_name}");
-                return Err(ControllerError::UnknownGatewayClass(
-                    gateway_class_name.clone(),
-                ));
+                return Err(ControllerError::UnknownGatewayClass(gateway_class_name.clone()));
             }
             gateway_class_name.clone()
         };
@@ -259,13 +208,7 @@ impl GatewayController {
             gateway_patcher,
             gateway_class_patcher,
         };
-        handler
-            .process(
-                maybe_stored_gateway_class,
-                Self::check_spec,
-                Self::check_status,
-            )
-            .await
+        handler.process(maybe_stored_gateway_class, Self::check_spec, Self::check_status).await
     }
 
     fn check_spec(args: ResourceCheckerArgs<Gateway>) -> ResourceState {
@@ -303,11 +246,7 @@ struct GatewayResourceHandler<R> {
 #[async_trait]
 impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
     fn log_context(&self) -> impl std::fmt::Display {
-        LogContext::<Gateway>::new(
-            &self.controller_name,
-            &self.resource_key,
-            self.version.clone(),
-        )
+        LogContext::<Gateway>::new(&self.controller_name, &self.resource_key, self.version.clone())
     }
 
     fn state(&self) -> &Arc<Mutex<State>> {
@@ -322,85 +261,45 @@ impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
         Arc::clone(&self.resource)
     }
 
-    async fn on_spec_not_changed(
-        &self,
-        resource_key: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &mut State,
-    ) -> Result<Action> {
+    async fn on_spec_not_changed(&self, resource_key: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         state.save_gateway(resource_key, resource);
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_new(
-        &self,
-        resource_key: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &mut State,
-    ) -> Result<Action> {
+    async fn on_new(&self, resource_key: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         self.on_new_or_changed(resource_key, resource, state).await
     }
 
-    async fn on_spec_changed(
-        &self,
-        id: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &mut State,
-    ) -> Result<Action> {
+    async fn on_spec_changed(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         self.on_new_or_changed(id, resource, state).await
     }
 
-    async fn on_status_changed(
-        &self,
-        id: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &mut State,
-    ) -> Result<Action> {
+    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         self.on_status_changed(id, resource, state).await
     }
 
-    async fn on_deleted(
-        &self,
-        id: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &mut State,
-    ) -> Result<Action> {
+    async fn on_deleted(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         let controller_name = &self.controller_name;
         state.delete_gateway(&id);
 
-        let _res = self
-            .gateway_patcher
-            .send(Operation::Delete((
-                id.clone(),
-                (**resource).clone(),
-                controller_name.to_owned(),
-            )))
-            .await;
+        let _res = self.gateway_patcher.send(Operation::Delete((id.clone(), (**resource).clone(), controller_name.to_owned()))).await;
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 }
 
 impl GatewayResourceHandler<Gateway> {
-    async fn deploy_gateway(
-        &self,
-        sender: &Sender<GatewayEvent>,
-        gateway: &Arc<Gateway>,
-        state: &State,
-    ) -> Result<Gateway> {
+    async fn deploy_gateway(&self, sender: &Sender<GatewayEvent>, gateway: &Arc<Gateway>, state: &State) -> Result<Gateway> {
         let log_context = self.log_context();
         let maybe_gateway = backends::gateway_deployer::Gateway::try_from(&**gateway);
         let Ok(backend_gateway) = maybe_gateway else {
             warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
-            return Err(ControllerError::InvalidPayload(
-                "Misconfigured gateway".to_owned(),
-            ));
+            return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
         let resource_key = ResourceKey::from(&**gateway);
 
         let linked_routes = utils::find_linked_routes(state, &resource_key);
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event =
-            GatewayEvent::GatewayChanged((response_sender, backend_gateway, linked_routes));
+        let listener_event = GatewayEvent::GatewayChanged((response_sender, backend_gateway, linked_routes));
         let _ = sender.send(listener_event).await;
         let response = response_receiver.await;
 
@@ -412,13 +311,8 @@ impl GatewayResourceHandler<Gateway> {
         {
             let updated_gateway = self.update_gateway_resource(gateway, gateway_status.listeners);
             for attached_route in attached_routes {
-                let updated_route = self
-                    .update_route_parents(state, attached_route, &resource_key)
-                    .await;
-                warn!(
-                    "{log_context} Attached route {:?}",
-                    updated_route.map(|r| r.map(|r| ResourceKey::try_from(r.meta()).unwrap()))
-                );
+                let updated_route = self.update_route_parents(state, attached_route, &resource_key).await;
+                warn!("{log_context} Attached route {:?}", updated_route.map(|r| r.map(|r| ResourceKey::try_from(r.meta()).unwrap())));
             }
             warn!("{log_context} Ignored routes  {ignored_routes:?}");
 
@@ -429,18 +323,14 @@ impl GatewayResourceHandler<Gateway> {
         }
     }
 
-    fn update_status_conditions(
-        mut gateway: Gateway,
-        mut gateway_status: GatewayStatus,
-    ) -> Gateway {
+    fn update_status_conditions(mut gateway: Gateway, mut gateway_status: GatewayStatus) -> Gateway {
         let mut conditions: Vec<Condition> = vec![];
 
         let new_condition = Condition {
             last_transition_time: Time(Utc::now()),
             message: "Updated by controller".to_owned(),
             observed_generation: gateway.metadata.generation,
-            reason: gateway_api::apis::standard::constants::GatewayConditionReason::Ready
-                .to_string(),
+            reason: gateway_api::apis::standard::constants::GatewayConditionReason::Ready.to_string(),
             status: "True".to_owned(),
             type_: gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string(),
         };
@@ -457,12 +347,7 @@ impl GatewayResourceHandler<Gateway> {
     /// * we should update gatway's status if the route count has changed for a listener
     /// * we should update the route's status and reflect that the ownership might changed
     ///
-    async fn on_new_or_changed(
-        &self,
-        id: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &mut State,
-    ) -> Result<Action> {
+    async fn on_new_or_changed(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         let sender = &self.gateway_channel_sender;
         let updated_gateway = self.deploy_gateway(sender, resource, state).await?;
         state.save_gateway(id.clone(), resource);
@@ -479,24 +364,14 @@ impl GatewayResourceHandler<Gateway> {
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 
-    async fn on_status_changed(
-        &self,
-        id: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &mut State,
-    ) -> Result<Action> {
+    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         let controller_name = &self.controller_name;
         let gateway_class_name = &self.gateway_class_name;
         if let Some(status) = &resource.status {
             if let Some(conditions) = &status.conditions {
-                if conditions.iter().any(|c| {
-                    c.type_
-                        == gateway_api::apis::standard::constants::GatewayConditionType::Ready
-                            .to_string()
-                }) {
+                if conditions.iter().any(|c| c.type_ == gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string()) {
                     state.save_gateway(id, resource);
-                    self.add_finalizer_to_gateway_class(gateway_class_name)
-                        .await;
+                    self.add_finalizer_to_gateway_class(gateway_class_name).await;
                     let _ = self.add_finalizer(controller_name).await;
                     return Ok(Action::requeue(RECONCILE_LONG_WAIT));
                 }
@@ -530,11 +405,7 @@ impl GatewayResourceHandler<Gateway> {
             .await;
     }
 
-    fn update_gateway_resource(
-        &self,
-        gateway: &Gateway,
-        processed_listeners: Vec<ListenerStatus>,
-    ) -> Gateway {
+    fn update_gateway_resource(&self, gateway: &Gateway, processed_listeners: Vec<ListenerStatus>) -> Gateway {
         let log_context = self.log_context();
         debug!("{log_context} listener statuses {processed_listeners:?}");
         let listener_statuses: Vec<_> = processed_listeners
@@ -546,8 +417,7 @@ impl GatewayResourceHandler<Gateway> {
                         last_transition_time: Time(Utc::now()),
                         message: "Updated by controller".to_owned(),
                         observed_generation: gateway.metadata.generation,
-                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted
-                            .to_string(),
+                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted.to_string(),
                         status: "True".to_owned(),
                         type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
                     }],
@@ -560,8 +430,7 @@ impl GatewayResourceHandler<Gateway> {
                         last_transition_time: Time(Utc::now()),
                         message: "Updated by controller".to_owned(),
                         observed_generation: gateway.metadata.generation,
-                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted
-                            .to_string(),
+                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted.to_string(),
                         status: "False".to_owned(),
                         type_: gateway_api::apis::standard::constants::ListenerConditionType::Conflicted.to_string(),
                     }],
@@ -579,26 +448,15 @@ impl GatewayResourceHandler<Gateway> {
         Self::update_status_conditions(((*self.resource).clone()).clone(), gateway_status)
     }
 
-    async fn update_route_parents(
-        &self,
-        state: &State,
-        attached_route: Route,
-        gateway_id: &ResourceKey,
-    ) -> Option<std::result::Result<HTTPRoute, kube::Error>> {
+    async fn update_route_parents(&self, state: &State, attached_route: Route, gateway_id: &ResourceKey) -> Option<std::result::Result<HTTPRoute, kube::Error>> {
         let routes = state.get_http_routes_attached_to_gateway(gateway_id);
 
         if let Some(routes) = routes {
-            let route = routes.iter().find(|f| {
-                f.metadata.name == Some(attached_route.name().to_owned())
-                    && f.metadata.namespace == attached_route.namespace().cloned()
-            });
+            let route = routes
+                .iter()
+                .find(|f| f.metadata.name == Some(attached_route.name().to_owned()) && f.metadata.namespace == attached_route.namespace().cloned());
             if let Some(route) = route {
-                let route_api = Api::<HTTPRoute>::namespaced(
-                    self.client.clone(),
-                    &route
-                        .namespace()
-                        .unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
-                );
+                let route_api = Api::<HTTPRoute>::namespaced(self.client.clone(), &route.namespace().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()));
                 let status = HTTPRouteStatusParents {
                     conditions: Some(vec![Condition {
                         last_transition_time: Time(Utc::now()),
@@ -618,9 +476,7 @@ impl GatewayResourceHandler<Gateway> {
                 };
                 let mut updated_route = (***route).clone();
                 debug!("update route parents {updated_route:#?}");
-                updated_route.status = Some(HTTPRouteStatus {
-                    parents: vec![status],
-                });
+                updated_route.status = Some(HTTPRouteStatus { parents: vec![status] });
                 updated_route.metadata.managed_fields = None;
 
                 let pp = &PatchParams::apply(&self.controller_name).force();

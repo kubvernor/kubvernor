@@ -1,8 +1,6 @@
 use std::{collections::HashMap, fmt::Display, sync::Arc};
 
-use gateway_api::apis::standard::{
-    gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute,
-};
+use gateway_api::apis::standard::{gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute};
 use kube_core::ObjectMeta;
 use multimap::MultiMap;
 
@@ -55,26 +53,15 @@ impl Display for ResourceKey {
 impl TryFrom<&ObjectMeta> for ResourceKey {
     type Error = ControllerError;
     fn try_from(value: &ObjectMeta) -> Result<Self, ControllerError> {
-        let namespace = value
-            .namespace
-            .clone()
-            .unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+        let namespace = value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
 
         let name = match (value.name.as_ref(), value.generate_name.as_ref()) {
-            (None, None) => {
-                return Err(ControllerError::InvalidPayload(
-                    "Name or generated name must be set".to_owned(),
-                ))
-            }
+            (None, None) => return Err(ControllerError::InvalidPayload("Name or generated name must be set".to_owned())),
             (Some(name), _) | (None, Some(name)) => name,
         };
         Ok(Self {
             group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace: if namespace.is_empty() {
-                DEFAULT_NAMESPACE_NAME.to_owned()
-            } else {
-                namespace
-            },
+            namespace: if namespace.is_empty() { DEFAULT_NAMESPACE_NAME.to_owned() } else { namespace },
             name: name.to_string(),
             kind: DEFAULT_KIND_NAME.to_owned(),
         })
@@ -105,9 +92,7 @@ impl State {
         self.gateways.remove(id);
     }
 
-    pub fn get_gateways(
-        &self,
-    ) -> std::collections::hash_map::Values<'_, ResourceKey, Arc<Gateway>> {
+    pub fn get_gateways(&self) -> std::collections::hash_map::Values<'_, ResourceKey, Arc<Gateway>> {
         self.gateways.values()
     }
 
@@ -123,25 +108,16 @@ impl State {
         self.gateways_with_routes.insert(gateway_id, route_id);
     }
 
-    pub fn detach_http_route_from_gateway(
-        &mut self,
-        gateway_id: &ResourceKey,
-        route_id: &ResourceKey,
-    ) {
+    pub fn detach_http_route_from_gateway(&mut self, gateway_id: &ResourceKey, route_id: &ResourceKey) {
         if let Some(routes) = self.gateways_with_routes.get_vec_mut(gateway_id) {
             routes.retain(|key| key != route_id);
         }
     }
 
-    pub fn get_http_routes_attached_to_gateway(
-        &self,
-        resource_key: &ResourceKey,
-    ) -> Option<Vec<&Arc<HTTPRoute>>> {
-        self.gateways_with_routes.get_vec(resource_key).map(|keys| {
-            keys.iter()
-                .filter_map(|k| self.http_routes.get(k))
-                .collect::<Vec<_>>()
-        })
+    pub fn get_http_routes_attached_to_gateway(&self, resource_key: &ResourceKey) -> Option<Vec<&Arc<HTTPRoute>>> {
+        self.gateways_with_routes
+            .get_vec(resource_key)
+            .map(|keys| keys.iter().filter_map(|k| self.http_routes.get(k)).collect::<Vec<_>>())
     }
 
     pub fn save_gateway_class(&mut self, id: ResourceKey, gateway_class: &Arc<GatewayClass>) {
@@ -152,9 +128,7 @@ impl State {
         self.gateway_classes.get(id)
     }
 
-    pub fn get_gateway_classes(
-        &self,
-    ) -> std::collections::hash_map::Values<'_, ResourceKey, Arc<GatewayClass>> {
+    pub fn get_gateway_classes(&self) -> std::collections::hash_map::Values<'_, ResourceKey, Arc<GatewayClass>> {
         self.gateway_classes.values()
     }
 

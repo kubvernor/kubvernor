@@ -1,11 +1,9 @@
 use gateway_api::apis::standard::gatewayclasses::GatewayClass;
 use kube::{Api, Client};
-
 use tokio::sync::mpsc;
 
-use crate::{controllers::LogContext, state::ResourceKey};
-
 use super::patcher::{Operation, Patcher};
+use crate::{controllers::LogContext, state::ResourceKey};
 
 pub struct GatewayClassPatcher {
     client: Client,
@@ -21,12 +19,7 @@ impl Patcher<GatewayClass> for GatewayClassPatcher {
         Api::all(self.client.clone())
     }
 
-    fn log_context<'a>(
-        &'a self,
-        resource_key: &'a ResourceKey,
-        controller_name: &'a str,
-        version: Option<String>,
-    ) -> impl std::fmt::Display + Send {
+    fn log_context<'a>(&'a self, resource_key: &'a ResourceKey, controller_name: &'a str, version: Option<String>) -> impl std::fmt::Display + Send {
         LogContext::<GatewayClass>::new(controller_name, resource_key, version.clone())
     }
 }

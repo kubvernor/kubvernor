@@ -3,7 +3,7 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 use clap::Parser;
 use futures::FutureExt;
 use kube::Client;
-use patchers::{GatewayClassPatcher, GatewayPatcher, Patcher};
+use patchers::{GatewayClassPatcher, GatewayPatcher, HttpRoutePatcher, Patcher};
 use state::State;
 use tokio::{sync::Mutex, time::sleep};
 use tracing::info;
@@ -18,10 +18,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 
 use backends::gateway_deployer::GatewayDeployerChannelHandler;
-use controllers::{
-    gateway::GatewayController, gateway_class::GatewayClassController,
-    http_route::HttpRouteController,
-};
+use controllers::{gateway::GatewayController, gateway_class::GatewayClassController, http_route::HttpRouteController};
 
 const STARTUP_DURATION: Duration = Duration::from_secs(10);
 
@@ -37,19 +34,13 @@ pub async fn start(args: Args) -> Result<()> {
     info!("Kubvernor started");
     let state = Arc::new(Mutex::new(State::new()));
     let client = Client::try_default().await?;
-    let (gateway_channel_sender, mut gateway_deployer_channel_handler) =
-        GatewayDeployerChannelHandler::new();
+    let (gateway_channel_sender, mut gateway_deployer_channel_handler) = GatewayDeployerChannelHandler::new();
 
     let (mut gateway_patcher, gateway_patcher_channel) = GatewayPatcher::new(client.clone());
-    let (mut gateway_class_patcher, gateway_class_patcher_channel) =
-        GatewayClassPatcher::new(client.clone());
+    let (mut gateway_class_patcher, gateway_class_patcher_channel) = GatewayClassPatcher::new(client.clone());
+    let (mut http_route_patcher, http_route_patcher_channel) = HttpRoutePatcher::new(client.clone());
 
-    let gateway_class_controller = GatewayClassController::new(
-        args.controller_name.clone(),
-        &client,
-        Arc::clone(&state),
-        gateway_class_patcher_channel.clone(),
-    );
+    let gateway_class_controller = GatewayClassController::new(args.controller_name.clone(), &client, Arc::clone(&state), gateway_class_patcher_channel.clone());
     let gateway_controller = GatewayController::new(
         args.controller_name.clone(),
         gateway_channel_sender.clone(),
@@ -59,15 +50,11 @@ pub async fn start(args: Args) -> Result<()> {
         gateway_class_patcher_channel,
     );
 
-    let http_roue_controller = HttpRouteController::new(
-        args.controller_name.clone(),
-        client,
-        gateway_channel_sender,
-        state,
-    );
+    let http_roue_controller = HttpRouteController::new(args.controller_name.clone(), client, gateway_channel_sender, state, http_route_patcher_channel);
 
     let gateway_patcher = gateway_patcher.start().boxed();
     let gateway_class_patcher = gateway_class_patcher.start().boxed();
+    let http_route_patcher = http_route_patcher.start().boxed();
     let gateway_deployer_channel_handler = gateway_deployer_channel_handler.start().boxed();
     let gateway_class_controller_task = async move {
         info!("Gateway Class controller...started");
@@ -90,6 +77,7 @@ pub async fn start(args: Args) -> Result<()> {
     futures::future::join_all(vec![
         gateway_class_patcher,
         gateway_patcher,
+        http_route_patcher,
         gateway_deployer_channel_handler,
         gateway_class_controller_task.boxed(),
         gateway_controller_task.boxed(),

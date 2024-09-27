@@ -79,12 +79,7 @@ pub struct ListenerConfig {
 
 impl ListenerConfig {
     pub fn new(name: String, port: i32, hostname: Option<String>) -> Self {
-        Self {
-            name,
-            port,
-            hostname,
-            routes: vec![],
-        }
+        Self { name, port, hostname, routes: vec![] }
     }
 }
 
@@ -106,21 +101,13 @@ pub enum Listener {
 impl Listener {
     fn name(&self) -> &str {
         match self {
-            Listener::Http(config)
-            | Listener::Https(config)
-            | Listener::Tcp(config)
-            | Listener::Tls(config)
-            | Listener::Udp(config) => config.name.as_str(),
+            Listener::Http(config) | Listener::Https(config) | Listener::Tcp(config) | Listener::Tls(config) | Listener::Udp(config) => config.name.as_str(),
         }
     }
 
     fn port(&self) -> i32 {
         match self {
-            Listener::Http(config)
-            | Listener::Https(config)
-            | Listener::Tcp(config)
-            | Listener::Tls(config)
-            | Listener::Udp(config) => config.port,
+            Listener::Http(config) | Listener::Https(config) | Listener::Tcp(config) | Listener::Tls(config) | Listener::Udp(config) => config.port,
         }
     }
 
@@ -135,11 +122,7 @@ impl Listener {
     }
     fn hostname(&self) -> Option<&String> {
         match self {
-            Listener::Http(config)
-            | Listener::Https(config)
-            | Listener::Tcp(config)
-            | Listener::Tls(config)
-            | Listener::Udp(config) => config.hostname.as_ref(),
+            Listener::Http(config) | Listener::Https(config) | Listener::Tcp(config) | Listener::Tls(config) | Listener::Udp(config) => config.hostname.as_ref(),
         }
     }
 }
@@ -209,11 +192,7 @@ pub fn deploy_gateway(gateway: &Gateway, routes: &[Route]) -> Vec<ListenerStatus
         .collect()
 }
 
-pub fn deploy_route(
-    route: &Route,
-    linked_routes: &[Route],
-    gateway: &Gateway,
-) -> Vec<ListenerStatus> {
+pub fn deploy_route(route: &Route, linked_routes: &[Route], gateway: &Gateway) -> Vec<ListenerStatus> {
     info!("Got following route {route:?} {linked_routes:?} {gateway:?}");
     vec![]
 }
@@ -226,11 +205,7 @@ pub struct GatewayProcessedPayload {
 }
 
 impl GatewayProcessedPayload {
-    pub fn new(
-        gateway_status: GatewayStatus,
-        attached_routes: Vec<Route>,
-        ignored_routes: Vec<Route>,
-    ) -> Self {
+    pub fn new(gateway_status: GatewayStatus, attached_routes: Vec<Route>, ignored_routes: Vec<Route>) -> Self {
         Self {
             gateway_status,
             attached_routes,
@@ -247,10 +222,7 @@ pub struct RouteProcessedPayload {
 
 impl RouteProcessedPayload {
     pub fn new(status: RouteStatus, gateway_status: GatewayStatus) -> Self {
-        Self {
-            status,
-            gateway_status,
-        }
+        Self { status, gateway_status }
     }
 }
 
@@ -273,28 +245,16 @@ pub enum GatewayEvent {
 impl Display for GatewayEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GatewayEvent::GatewayChanged((_, gateway, routes)) => write!(
-                f,
-                "GatewayEvent::GatewayChanged gateway {gateway:?} routes {routes:?}"
-            ),
+            GatewayEvent::GatewayChanged((_, gateway, routes)) => write!(f, "GatewayEvent::GatewayChanged gateway {gateway:?} routes {routes:?}"),
             GatewayEvent::GatewayDeleted((_, gateway, routes)) => {
-                write!(
-                    f,
-                    "GatewayEvent::GatewayDeleted gateway {gateway:?} routes {routes:?}"
-                )
+                write!(f, "GatewayEvent::GatewayDeleted gateway {gateway:?} routes {routes:?}")
             }
 
             GatewayEvent::RouteChanged((_, route, linked_routes, gateways)) => {
-                write!(
-                    f,
-                    "GatewayEvent::RouteChanged route {route:?} linked_routes {linked_routes:?} gateways {gateways:?}"
-                )
+                write!(f, "GatewayEvent::RouteChanged route {route:?} linked_routes {linked_routes:?} gateways {gateways:?}")
             }
             GatewayEvent::RouteDeleted((_, route, linked_routes, gateways)) => {
-                write!(
-                    f,
-                    "GatewayEvent::RouteDeleted route {route:?} linked_routes {linked_routes:?} gateways {gateways:?}"
-                )
+                write!(f, "GatewayEvent::RouteDeleted route {route:?} linked_routes {linked_routes:?} gateways {gateways:?}")
             }
         }
     }
@@ -307,12 +267,7 @@ pub struct GatewayDeployerChannelHandler {
 impl GatewayDeployerChannelHandler {
     pub fn new() -> (mpsc::Sender<GatewayEvent>, Self) {
         let (sender, receiver) = mpsc::channel(1024);
-        (
-            sender,
-            Self {
-                event_receiver: receiver,
-            },
-        )
+        (sender, Self { event_receiver: receiver })
     }
     pub async fn start(&mut self) {
         info!("Gateways handler started");

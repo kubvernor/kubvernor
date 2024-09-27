@@ -63,21 +63,13 @@ pub enum Route {
 impl Route {
     fn name(&self) -> &str {
         match self {
-            Route::Http(config)
-            | Route::Https(config)
-            | Route::Tcp(config)
-            | Route::Tls(config)
-            | Route::Udp(config) => config.name.as_str(),
+            Route::Http(config) | Route::Https(config) | Route::Tcp(config) | Route::Tls(config) | Route::Udp(config) => config.name.as_str(),
         }
     }
 
     fn port(&self) -> i32 {
         match self {
-            Route::Http(config)
-            | Route::Https(config)
-            | Route::Tcp(config)
-            | Route::Tls(config)
-            | Route::Udp(config) => config.port,
+            Route::Http(config) | Route::Https(config) | Route::Tcp(config) | Route::Tls(config) | Route::Udp(config) => config.port,
         }
     }
 
@@ -92,11 +84,7 @@ impl Route {
     }
     fn hostname(&self) -> Option<&String> {
         match self {
-            Route::Http(config)
-            | Route::Https(config)
-            | Route::Tcp(config)
-            | Route::Tls(config)
-            | Route::Udp(config) => config.hostname.as_ref(),
+            Route::Http(config) | Route::Https(config) | Route::Tcp(config) | Route::Tls(config) | Route::Udp(config) => config.hostname.as_ref(),
         }
     }
 }
@@ -121,26 +109,16 @@ impl Routes {
         }
     }
 
-    pub fn update_listeners(
-        &mut self,
-        listeners: Vec<Route>,
-    ) -> Vec<(String, Result<RouteStatus, RouteError>)> {
+    pub fn update_listeners(&mut self, listeners: Vec<Route>) -> Vec<(String, Result<RouteStatus, RouteError>)> {
         debug!("Updating listeners {}", listeners.len());
-        let existing_keys: HashSet<_> = self
-            .listeners_by_name
-            .keys()
-            .map(std::borrow::ToOwned::to_owned)
-            .collect();
+        let existing_keys: HashSet<_> = self.listeners_by_name.keys().map(std::borrow::ToOwned::to_owned).collect();
         let new_keys: HashSet<_> = listeners.iter().map(|l| l.name().to_owned()).collect();
         for name in existing_keys.difference(&new_keys) {
             debug!("Removing listener {name}");
             let _ = self.remove(&name.to_string());
         }
 
-        listeners
-            .into_iter()
-            .map(|l| (l.name().to_owned(), self.update(l)))
-            .collect()
+        listeners.into_iter().map(|l| (l.name().to_owned(), self.update(l))).collect()
     }
 
     pub fn update(&mut self, listener: Route) -> Result<RouteStatus, RouteError> {
@@ -155,8 +133,7 @@ impl Routes {
 
         match (listener_exists, listener_duplicate) {
             (None, None) => {
-                self.listeners_by_port_protocol_hostname
-                    .insert(key, name.clone());
+                self.listeners_by_port_protocol_hostname.insert(key, name.clone());
                 self.listeners_by_name.insert(name, listener);
                 Ok(RouteStatus::Added)
             }
@@ -174,11 +151,7 @@ impl Routes {
 
     pub fn remove(&mut self, name: &String) -> Result<Option<Route>, RouteError> {
         if let Some(gateway) = self.listeners_by_name.remove(name) {
-            let key = &(
-                gateway.port(),
-                gateway.protocol(),
-                gateway.hostname().cloned(),
-            );
+            let key = &(gateway.port(), gateway.protocol(), gateway.hostname().cloned());
             self.listeners_by_port_protocol_hostname.remove(key);
             Ok(Some(gateway))
         } else {
