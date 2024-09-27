@@ -3,7 +3,7 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 use clap::Parser;
 use futures::FutureExt;
 use kube::Client;
-use patchers::GatewayPatcher;
+use patchers::{GatewayClassPatcher, GatewayPatcher, Patcher};
 use state::State;
 use tokio::{sync::Mutex, time::sleep};
 use tracing::info;
@@ -40,19 +40,23 @@ pub async fn start(args: Args) -> Result<()> {
     let (gateway_channel_sender, mut gateway_deployer_channel_handler) =
         GatewayDeployerChannelHandler::new();
 
-    let (gateway_patcher, sender) = GatewayPatcher::new(client.clone());
+    let (mut gateway_patcher, gateway_patcher_channel) = GatewayPatcher::new(client.clone());
+    let (mut gateway_class_patcher, gateway_class_patcher_channel) =
+        GatewayClassPatcher::new(client.clone());
 
     let gateway_class_controller = GatewayClassController::new(
         args.controller_name.clone(),
-        client.clone(),
+        &client,
         Arc::clone(&state),
+        gateway_class_patcher_channel.clone(),
     );
     let gateway_controller = GatewayController::new(
         args.controller_name.clone(),
         gateway_channel_sender.clone(),
         client.clone(),
         Arc::clone(&state),
-        sender,
+        gateway_patcher_channel,
+        gateway_class_patcher_channel,
     );
 
     let http_roue_controller = HttpRouteController::new(
@@ -61,7 +65,9 @@ pub async fn start(args: Args) -> Result<()> {
         gateway_channel_sender,
         state,
     );
+
     let gateway_patcher = gateway_patcher.start().boxed();
+    let gateway_class_patcher = gateway_class_patcher.start().boxed();
     let gateway_deployer_channel_handler = gateway_deployer_channel_handler.start().boxed();
     let gateway_class_controller_task = async move {
         info!("Gateway Class controller...started");
@@ -82,6 +88,7 @@ pub async fn start(args: Args) -> Result<()> {
         info!("Route controller...stopped");
     };
     futures::future::join_all(vec![
+        gateway_class_patcher,
         gateway_patcher,
         gateway_deployer_channel_handler,
         gateway_class_controller_task.boxed(),

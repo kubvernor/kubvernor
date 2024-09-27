@@ -16,6 +16,36 @@ pub struct ResourceKey {
     pub kind: String,
 }
 
+impl ResourceKey {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    pub fn namespaced(name: &str, namespace: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            namespace: namespace.to_owned(),
+            ..Default::default()
+        }
+    }
+}
+pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";
+pub const DEFAULT_NAMESPACE_NAME: &str = "default";
+pub const DEFAULT_KIND_NAME: &str = "Gateway";
+impl Default for ResourceKey {
+    fn default() -> Self {
+        Self {
+            group: DEFAULT_GROUP_NAME.to_owned(),
+            namespace: DEFAULT_NAMESPACE_NAME.to_owned(),
+            name: String::default(),
+            kind: DEFAULT_KIND_NAME.to_owned(),
+        }
+    }
+}
+
 impl Display for ResourceKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}.{}", self.namespace, self.name)
@@ -48,20 +78,6 @@ impl TryFrom<&ObjectMeta> for ResourceKey {
             name: name.to_string(),
             kind: DEFAULT_KIND_NAME.to_owned(),
         })
-    }
-}
-
-pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";
-pub const DEFAULT_NAMESPACE_NAME: &str = "default";
-pub const DEFAULT_KIND_NAME: &str = "Gateway";
-impl Default for ResourceKey {
-    fn default() -> Self {
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace: DEFAULT_NAMESPACE_NAME.to_owned(),
-            name: String::default(),
-            kind: DEFAULT_KIND_NAME.to_owned(),
-        }
     }
 }
 

@@ -15,14 +15,14 @@ use k8s_openapi::{
 };
 use kube::{
     api::{Patch, PatchParams},
-    runtime::{controller::Action, finalizer, watcher::Config, Controller},
+    runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource, ResourceExt,
 };
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot, Mutex,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::{
@@ -38,8 +38,8 @@ use crate::{
             ListenerConfig, ListenerError, ListenerStatus, Route,
         },
     },
-    controllers::utils::{FinalizerPatcher, ResourceFinalizer, VerifiyItems},
-    patchers::{Operation, PatchContext},
+    controllers::utils::VerifiyItems,
+    patchers::{FinalizerContext, Operation, PatchContext},
     state::{ResourceKey, State, DEFAULT_GROUP_NAME, DEFAULT_KIND_NAME, DEFAULT_NAMESPACE_NAME},
 };
 
@@ -52,6 +52,7 @@ struct Context {
     gateway_channel_sender: mpsc::Sender<GatewayEvent>,
     state: Arc<Mutex<State>>,
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
+    gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
 }
 
 pub struct GatewayController {
@@ -61,6 +62,7 @@ pub struct GatewayController {
     api: Api<Gateway>,
     state: Arc<Mutex<State>>,
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
+    gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
 }
 
 impl From<&Gateway> for ResourceKey {
@@ -149,6 +151,7 @@ impl GatewayController {
         client: kube::Client,
         state: Arc<Mutex<State>>,
         gateway_patcher: mpsc::Sender<Operation<Gateway>>,
+        gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
     ) -> Self {
         GatewayController {
             controller_name,
@@ -157,6 +160,7 @@ impl GatewayController {
             client,
             state,
             gateway_patcher,
+            gateway_class_patcher,
         }
     }
     pub fn get_controller(&self) -> BoxFuture<()> {
@@ -166,6 +170,7 @@ impl GatewayController {
             gateway_channel_sender: self.gateway_channel_sender.clone(),
             state: Arc::clone(&self.state),
             gateway_patcher: self.gateway_patcher.clone(),
+            gateway_class_patcher: self.gateway_class_patcher.clone(),
         });
 
         Controller::new(self.api.clone(), Config::default())
@@ -198,6 +203,7 @@ impl GatewayController {
         let client = &ctx.client;
         let controller_name = ctx.controller_name.clone();
         let gateway_patcher = ctx.gateway_patcher.clone();
+        let gateway_class_patcher = ctx.gateway_class_patcher.clone();
 
         let Some(name) = resource.meta().name.clone() else {
             return Err(ControllerError::InvalidPayload(
@@ -240,14 +246,6 @@ impl GatewayController {
             let state = state.lock().await;
             state.get_gateway(&resource_key).cloned()
         };
-        let api = Api::namespaced(
-            client.clone(),
-            &resource
-                .meta()
-                .namespace
-                .clone()
-                .unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
-        );
 
         let handler = GatewayResourceHandler {
             state: Arc::clone(&ctx.state),
@@ -255,12 +253,11 @@ impl GatewayController {
             controller_name: controller_name.clone(),
             gateway_class_name,
             resource,
-            name,
             version,
             client: client.clone(),
-            api,
             gateway_channel_sender: ctx.gateway_channel_sender.clone(),
             gateway_patcher,
+            gateway_class_patcher,
         };
         handler
             .process(
@@ -295,13 +292,92 @@ struct GatewayResourceHandler<R> {
     resource_key: ResourceKey,
     controller_name: String,
     resource: Arc<R>,
-    name: String,
     version: Option<String>,
     gateway_class_name: String,
     client: Client,
-    api: Api<R>,
     gateway_channel_sender: mpsc::Sender<GatewayEvent>,
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
+    gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
+}
+
+#[async_trait]
+impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
+    fn log_context(&self) -> impl std::fmt::Display {
+        LogContext::<Gateway>::new(
+            &self.controller_name,
+            &self.resource_key,
+            self.version.clone(),
+        )
+    }
+
+    fn state(&self) -> &Arc<Mutex<State>> {
+        &self.state
+    }
+
+    fn resource_key(&self) -> ResourceKey {
+        self.resource_key.clone()
+    }
+
+    fn resource(&self) -> Arc<Gateway> {
+        Arc::clone(&self.resource)
+    }
+
+    async fn on_spec_not_changed(
+        &self,
+        resource_key: ResourceKey,
+        resource: &Arc<Gateway>,
+        state: &mut State,
+    ) -> Result<Action> {
+        state.save_gateway(resource_key, resource);
+        Err(ControllerError::AlreadyAdded)
+    }
+
+    async fn on_new(
+        &self,
+        resource_key: ResourceKey,
+        resource: &Arc<Gateway>,
+        state: &mut State,
+    ) -> Result<Action> {
+        self.on_new_or_changed(resource_key, resource, state).await
+    }
+
+    async fn on_spec_changed(
+        &self,
+        id: ResourceKey,
+        resource: &Arc<Gateway>,
+        state: &mut State,
+    ) -> Result<Action> {
+        self.on_new_or_changed(id, resource, state).await
+    }
+
+    async fn on_status_changed(
+        &self,
+        id: ResourceKey,
+        resource: &Arc<Gateway>,
+        state: &mut State,
+    ) -> Result<Action> {
+        self.on_status_changed(id, resource, state).await
+    }
+
+    async fn on_deleted(
+        &self,
+        id: ResourceKey,
+        resource: &Arc<Gateway>,
+        state: &mut State,
+    ) -> Result<Action> {
+        let controller_name = &self.controller_name;
+        state.delete_gateway(&id);
+
+        let _res = self
+            .gateway_patcher
+            .send(Operation::Delete((
+                id.clone(),
+                (**resource).clone(),
+                controller_name.to_owned(),
+            )))
+            .await;
+        Ok(Action::requeue(RECONCILE_LONG_WAIT))
+    }
 }
 
 impl GatewayResourceHandler<Gateway> {
@@ -387,14 +463,8 @@ impl GatewayResourceHandler<Gateway> {
         resource: &Arc<Gateway>,
         state: &mut State,
     ) -> Result<Action> {
-        // let log_context = self.log_context();
-        // let api = &self.api;
-        // let name = &self.name;
         let sender = &self.gateway_channel_sender;
-
         let updated_gateway = self.deploy_gateway(sender, resource, state).await?;
-
-        //let patch_params = PatchParams::apply(&self.controller_name).force();
         state.save_gateway(id.clone(), resource);
 
         let _res = self
@@ -407,20 +477,6 @@ impl GatewayResourceHandler<Gateway> {
             }))
             .await;
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
-
-        // match api
-        //     .patch_status(name, &patch_params, &Patch::Apply(updated_gateway))
-        //     .await
-        // {
-        //     Ok(_new_gateway) => {
-        //         info!("{log_context} patch status result ok");
-        //         Ok(Action::requeue(RECONCILE_LONG_WAIT))
-        //     }
-        //     Err(e) => {
-        //         warn!("{log_context} patch status failed {e:?}");
-        //         Err(ControllerError::PatchFailed)
-        //     }
-        // }
     }
 
     async fn on_status_changed(
@@ -450,41 +506,28 @@ impl GatewayResourceHandler<Gateway> {
     }
 
     async fn add_finalizer(&self, controller_name: &str) -> Result<Action> {
-        let log_context = self.log_context();
-        let api = &self.api;
-        let name = &self.name;
-        let res =
-            FinalizerPatcher::patch_finalizer(api, name, controller_name, controller_name).await;
+        let _res = self
+            .gateway_patcher
+            .send(Operation::PatchFinalizer(FinalizerContext {
+                resource_key: self.resource_key.clone(),
+                controller_name: controller_name.to_owned(),
+                finalizer_name: controller_name.to_owned(),
+            }))
+            .await;
 
-        match res {
-            Ok(()) => {
-                info!("{log_context} meta patch status result ok");
-                if res.is_err() {
-                    warn!("{log_context} couldn't patch meta");
-                }
-                Ok(Action::requeue(RECONCILE_LONG_WAIT))
-            }
-            Err(e) => {
-                warn!("{log_context} patch status failed {e:?}");
-                Err(ControllerError::PatchFailed)
-            }
-        }
+        Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 
     async fn add_finalizer_to_gateway_class(&self, gateway_class_name: &str) {
-        let log_context = self.log_context();
-        let gateway_class_api = Api::<GatewayClass>::all(self.client.clone());
-        let res = FinalizerPatcher::patch_finalizer(
-            &gateway_class_api,
-            gateway_class_name,
-            &self.controller_name,
-            GATEWAY_CLASS_FINALIZER_NAME,
-        )
-        .await;
-
-        if res.is_err() {
-            warn!("{log_context} couldn't patch gateway class name {res:?}");
-        }
+        let key = ResourceKey::new(gateway_class_name);
+        let _res = self
+            .gateway_class_patcher
+            .send(Operation::PatchFinalizer(FinalizerContext {
+                resource_key: key,
+                controller_name: self.controller_name.clone(),
+                finalizer_name: GATEWAY_CLASS_FINALIZER_NAME.to_owned(),
+            }))
+            .await;
     }
 
     fn update_gateway_resource(
@@ -587,79 +630,5 @@ impl GatewayResourceHandler<Gateway> {
         }
 
         None
-    }
-}
-#[async_trait]
-impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
-    fn log_context(&self) -> impl std::fmt::Display {
-        LogContext::<Gateway>::new(
-            &self.controller_name,
-            &self.resource_key,
-            self.version.clone(),
-        )
-    }
-
-    fn state(&self) -> &Arc<Mutex<State>> {
-        &self.state
-    }
-
-    fn resource_key(&self) -> ResourceKey {
-        self.resource_key.clone()
-    }
-
-    fn resource(&self) -> Arc<Gateway> {
-        Arc::clone(&self.resource)
-    }
-
-    async fn on_spec_not_changed(
-        &self,
-        resource_key: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &mut State,
-    ) -> Result<Action> {
-        state.save_gateway(resource_key, resource);
-        Err(ControllerError::AlreadyAdded)
-    }
-
-    async fn on_new(
-        &self,
-        resource_key: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &mut State,
-    ) -> Result<Action> {
-        self.on_new_or_changed(resource_key, resource, state).await
-    }
-
-    async fn on_spec_changed(
-        &self,
-        id: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &mut State,
-    ) -> Result<Action> {
-        self.on_new_or_changed(id, resource, state).await
-    }
-
-    async fn on_status_changed(
-        &self,
-        id: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &mut State,
-    ) -> Result<Action> {
-        self.on_status_changed(id, resource, state).await
-    }
-
-    async fn on_deleted(
-        &self,
-        id: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &mut State,
-    ) -> Result<Action> {
-        let controller_name = &self.controller_name;
-        state.delete_gateway(&id);
-
-        let res = ResourceFinalizer::delete_resource(&self.api, controller_name, resource).await;
-        res.map_err(|e: finalizer::Error<ControllerError>| {
-            ControllerError::FinalizerPatchFailed(e.to_string())
-        })
     }
 }

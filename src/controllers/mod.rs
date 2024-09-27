@@ -4,7 +4,7 @@ pub mod gateway_class;
 pub mod http_route;
 mod resource_handler;
 mod utils;
-pub use utils::LogContext;
+pub use utils::{FinalizerPatcher, LogContext, ResourceFinalizer};
 
 #[allow(dead_code)]
 #[derive(thiserror::Error, Debug)]

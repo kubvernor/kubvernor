@@ -189,7 +189,7 @@ impl<T> std::fmt::Display for LogContext<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "reconcile {:?}: resource_id: {},  version: {:?}",
+            "{:?}: resource_id: {},  version: {:?}",
             self.resource_type, self.resource_key, self.version
         )
     }

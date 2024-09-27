@@ -322,10 +322,10 @@ impl GatewayDeployerChannelHandler {
                         info!("Backend got gateway {event:#}");
                          match event{
                             GatewayEvent::GatewayChanged((response_sender, gateway, routes)) => {
-                                let attached_routes = if routes.len() > 0{
-                                    &routes[1..]
-                                }else{
+                                let attached_routes = if routes.is_empty(){
                                     &[]
+                                }else{
+                                    &routes[1..]
                                 };
 
                                 let ignored_routes = if routes.len() > 1{

@@ -8,12 +8,12 @@ use k8s_openapi::{
     chrono::Utc,
 };
 use kube::{
-    api::{Api, Patch, PatchParams},
-    runtime::{controller::Action, finalizer, watcher::Config, Controller},
+    api::Api,
+    runtime::{controller::Action, watcher::Config, Controller},
     Client, Resource,
 };
-use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tokio::sync::{mpsc, Mutex};
+use tracing::warn;
 use uuid::Uuid;
 
 use super::{
@@ -21,41 +21,44 @@ use super::{
     ControllerError, RECONCILE_ERROR_WAIT,
 };
 use crate::{
-    controllers::{
-        resource_handler::ResourceHandler, utils::ResourceFinalizer, GATEWAY_CLASS_FINALIZER_NAME,
-        RECONCILE_LONG_WAIT,
-    },
+    controllers::{resource_handler::ResourceHandler, RECONCILE_LONG_WAIT},
+    patchers::{Operation, PatchContext},
     state::{ResourceKey, State},
 };
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
 struct Context {
-    pub client: kube::Client,
     pub controller_name: String,
     state: Arc<Mutex<State>>,
+    gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
 }
 
 pub struct GatewayClassController {
     controller_name: String,
-    client: kube::Client,
     api: Api<GatewayClass>,
     state: Arc<Mutex<State>>,
+    gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
 }
 
 impl GatewayClassController {
-    pub fn new(controller_name: String, client: kube::Client, state: Arc<Mutex<State>>) -> Self {
+    pub fn new(
+        controller_name: String,
+        client: &Client,
+        state: Arc<Mutex<State>>,
+        gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
+    ) -> Self {
         GatewayClassController {
             controller_name,
             api: Api::all(client.clone()),
-            client,
             state,
+            gateway_class_patcher,
         }
     }
     pub fn get_controller(&self) -> BoxFuture<()> {
         let context = Arc::new(Context {
-            client: self.client.clone(),
             controller_name: self.controller_name.clone(),
             state: Arc::clone(&self.state),
+            gateway_class_patcher: self.gateway_class_patcher.clone(),
         });
         Controller::new(self.api.clone(), Config::default())
             .run(
@@ -87,14 +90,8 @@ impl GatewayClassController {
         resource: Arc<GatewayClass>,
         ctx: Arc<Context>,
     ) -> Result<Action> {
-        let client = &ctx.client;
         let configured_controller_name = &ctx.controller_name;
-
-        let Some(name) = resource.meta().name.clone() else {
-            return Err(ControllerError::InvalidPayload(
-                "Resource name is not provided".to_owned(),
-            ));
-        };
+        let gateway_class_patcher = ctx.gateway_class_patcher.clone();
 
         let Some(maybe_id) = resource.metadata.uid.clone() else {
             return Err(ControllerError::InvalidPayload(
@@ -130,10 +127,9 @@ impl GatewayClassController {
             resource_key,
             controller_name: controller_name.clone(),
             resource,
-            name,
             version,
-            client: client.clone(),
-            api: Api::all(client.clone()),
+            //api: Api::all(client.clone()),
+            gateway_class_patcher,
         };
         handler
             .process(
@@ -168,10 +164,8 @@ struct GatewayClassResourceHandler<R> {
     resource_key: ResourceKey,
     controller_name: String,
     resource: Arc<R>,
-    name: String,
     version: Option<String>,
-    client: Client,
-    api: Api<R>,
+    gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
 }
 
 impl GatewayClassResourceHandler<GatewayClass> {
@@ -201,31 +195,24 @@ impl GatewayClassResourceHandler<GatewayClass> {
         resource: &Arc<GatewayClass>,
         state: &mut State,
     ) -> Result<Action> {
-        let log_context = self.log_context();
         let updated_gateway_class = Self::update_status_conditions((**resource).clone());
-        let controller_name = &self.controller_name;
-        let name = &self.name;
+        state.save_gateway_class(id.clone(), resource);
 
-        let patch_params = PatchParams::apply(controller_name).force();
-        match Api::<GatewayClass>::all(self.client.clone())
-            .patch_status(name, &patch_params, &Patch::Apply(&updated_gateway_class))
-            .await
-        {
-            Ok(_) => {
-                info!("{log_context} patch result ok");
-                state.save_gateway_class(id, resource);
-                Ok(Action::await_change())
-            }
-            Err(e) => {
-                warn!("{log_context} patch failed {e:?}");
-                Err(ControllerError::PatchFailed)
-            }
-        }
+        let _res = self
+            .gateway_class_patcher
+            .send(Operation::PatchStatus(PatchContext {
+                resource_key: id,
+                resource: updated_gateway_class,
+                controller_name: self.controller_name.clone(),
+                version: self.version.clone(),
+            }))
+            .await;
+        Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 }
 
 impl<'a> LogContext<'a, GatewayClass> {
-    fn new(
+    pub fn new(
         controller_name: &'a str,
         resource_key: &'a ResourceKey,
         version: Option<String>,
@@ -294,24 +281,37 @@ impl ResourceHandler<GatewayClass> for GatewayClassResourceHandler<GatewayClass>
         resource: &Arc<GatewayClass>,
         state: &mut State,
     ) -> Result<Action> {
-        let log_context = self.log_context();
-        if state
-            .get_gateways()
-            .any(|g| *g.spec.gateway_class_name == self.name)
-        {
-            debug!("{log_context} can't delete since there are remaining gateways ");
-            Err(ControllerError::ResourceInWrongState)
-        } else {
-            state.delete_gateway_class(&id);
-            let res = ResourceFinalizer::delete_resource(
-                &self.api,
-                GATEWAY_CLASS_FINALIZER_NAME,
-                resource,
-            )
+        let controller_name = &self.controller_name;
+        state.delete_gateway(&id);
+
+        let _res = self
+            .gateway_class_patcher
+            .send(Operation::Delete((
+                id.clone(),
+                (**resource).clone(),
+                controller_name.to_owned(),
+            )))
             .await;
-            res.map_err(|e: finalizer::Error<ControllerError>| {
-                ControllerError::FinalizerPatchFailed(e.to_string())
-            })
-        }
+        Ok(Action::requeue(RECONCILE_LONG_WAIT))
+
+        // let log_context = self.log_context();
+        // if state
+        //     .get_gateways()
+        //     .any(|g| *g.spec.gateway_class_name == self.name)
+        // {
+        //     debug!("{log_context} can't delete since there are remaining gateways ");
+        //     Err(ControllerError::ResourceInWrongState)
+        // } else {
+        //     state.delete_gateway_class(&id);
+        //     let res = ResourceFinalizer::delete_resource(
+        //         &self.api,
+        //         GATEWAY_CLASS_FINALIZER_NAME,
+        //         resource,
+        //     )
+        //     .await;
+        //     res.map_err(|e: finalizer::Error<ControllerError>| {
+        //         ControllerError::FinalizerPatchFailed(e.to_string())
+        //     })
+        // }
     }
 }
