@@ -48,6 +48,7 @@ pub async fn start(args: Args) -> Result<()> {
         Arc::clone(&state),
         gateway_patcher_channel,
         gateway_class_patcher_channel,
+        http_route_patcher_channel.clone(),
     );
 
     let http_roue_controller = HttpRouteController::new(args.controller_name.clone(), client, gateway_channel_sender, state, http_route_patcher_channel);

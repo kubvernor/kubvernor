@@ -31,7 +31,7 @@ use crate::{
         self,
         gateway_deployer::{GatewayEvent, GatewayResponse, Route, RouteConfig, RouteProcessedPayload},
     },
-    patchers::{Operation, PatchContext},
+    patchers::{FinalizerContext, Operation, PatchContext},
     state::{ResourceKey, State, DEFAULT_GROUP_NAME, DEFAULT_KIND_NAME, DEFAULT_NAMESPACE_NAME},
 };
 
@@ -161,6 +161,48 @@ struct HTTPRouteHandler<R> {
     version: Option<String>,
     gateway_channel_sender: mpsc::Sender<GatewayEvent>,
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
+}
+
+#[async_trait]
+impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
+    fn log_context(&self) -> impl std::fmt::Display {
+        LogContext::<HTTPRoute>::new(&self.controller_name, &self.resource_key, self.version.clone())
+    }
+
+    fn state(&self) -> &Arc<Mutex<State>> {
+        &self.state
+    }
+
+    fn resource(&self) -> Arc<HTTPRoute> {
+        Arc::clone(&self.resource)
+    }
+
+    fn resource_key(&self) -> ResourceKey {
+        self.resource_key.clone()
+    }
+
+    async fn on_spec_not_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
+        state.save_http_route(id, resource);
+        Err(ControllerError::AlreadyAdded)
+    }
+
+    async fn on_new(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
+        self.on_new_or_changed(id, resource, state).await
+    }
+
+    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
+        self.on_status_changed(id, resource, state).await
+    }
+
+    async fn on_spec_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
+        self.on_new_or_changed(id, resource, state).await
+    }
+
+    async fn on_deleted(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
+        state.delete_http_route(&id);
+        let _res = self.http_route_patcher.send(Operation::Delete((id.clone(), (**resource).clone(), self.controller_name.clone()))).await;
+        Ok(Action::requeue(RECONCILE_LONG_WAIT))
+    }
 }
 
 impl HTTPRouteHandler<HTTPRoute> {
@@ -340,6 +382,31 @@ impl HTTPRouteHandler<HTTPRoute> {
     {
         gateway.spec.listeners.iter().filter(|f| filter(f)).cloned().collect()
     }
+
+    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
+        let controller_name = &self.controller_name;
+        state.save_http_route(id, resource);
+        if let Some(status) = &resource.status {
+            if !status.parents.is_empty() {
+                let _res = self.add_finalizer(controller_name).await;
+                return Ok(Action::requeue(RECONCILE_LONG_WAIT));
+            }
+        }
+        Err(ControllerError::ResourceHasWrongStatus)
+    }
+
+    async fn add_finalizer(&self, controller_name: &str) -> Result<Action> {
+        let _res = self
+            .http_route_patcher
+            .send(Operation::PatchFinalizer(FinalizerContext {
+                resource_key: self.resource_key.clone(),
+                controller_name: controller_name.to_owned(),
+                finalizer_name: controller_name.to_owned(),
+            }))
+            .await;
+
+        Ok(Action::requeue(RECONCILE_LONG_WAIT))
+    }
 }
 
 impl<'a> LogContext<'a, HTTPRoute> {
@@ -350,43 +417,5 @@ impl<'a> LogContext<'a, HTTPRoute> {
             version,
             resource_type: std::marker::PhantomData,
         }
-    }
-}
-
-#[async_trait]
-impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
-    fn log_context(&self) -> impl std::fmt::Display {
-        LogContext::<HTTPRoute>::new(&self.controller_name, &self.resource_key, self.version.clone())
-    }
-
-    fn state(&self) -> &Arc<Mutex<State>> {
-        &self.state
-    }
-
-    fn resource(&self) -> Arc<HTTPRoute> {
-        Arc::clone(&self.resource)
-    }
-
-    fn resource_key(&self) -> ResourceKey {
-        self.resource_key.clone()
-    }
-
-    async fn on_spec_not_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        state.save_http_route(id, resource);
-        Err(ControllerError::AlreadyAdded)
-    }
-
-    async fn on_new(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        self.on_new_or_changed(id, resource, state).await
-    }
-
-    async fn on_spec_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        self.on_new_or_changed(id, resource, state).await
-    }
-
-    async fn on_deleted(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        state.delete_http_route(&id);
-        let _res = self.http_route_patcher.send(Operation::Delete((id.clone(), (**resource).clone(), self.controller_name.clone()))).await;
-        Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 }
