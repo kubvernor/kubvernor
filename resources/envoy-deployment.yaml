@@ -1,0 +1,107 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: envoy
+  name: envoy
+  namespace: kubvernor
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # This value of maxSurge means that during a rolling update
+      # the new ReplicaSet will be created first.
+      maxSurge: 10%
+  selector:
+    matchLabels:
+      app: envoy
+  template:
+    metadata:
+      labels:
+        app: envoy
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: envoy
+              topologyKey: "kubernetes.io/hostname"
+            weight: 100
+      volumes:
+        - name: envoy-config
+          configMap:
+            name: envoy-cm
+            items:
+              - key: envoy-bootstrap.yaml
+                path: envoy-bootstrap.yaml
+        - name: envoy-xds
+          configMap:
+            name: envoy-xds
+            items:
+              - key: lds.yaml
+                path: lds.yaml
+              - key: cds.yaml
+                path: cds.yaml
+              - key: rds.yaml
+                path: rds.yaml                                
+            
+      containers:
+        - args:
+            - -c
+            - /envoy-config/envoy-bootstrap.yaml
+            - --service-cluster $(GATEWAY_NAMESPACE)
+            - --service-node $(ENVOY_POD_NAME)
+            - --log-level info
+          command:
+            - envoy
+          image: docker.io/envoyproxy/envoy:v1.31.0
+          imagePullPolicy: IfNotPresent
+          name: envoy
+          env:
+            - name: GATEWAY_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: ENVOY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+            - containerPort: 8443
+              name: https
+              protocol: TCP
+            - containerPort: 8081
+              name: http2
+              protocol: TCP
+            - containerPort: 8082
+              name: http3
+              protocol: TCP                          
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9901
+            initialDelaySeconds: 3
+            periodSeconds: 4
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /envoy-config
+              readOnly: true
+            - name: envoy-xds
+              mountPath: /envoy-xds
+              readOnly: true              
+          lifecycle:
+            preStop:
+              httpGet:
+                path: /shutdown
+                port: 8090
+                scheme: HTTP
+      

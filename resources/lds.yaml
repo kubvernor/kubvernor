@@ -1,0 +1,59 @@
+version_info: "0"
+resources:
+- "@type": type.googleapis.com/envoy.config.listener.v3.Listener
+  name: listener_http2
+  address:
+    socket_address: { address: 0.0.0.0, port_value: 8081 }
+  filter_chains:
+    - name: filter_chain_http
+      filter_chain_match:
+        destination_port: 8081
+      filters:
+        - name: http_gateway
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager                                        
+            httpFilters:
+              - name: envoy.filters.http.router
+                typedConfig:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                  start_child_span: false             
+            codec_type: HTTP1
+            stat_prefix: "listener_http1.http_gateway_8080"
+            route_config: 
+              name: basic_http_route
+              virtual_hosts:
+                - name: backend
+                  domains: ["*"]
+                  routes:
+                  - match:
+                      prefix: "/hello"
+                    direct_response:                          
+                      status: 200
+                      body:
+                        inline_string: "Hello from listener_http2 Envoy Gateway proudly deployed by Kubvernor"
+- "@type": type.googleapis.com/envoy.config.listener.v3.Listener
+  name: listener_http3
+  address:
+    socket_address: { address: 0.0.0.0, port_value: 8082 }
+  filter_chains:
+    - name: filter_chain_http
+      filter_chain_match:
+        destination_port: 8082
+      filters:
+        - name: http_gateway2
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager                                                    
+            httpFilters:
+              - name: envoy.filters.http.router
+                typedConfig:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                  start_child_span: false             
+            codec_type: HTTP1
+            stat_prefix: "listener_http1.http_gateway_8082"
+            rds:
+              route_config_name: dynamic_route_1
+              config_source:
+                path_config_source:
+                  path: ./envoy-xds/rds.yaml
+                  watched_directory:
+                    path: ./envoy-xds

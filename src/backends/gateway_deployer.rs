@@ -277,20 +277,12 @@ impl GatewayDeployerChannelHandler {
                         info!("Backend got gateway {event:#}");
                          match event{
                             GatewayEvent::GatewayChanged((response_sender, gateway, routes)) => {
-                                let attached_routes = if routes.is_empty(){
-                                    &[]
-                                }else{
-                                    &routes[1..]
-                                };
-
-                                let ignored_routes = if routes.len() > 1{
-                                    &routes[0..1]
-                                }else{
-                                    &[]
-                                };
+                                let (attached_routes, ignored_routes):(Vec<_>, Vec<_>) = Iterator::partition(routes.iter().enumerate(), |f| f.0 % 2 ==0  );
+                                let attached_routes = attached_routes.into_iter().map(|i| i.1.clone()).collect();
+                                let ignored_routes = ignored_routes.into_iter().map(|i| i.1.clone()).collect();
                                 let processed = deploy_gateway(&gateway,&routes);
                                 let gateway_status = GatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: processed};
-                                let sent = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload::new(gateway_status, attached_routes.to_vec(), ignored_routes.to_vec())));
+                                let sent = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload::new(gateway_status, attached_routes, ignored_routes)));
                                 if let Err(e) = sent{
                                     warn!("Gateway handler closed {e:?}");
                                     return;
