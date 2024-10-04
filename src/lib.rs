@@ -17,7 +17,7 @@ mod state;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 
-use backends::gateway_deployer::GatewayDeployerChannelHandler;
+use backends::{envoy_deployer::EnvoyDeployerChannelHandler, gateway_deployer::GatewayDeployerChannelHandler};
 use controllers::{gateway::GatewayController, gateway_class::GatewayClassController, http_route::HttpRouteController};
 
 const STARTUP_DURATION: Duration = Duration::from_secs(10);
@@ -35,6 +35,7 @@ pub async fn start(args: Args) -> Result<()> {
     let state = Arc::new(Mutex::new(State::new()));
     let client = Client::try_default().await?;
     let (gateway_channel_sender, mut gateway_deployer_channel_handler) = GatewayDeployerChannelHandler::new();
+    let (envoy_gateway_channel_sender, mut envoy_deployer_channel_handler) = EnvoyDeployerChannelHandler::new(&args.controller_name, client.clone());
 
     let (mut gateway_patcher, gateway_patcher_channel) = GatewayPatcher::new(client.clone());
     let (mut gateway_class_patcher, gateway_class_patcher_channel) = GatewayClassPatcher::new(client.clone());
@@ -43,7 +44,7 @@ pub async fn start(args: Args) -> Result<()> {
     let gateway_class_controller = GatewayClassController::new(args.controller_name.clone(), &client, Arc::clone(&state), gateway_class_patcher_channel.clone());
     let gateway_controller = GatewayController::new(
         args.controller_name.clone(),
-        gateway_channel_sender.clone(),
+        envoy_gateway_channel_sender.clone(),
         client.clone(),
         Arc::clone(&state),
         gateway_patcher_channel,
@@ -56,7 +57,7 @@ pub async fn start(args: Args) -> Result<()> {
     let gateway_patcher = gateway_patcher.start().boxed();
     let gateway_class_patcher = gateway_class_patcher.start().boxed();
     let http_route_patcher = http_route_patcher.start().boxed();
-    let gateway_deployer_channel_handler = gateway_deployer_channel_handler.start().boxed();
+    let gateway_deployer_channel_handler = envoy_deployer_channel_handler.start().boxed();
     let gateway_class_controller_task = async move {
         info!("Gateway Class controller...started");
         gateway_class_controller.get_controller().await;

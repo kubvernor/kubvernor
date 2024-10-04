@@ -1,0 +1,10 @@
+---
+apiVersion: apps/v1
+kind: ConfigMap
+metadata:
+  labels:
+    app: envoy-cm
+  name: envoy-cm
+  namespace: kubvernor
+data:
+  envoy-config: 

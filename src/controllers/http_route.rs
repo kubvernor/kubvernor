@@ -27,10 +27,7 @@ use super::{
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    backends::{
-        self,
-        gateway_deployer::{GatewayEvent, GatewayResponse, Route, RouteConfig, RouteProcessedPayload},
-    },
+    backends::{self, GatewayEvent, GatewayResponse, Route, RouteConfig, RouteProcessedPayload},
     patchers::{FinalizerContext, Operation, PatchContext},
     state::{ResourceKey, State, DEFAULT_GROUP_NAME, DEFAULT_KIND_NAME, DEFAULT_NAMESPACE_NAME},
 };
@@ -305,7 +302,7 @@ impl HTTPRouteHandler<HTTPRoute> {
     async fn deploy_route(&self, sender: &Sender<GatewayEvent>, http_route: &Arc<HTTPRoute>, linked_routes: &[Route], gateway: &Gateway) -> Result<HTTPRouteStatusParents> {
         let log_context = self.log_context();
         let controller_name = &self.controller_name;
-        let maybe_gateway = backends::gateway_deployer::Gateway::try_from(gateway);
+        let maybe_gateway = backends::Gateway::try_from(gateway);
         let Ok(backend_gateway) = maybe_gateway else {
             warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
@@ -324,7 +321,7 @@ impl HTTPRouteHandler<HTTPRoute> {
         let response = response_receiver.await;
         if let Ok(GatewayResponse::RouteProcessed(RouteProcessedPayload { status, gateway_status: _ })) = response {
             match status {
-                crate::backends::gateway_deployer::RouteStatus::Attached => {
+                crate::backends::RouteStatus::Attached => {
                     debug!("{log_context} Route attached to {gateway_name}",);
                     Ok(HTTPRouteStatusParents {
                         conditions: Some(vec![Condition {
@@ -344,7 +341,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                     })
                 }
 
-                crate::backends::gateway_deployer::RouteStatus::Ignored => {
+                crate::backends::RouteStatus::Ignored => {
                     debug!("{log_context} Route rejected by {gateway_name}",);
                     Ok(HTTPRouteStatusParents {
                         conditions: Some(vec![Condition {

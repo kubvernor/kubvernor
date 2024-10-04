@@ -14,7 +14,7 @@ use serde::Serialize;
 use tracing::{debug, warn};
 
 use crate::{
-    backends::gateway_deployer::{Route, RouteConfig},
+    backends::{Route, RouteConfig},
     controllers::ControllerError,
     state::{ResourceKey, State},
 };

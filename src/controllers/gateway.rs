@@ -28,10 +28,7 @@ use super::{
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    backends::{
-        self,
-        gateway_deployer::{GatewayError, GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener, ListenerConfig, ListenerError, ListenerStatus, Route},
-    },
+    backends::{self, GatewayError, GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener, ListenerConfig, ListenerError, ListenerStatus, Route},
     controllers::utils::VerifiyItems,
     patchers::{FinalizerContext, Operation, PatchContext},
     state::{ResourceKey, State, DEFAULT_GROUP_NAME, DEFAULT_KIND_NAME, DEFAULT_NAMESPACE_NAME},
@@ -91,7 +88,7 @@ impl TryFrom<&GatewayListeners> for Listener {
     }
 }
 
-impl TryFrom<&Gateway> for backends::gateway_deployer::Gateway {
+impl TryFrom<&Gateway> for backends::Gateway {
     type Error = GatewayError;
 
     fn try_from(gateway: &Gateway) -> std::result::Result<Self, Self::Error> {
@@ -281,20 +278,38 @@ impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
     async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         self.on_status_changed(id, resource, state).await
     }
-
     async fn on_deleted(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
-        let controller_name = &self.controller_name;
-        state.delete_gateway(&id);
-
-        let _res = self.gateway_patcher.send(Operation::Delete((id.clone(), (**resource).clone(), controller_name.to_owned()))).await;
-        Ok(Action::requeue(RECONCILE_LONG_WAIT))
+        self.on_deleted(id, resource, state).await
     }
 }
 
 impl GatewayResourceHandler<Gateway> {
+    async fn on_deleted(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
+        state.delete_gateway(&id);
+        let sender = &self.gateway_channel_sender;
+        let _res = self.delete_gateway(sender, resource, state).await;
+        let _res = self.gateway_patcher.send(Operation::Delete((id.clone(), (**resource).clone(), self.controller_name.clone()))).await;
+        Ok(Action::requeue(RECONCILE_LONG_WAIT))
+    }
+
+    async fn delete_gateway(&self, sender: &Sender<GatewayEvent>, gateway: &Arc<Gateway>, state: &State) -> Result<Gateway> {
+        let log_context = self.log_context();
+        let maybe_gateway = backends::Gateway::try_from(&**gateway);
+        let Ok(backend_gateway) = maybe_gateway else {
+            warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
+            return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
+        };
+        let resource_key = ResourceKey::from(&**gateway);
+        let linked_routes = utils::find_linked_routes(state, &resource_key);
+        let (response_sender, response_receiver) = oneshot::channel();
+        let listener_event = GatewayEvent::GatewayDeleted((response_sender, backend_gateway, linked_routes));
+        let _ = sender.send(listener_event).await;
+        let _response = response_receiver.await;
+        Ok((**gateway).clone())
+    }
     async fn deploy_gateway(&self, sender: &Sender<GatewayEvent>, gateway: &Arc<Gateway>, state: &State) -> Result<Gateway> {
         let log_context = self.log_context();
-        let maybe_gateway = backends::gateway_deployer::Gateway::try_from(&**gateway);
+        let maybe_gateway = backends::Gateway::try_from(&**gateway);
         let Ok(backend_gateway) = maybe_gateway else {
             warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));

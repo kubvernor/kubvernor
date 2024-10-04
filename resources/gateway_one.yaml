@@ -9,7 +9,7 @@ spec:
   listeners:
   - name: http-1080
     protocol: HTTP
-    port: 1080
+    port: 2080
   - name: tcp-1890
     protocol: TCP
     port: 1080
