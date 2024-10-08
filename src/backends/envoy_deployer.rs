@@ -189,11 +189,14 @@ impl EnvoyDeployerChannelHandler {
         }
     }
 
-    fn create_envoy_xds_config_map(name: &str, gateway: &Gateway, lds: String, rds: String) -> ConfigMap {
+    fn create_envoy_xds_config_map(name: &str, gateway: &Gateway, lds: String, routes: Vec<(String, String)>) -> ConfigMap {
         let mut map = BTreeMap::new();
         map.insert("cds.yaml".to_owned(), "{}".to_owned());
         map.insert("lds.yaml".to_owned(), lds);
-        map.insert("rds.yaml".to_owned(), rds);
+        for (file_name, rds) in routes {
+            map.insert(format!("{file_name}.yaml"), rds);
+        }
+
         ConfigMap {
             binary_data: None,
             data: Some(map),
@@ -221,7 +224,7 @@ impl EnvoyDeployerChannelHandler {
         }
     }
 
-    fn create_envoy_xds(gateway: &Gateway, routes_and_listeners: &[(Route, Vec<GatewayListeners>)]) -> Result<(String, String), tera::Error> {
+    fn create_envoy_xds(gateway: &Gateway, routes_and_listeners: &[(Route, Vec<GatewayListeners>)]) -> Result<(String, Vec<(String, String)>), tera::Error> {
         #[derive(Serialize)]
         pub struct TeraListener {
             pub name: String,
@@ -253,25 +256,39 @@ impl EnvoyDeployerChannelHandler {
             })
             .collect();
 
-        let tera_routes: Vec<TeraRoute> = routes_and_listeners
+        let tera_routes = routes_and_listeners
             .iter()
             .filter(|(route, _listeners)| match route {
                 Route::Http(_) => true,
                 Route::Grpc(_) => false,
             })
             .flat_map(|(_route, listeners)| {
-                listeners.iter().map(|i| TeraRoute {
-                    name: format!("{}-dynamic-route", i.name),
+                listeners.iter().map(|i| {
+                    let route_name = format!("{}-dynamic-route", i.name);
+                    (route_name.clone(), TeraRoute { name: route_name })
                 })
+            });
+
+        let tera_routes = tera_routes
+            .into_iter()
+            .filter_map(|(name, route)| {
+                tera_context.remove("route_name");
+                tera_context.insert("route_name", &route.name);
+                let maybe_rds = TEMPLATES.render("rds.yaml.tera", &tera_context);
+                match maybe_rds {
+                    Ok(rds) => Some((name, rds)),
+                    Err(e) => {
+                        warn!("Can't generate RDS for route {name} {e}");
+                        None
+                    }
+                }
             })
             .collect();
 
         tera_context.insert("listeners", &tera_listeners);
-        tera_context.insert("routes", &tera_routes);
 
         let lds = TEMPLATES.render("lds.yaml.tera", &tera_context)?;
-        let rds = TEMPLATES.render("rds.yaml.tera", &tera_context)?;
-        Ok((lds, rds))
+        Ok((lds, tera_routes))
     }
 
     fn create_deployment(gateway: &Gateway) -> Deployment {
@@ -312,23 +329,6 @@ impl EnvoyDeployerChannelHandler {
             Volume {
                 name: "envoy-xds".to_owned(),
                 config_map: Some(ConfigMapVolumeSource {
-                    items: Some(vec![
-                        KeyToPath {
-                            key: "lds.yaml".to_owned(),
-                            path: "lds.yaml".to_owned(),
-                            ..Default::default()
-                        },
-                        KeyToPath {
-                            key: "cds.yaml".to_owned(),
-                            path: "cds.yaml".to_owned(),
-                            ..Default::default()
-                        },
-                        KeyToPath {
-                            key: "rds.yaml".to_owned(),
-                            path: "rds.yaml".to_owned(),
-                            ..Default::default()
-                        },
-                    ]),
                     name: Some(xds_cm),
                     ..Default::default()
                 }),
@@ -712,7 +712,7 @@ mod tests {
             protocol: "HTTP".to_owned(),
             tls: None,
         }];
-        let (lds, rds) = EnvoyDeployerChannelHandler::create_envoy_xds(
+        let (lds, routes) = EnvoyDeployerChannelHandler::create_envoy_xds(
             &Gateway {
                 id: uuid::Uuid::new_v4(),
                 name: "name".to_owned(),
@@ -723,6 +723,8 @@ mod tests {
         )
         .unwrap();
         let _: serde_yaml::value::Value = serde_yaml::from_str(&lds).unwrap();
-        let _: serde_yaml::value::Value = serde_yaml::from_str(&rds).unwrap();
+        for (_r_name, rds) in routes {
+            let _: serde_yaml::value::Value = serde_yaml::from_str(&rds).unwrap();
+        }
     }
 }

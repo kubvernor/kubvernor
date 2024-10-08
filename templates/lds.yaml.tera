@@ -23,7 +23,7 @@ resources:{% for listener in listeners %}
               route_config_name: {{listener.route_name}}
               config_source:
                 path_config_source:
-                  path: ./envoy-xds/rds.yaml
+                  path: ./envoy-xds/{{listener.route_name}}.yaml
                   watched_directory:
                     path: ./envoy-xds
 {% endfor %}
