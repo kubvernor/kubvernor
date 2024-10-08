@@ -27,9 +27,9 @@ use super::{
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    backends::{self, GatewayEvent, GatewayResponse, Route, RouteConfig, RouteProcessedPayload},
+    common::{self, GatewayEvent, GatewayResponse, ResourceKey, Route, RouteProcessedPayload},
     patchers::{FinalizerContext, Operation, PatchContext},
-    state::{ResourceKey, State, DEFAULT_GROUP_NAME, DEFAULT_KIND_NAME, DEFAULT_NAMESPACE_NAME},
+    state::State,
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
@@ -48,17 +48,6 @@ pub struct HttpRouteController {
     state: Arc<Mutex<State>>,
     gateway_channel_sender: mpsc::Sender<GatewayEvent>,
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
-}
-
-impl From<(&HTTPRouteParentRefs, String)> for ResourceKey {
-    fn from((route_parent, route_namespace): (&HTTPRouteParentRefs, String)) -> Self {
-        Self {
-            group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
-            namespace: route_parent.namespace.clone().unwrap_or(route_namespace.clone()),
-            name: route_parent.name.clone(),
-            kind: route_parent.kind.clone().unwrap_or(DEFAULT_KIND_NAME.to_owned()),
-        }
-    }
 }
 
 impl HttpRouteController {
@@ -109,7 +98,7 @@ impl HttpRouteController {
             return Err(ControllerError::InvalidPayload("Uid in wrong format".to_owned()));
         };
 
-        let resource_key = ResourceKey::try_from(resource.meta())?;
+        let resource_key = ResourceKey::from(&*resource);
 
         let state = Arc::clone(&ctx.state);
         let version = resource.meta().resource_version.clone();
@@ -215,11 +204,11 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let empty = vec![];
         let parent_gateway_refs = resource.spec.parent_refs.as_ref().unwrap_or(&empty);
+        let route = Route::from(&**resource);
 
-        let parent_gateway_refs_keys = parent_gateway_refs
-            .iter()
-            .map(|parent_ref| (parent_ref, resource.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned())))
-            .map(|(parent_ref, namespace)| (parent_ref, ResourceKey::from((parent_ref, namespace))));
+        let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, ResourceKey::from(parent_ref)));
+        //.map(|parent_ref| (parent_ref, resource.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned())))
+        //.map(|(parent_ref, namespace)| (parent_ref, ResourceKey::from((parent_ref, namespace))));
 
         let parent_gateway_refs = parent_gateway_refs_keys
             .clone()
@@ -230,13 +219,16 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         parent_gateway_refs_keys.for_each(|(_ref, key)| state.attach_http_route_to_gateway(key, id.clone()));
 
-        let matching_gateways = Self::filter_matching_gateways(&resolved_gateways);
+        let matching_gateways = common::RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
 
         let mut parents = vec![];
-        for (gateway, _listeners) in matching_gateways {
-            let linked_routes = utils::find_linked_routes(state, &ResourceKey::from(&*gateway));
-            if let Ok(status) = self.deploy_route(gateway_channel_sender, resource, &linked_routes, &gateway).await {
-                debug!("{log_context} Added to parents {status:?}");
+        for gateway in matching_gateways {
+            let mut linked_routes = utils::find_linked_routes(state, &ResourceKey::from(&*gateway));
+            linked_routes.push(route.clone());
+            warn!("Linked route {linked_routes:?}");
+            let listeners_and_routes = common::RouteListenerMatcher::filter_matching_routes(&gateway, &linked_routes);
+            if let Ok(status) = self.deploy_route(gateway_channel_sender, &gateway, listeners_and_routes).await {
+                debug!("{log_context} Deploying route {status:?}");
                 parents.push(status);
             }
         }
@@ -254,24 +246,6 @@ impl HTTPRouteHandler<HTTPRoute> {
             }))
             .await;
         Ok(Action::await_change())
-    }
-
-    fn filter_matching_gateways(resolved_gateways: &[(&HTTPRouteParentRefs, Option<Arc<Gateway>>)]) -> Vec<(Arc<Gateway>, Vec<GatewayListeners>)> {
-        resolved_gateways
-            .iter()
-            .filter_map(|(parent_ref, maybe_gateway)| {
-                if let Some(gateway) = maybe_gateway {
-                    match (parent_ref.port, &parent_ref.section_name) {
-                        (Some(port), Some(section_name)) => Some((Arc::clone(gateway), Self::filter_listeners_by_name_or_port(gateway, |gl| gl.port == port && gl.name == *section_name))),
-                        (Some(port), None) => Some((Arc::clone(gateway), Self::filter_listeners_by_name_or_port(gateway, |gl| gl.port == port))),
-                        (None, Some(section_name)) => Some((Arc::clone(gateway), Self::filter_listeners_by_name_or_port(gateway, |gl| gl.name == *section_name))),
-                        (None, None) => Some((Arc::clone(gateway), Self::filter_listeners_by_name_or_port(gateway, |_| true))),
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect()
     }
 
     fn generate_status_for_unknown_gateways(&self, gateways: &[(&HTTPRouteParentRefs, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<HTTPRouteStatusParents> {
@@ -299,29 +273,32 @@ impl HTTPRouteHandler<HTTPRoute> {
             .collect()
     }
 
-    async fn deploy_route(&self, sender: &Sender<GatewayEvent>, http_route: &Arc<HTTPRoute>, linked_routes: &[Route], gateway: &Gateway) -> Result<HTTPRouteStatusParents> {
+    async fn deploy_route(&self, sender: &Sender<GatewayEvent>, gateway: &Gateway, gateway_listeners: Vec<(Route, Vec<GatewayListeners>)>) -> Result<HTTPRouteStatusParents> {
         let log_context = self.log_context();
         let controller_name = &self.controller_name;
-        let maybe_gateway = backends::Gateway::try_from(gateway);
+        let maybe_gateway = common::Gateway::try_from(gateway);
         let Ok(backend_gateway) = maybe_gateway else {
             warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
+        // let maybe_listeners = gateway_listeners.iter().map(backends::Listener::try_from);
+        // let (backend_listeners, errors) = utils::VerifiyItems::verify(maybe_listeners);
+        // if !errors.is_empty() {
+        //     warn!("{log_context} Misconfigured  gateway listeners {backend_gateway:?} {errors:?}");
+        //     return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
+        // }
+
         let gateway_name = format!("{}:{}", backend_gateway.namespace, backend_gateway.name);
 
         let (response_sender, response_receiver) = oneshot::channel();
 
-        let route_event = GatewayEvent::RouteChanged((
-            response_sender,
-            Route::Http(RouteConfig::new(http_route.name_any(), http_route.namespace())),
-            linked_routes.to_vec(),
-            backend_gateway,
-        ));
+        let route_event = GatewayEvent::RouteChanged((response_sender, backend_gateway, gateway_listeners));
+
         let _ = sender.send(route_event).await;
         let response = response_receiver.await;
-        if let Ok(GatewayResponse::RouteProcessed(RouteProcessedPayload { status, gateway_status: _ })) = response {
+        if let Ok(GatewayResponse::RouteProcessed(RouteProcessedPayload { status })) = response {
             match status {
-                crate::backends::RouteStatus::Attached => {
+                common::RouteStatus::Attached => {
                     debug!("{log_context} Route attached to {gateway_name}",);
                     Ok(HTTPRouteStatusParents {
                         conditions: Some(vec![Condition {
@@ -341,7 +318,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                     })
                 }
 
-                crate::backends::RouteStatus::Ignored => {
+                common::RouteStatus::Ignored => {
                     debug!("{log_context} Route rejected by {gateway_name}",);
                     Ok(HTTPRouteStatusParents {
                         conditions: Some(vec![Condition {
@@ -371,13 +348,6 @@ impl HTTPRouteHandler<HTTPRoute> {
         route.status = Some(route_status);
         route.metadata.managed_fields = None;
         route
-    }
-
-    fn filter_listeners_by_name_or_port<F>(gateway: &Arc<Gateway>, filter: F) -> Vec<GatewayListeners>
-    where
-        F: Fn(&GatewayListeners) -> bool,
-    {
-        gateway.spec.listeners.iter().filter(|f| filter(f)).cloned().collect()
     }
 
     async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {

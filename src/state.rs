@@ -1,72 +1,15 @@
 use std::{collections::HashMap, fmt::Display, sync::Arc};
 
-use gateway_api::apis::standard::{gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute};
+use gateway_api::apis::standard::{
+    gatewayclasses::GatewayClass,
+    gateways::Gateway,
+    httproutes::{HTTPRoute, HTTPRouteParentRefs},
+};
+use kube::{Resource, ResourceExt};
 use kube_core::ObjectMeta;
 use multimap::MultiMap;
 
-use crate::controllers::ControllerError;
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd)]
-pub struct ResourceKey {
-    pub group: String,
-    pub namespace: String,
-    pub name: String,
-    pub kind: String,
-}
-
-impl ResourceKey {
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_owned(),
-            ..Default::default()
-        }
-    }
-
-    pub fn namespaced(name: &str, namespace: &str) -> Self {
-        Self {
-            name: name.to_owned(),
-            namespace: namespace.to_owned(),
-            ..Default::default()
-        }
-    }
-}
-pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";
-pub const DEFAULT_NAMESPACE_NAME: &str = "default";
-pub const DEFAULT_KIND_NAME: &str = "Gateway";
-impl Default for ResourceKey {
-    fn default() -> Self {
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace: DEFAULT_NAMESPACE_NAME.to_owned(),
-            name: String::default(),
-            kind: DEFAULT_KIND_NAME.to_owned(),
-        }
-    }
-}
-
-impl Display for ResourceKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}", self.namespace, self.name)
-    }
-}
-
-impl TryFrom<&ObjectMeta> for ResourceKey {
-    type Error = ControllerError;
-    fn try_from(value: &ObjectMeta) -> Result<Self, ControllerError> {
-        let namespace = value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
-
-        let name = match (value.name.as_ref(), value.generate_name.as_ref()) {
-            (None, None) => return Err(ControllerError::InvalidPayload("Name or generated name must be set".to_owned())),
-            (Some(name), _) | (None, Some(name)) => name,
-        };
-        Ok(Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace: if namespace.is_empty() { DEFAULT_NAMESPACE_NAME.to_owned() } else { namespace },
-            name: name.to_string(),
-            kind: DEFAULT_KIND_NAME.to_owned(),
-        })
-    }
-}
+use crate::{common::ResourceKey, controllers::ControllerError};
 
 pub struct State {
     gateway_classes: HashMap<ResourceKey, Arc<GatewayClass>>,

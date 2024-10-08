@@ -9,6 +9,7 @@ use tokio::{sync::Mutex, time::sleep};
 use tracing::info;
 
 pub mod backends;
+mod common;
 mod controllers;
 mod patchers;
 pub mod route;
@@ -34,7 +35,7 @@ pub async fn start(args: Args) -> Result<()> {
     info!("Kubvernor started");
     let state = Arc::new(Mutex::new(State::new()));
     let client = Client::try_default().await?;
-    let (gateway_channel_sender, mut gateway_deployer_channel_handler) = GatewayDeployerChannelHandler::new();
+    //let (gateway_channel_sender, mut gateway_deployer_channel_handler) = GatewayDeployerChannelHandler::new();
     let (envoy_gateway_channel_sender, mut envoy_deployer_channel_handler) = EnvoyDeployerChannelHandler::new(&args.controller_name, client.clone());
 
     let (mut gateway_patcher, gateway_patcher_channel) = GatewayPatcher::new(client.clone());
@@ -52,7 +53,7 @@ pub async fn start(args: Args) -> Result<()> {
         http_route_patcher_channel.clone(),
     );
 
-    let http_roue_controller = HttpRouteController::new(args.controller_name.clone(), client, gateway_channel_sender, state, http_route_patcher_channel);
+    let http_route_controller = HttpRouteController::new(args.controller_name.clone(), client, envoy_gateway_channel_sender, state, http_route_patcher_channel);
 
     let gateway_patcher = gateway_patcher.start().boxed();
     let gateway_class_patcher = gateway_class_patcher.start().boxed();
@@ -73,7 +74,7 @@ pub async fn start(args: Args) -> Result<()> {
     let http_route_controller_task = async move {
         sleep(2 * STARTUP_DURATION).await;
         info!("Route controller...started");
-        http_roue_controller.get_controller().await;
+        http_route_controller.get_controller().await;
         info!("Route controller...stopped");
     };
     futures::future::join_all(vec![

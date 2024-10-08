@@ -21,9 +21,10 @@ use super::{
     ControllerError, RECONCILE_ERROR_WAIT,
 };
 use crate::{
+    common::ResourceKey,
     controllers::{resource_handler::ResourceHandler, RECONCILE_LONG_WAIT},
     patchers::{Operation, PatchContext},
-    state::{ResourceKey, State},
+    state::State,
 };
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
@@ -87,7 +88,7 @@ impl GatewayClassController {
             return Err(ControllerError::InvalidPayload("Uid in wrong format".to_owned()));
         };
 
-        let resource_key = ResourceKey::try_from(resource.meta())?;
+        let resource_key = ResourceKey::from(resource.meta());
 
         let state = Arc::clone(&ctx.state);
 

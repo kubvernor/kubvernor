@@ -6,6 +6,7 @@ spec:
   parentRefs:
   - name: gateway-one
   - name: gateway-two
+
   hostnames:
   - "www.example.com"
   - "www.example2.com"

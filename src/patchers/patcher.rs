@@ -10,8 +10,8 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::{
+    common::ResourceKey,
     controllers::{ControllerError, FinalizerPatcher, ResourceFinalizer},
-    state::ResourceKey,
 };
 
 pub enum Operation<R>

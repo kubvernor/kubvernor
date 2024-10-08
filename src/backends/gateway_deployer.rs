@@ -1,9 +1,8 @@
+use gateway_api::apis::standard::gateways::GatewayListeners;
 use tokio::sync::mpsc::{self, Receiver};
 use tracing::{info, warn};
 
-use crate::backends::{GatewayProcessedPayload, GatewayResponse, GatewayStatus, RouteProcessedPayload, RouteStatus};
-
-use super::common::{Gateway, GatewayEvent, ListenerStatus, Route};
+use crate::common::{Gateway, GatewayEvent, GatewayProcessedPayload, GatewayResponse, GatewayStatus, ListenerStatus, Route, RouteProcessedPayload, RouteStatus};
 
 pub struct GatewayDeployerChannelHandler {
     event_receiver: Receiver<GatewayEvent>,
@@ -21,11 +20,11 @@ impl GatewayDeployerChannelHandler {
                     Some(event) = self.event_receiver.recv() => {
                         info!("Backend got gateway {event:#}");
                          match event{
-                            GatewayEvent::GatewayChanged((response_sender, gateway, routes)) => {
-                                let (attached_routes, ignored_routes):(Vec<_>, Vec<_>) = Iterator::partition(routes.iter().enumerate(), |f| f.0 % 2 ==0  );
-                                let attached_routes = attached_routes.into_iter().map(|i| i.1.clone()).collect();
-                                let ignored_routes = ignored_routes.into_iter().map(|i| i.1.clone()).collect();
-                                let processed = deploy_gateway(&gateway,&routes);
+                            GatewayEvent::GatewayChanged((response_sender, gateway, routes_and_listeners)) => {
+                                let (attached_routes, ignored_routes):(Vec<_>, Vec<_>) = Iterator::partition(routes_and_listeners.iter().enumerate(), |f| f.0 % 2 ==0  );
+                                let attached_routes = attached_routes.into_iter().map(|i| i.1.0.clone()).collect();
+                                let ignored_routes = ignored_routes.into_iter().map(|i| i.1.0.clone()).collect();
+                                let processed = deploy_gateway(&gateway,&routes_and_listeners);
                                 let gateway_status = GatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: processed};
                                 let sent = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload::new(gateway_status, attached_routes, ignored_routes)));
                                 if let Err(e) = sent{
@@ -35,7 +34,7 @@ impl GatewayDeployerChannelHandler {
                             }
 
                             GatewayEvent::GatewayDeleted((response_sender, gateway, routes)) => {
-                                let _processed = deploy_gateway(&gateway, &routes);
+
                                 let sent = response_sender.send(GatewayResponse::GatewayDeleted(vec![]));
                                 if let Err(e) = sent{
                                     warn!("Gateway handler closed {e:?}");
@@ -43,16 +42,24 @@ impl GatewayDeployerChannelHandler {
                                 }
                             }
 
-                            GatewayEvent::RouteChanged((response_sender, route, linked_routes, gateway)) | GatewayEvent::RouteDeleted((response_sender, route, linked_routes, gateway))=> {
-                                let processed = deploy_route(&route, &linked_routes, &gateway);
-                                let gateway_status = GatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: processed};
-
+                            GatewayEvent::RouteChanged((response_sender, gateway, routes_and_listeners)) =>{
+                                let gateway_status = GatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: vec![]};
                                 let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload::new(RouteStatus::Attached, gateway_status)));
                                 if let Err(e) = sent{
                                     warn!("Gateway handler closed {e:?}");
                                     return;
                                 }
                             }
+                            //  GatewayEvent::RouteDeleted((response_sender, gateway, routes_and_listeners))=> {
+
+                            //     let gateway_status = GatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: vec![]};
+
+                            //     let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload::new(RouteStatus::Attached, gateway_status)));
+                            //     if let Err(e) = sent{
+                            //         warn!("Gateway handler closed {e:?}");
+                            //         return;
+                            //     }
+                            // }
                         }
                     }
                     else => {
@@ -63,7 +70,7 @@ impl GatewayDeployerChannelHandler {
     }
 }
 
-pub fn deploy_gateway(gateway: &Gateway, routes: &[Route]) -> Vec<ListenerStatus> {
+pub fn deploy_gateway(gateway: &Gateway, routes: &[(Route, Vec<GatewayListeners>)]) -> Vec<ListenerStatus> {
     info!("Got following info {gateway:?} {routes:?}");
     gateway
         .listeners

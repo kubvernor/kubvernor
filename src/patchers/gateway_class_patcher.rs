@@ -3,7 +3,7 @@ use kube::{Api, Client};
 use tokio::sync::mpsc;
 
 use super::patcher::{Operation, Patcher};
-use crate::{controllers::LogContext, state::ResourceKey};
+use crate::{common::ResourceKey, controllers::LogContext};
 
 pub struct GatewayClassPatcher {
     client: Client,

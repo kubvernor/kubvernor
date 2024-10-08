@@ -1,9 +1,9 @@
 use gateway_api::apis::standard::httproutes::HTTPRoute;
-use kube::{Api, Client};
+use kube::{Api, Client, ResourceExt};
 use tokio::sync::mpsc;
 
 use super::patcher::{Operation, Patcher};
-use crate::{controllers::LogContext, state::ResourceKey};
+use crate::{common::ResourceKey, controllers::LogContext};
 
 pub struct HttpRoutePatcher {
     client: Client,

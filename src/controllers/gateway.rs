@@ -13,13 +13,13 @@ use k8s_openapi::{
 };
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
-    Api, Client, Resource, ResourceExt,
+    Api, Resource, ResourceExt,
 };
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot, Mutex,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::{
@@ -28,10 +28,10 @@ use super::{
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    backends::{self, GatewayError, GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener, ListenerConfig, ListenerError, ListenerStatus, Route},
+    common::{self, GatewayError, GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener, ListenerConfig, ListenerError, ListenerStatus, ResourceKey, Route, DEFAULT_NAMESPACE_NAME},
     controllers::utils::VerifiyItems,
     patchers::{FinalizerContext, Operation, PatchContext},
-    state::{ResourceKey, State, DEFAULT_GROUP_NAME, DEFAULT_KIND_NAME, DEFAULT_NAMESPACE_NAME},
+    state::State,
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
@@ -58,19 +58,6 @@ pub struct GatewayController {
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
 }
 
-impl From<&Gateway> for ResourceKey {
-    fn from(value: &Gateway) -> Self {
-        let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
-
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace: if namespace.is_empty() { DEFAULT_NAMESPACE_NAME.to_owned() } else { namespace },
-            name: value.name_any(),
-            kind: DEFAULT_KIND_NAME.to_owned(),
-        }
-    }
-}
-
 impl TryFrom<&GatewayListeners> for Listener {
     type Error = ListenerError;
 
@@ -88,7 +75,7 @@ impl TryFrom<&GatewayListeners> for Listener {
     }
 }
 
-impl TryFrom<&Gateway> for backends::Gateway {
+impl TryFrom<&Gateway> for crate::common::Gateway {
     type Error = GatewayError;
 
     fn try_from(gateway: &Gateway) -> std::result::Result<Self, Self::Error> {
@@ -177,7 +164,7 @@ impl GatewayController {
         let Ok(_) = Uuid::parse_str(&maybe_id) else {
             return Err(ControllerError::InvalidPayload("Uid in wrong format".to_owned()));
         };
-        let resource_key = ResourceKey::try_from(resource.meta())?;
+        let resource_key = ResourceKey::from(&*resource);
 
         let state = Arc::clone(&ctx.state);
         let version = resource.meta().resource_version.clone();
@@ -294,7 +281,7 @@ impl GatewayResourceHandler<Gateway> {
 
     async fn delete_gateway(&self, sender: &Sender<GatewayEvent>, gateway: &Arc<Gateway>, state: &State) -> Result<Gateway> {
         let log_context = self.log_context();
-        let maybe_gateway = backends::Gateway::try_from(&**gateway);
+        let maybe_gateway = common::Gateway::try_from(&**gateway);
         let Ok(backend_gateway) = maybe_gateway else {
             warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
@@ -307,9 +294,10 @@ impl GatewayResourceHandler<Gateway> {
         let _response = response_receiver.await;
         Ok((**gateway).clone())
     }
+
     async fn deploy_gateway(&self, sender: &Sender<GatewayEvent>, gateway: &Arc<Gateway>, state: &State) -> Result<Gateway> {
         let log_context = self.log_context();
-        let maybe_gateway = backends::Gateway::try_from(&**gateway);
+        let maybe_gateway = common::Gateway::try_from(&**gateway);
         let Ok(backend_gateway) = maybe_gateway else {
             warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
@@ -317,8 +305,12 @@ impl GatewayResourceHandler<Gateway> {
         let resource_key = ResourceKey::from(&**gateway);
 
         let linked_routes = utils::find_linked_routes(state, &resource_key);
+        debug!("Linked routes {linked_routes:?}");
+
+        let listeners_and_routes = common::RouteListenerMatcher::filter_matching_routes(&self.resource, &linked_routes);
+
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = GatewayEvent::GatewayChanged((response_sender, backend_gateway, linked_routes));
+        let listener_event = GatewayEvent::GatewayChanged((response_sender, backend_gateway, listeners_and_routes));
         let _ = sender.send(listener_event).await;
         let response = response_receiver.await;
 
@@ -540,7 +532,7 @@ impl GatewayResourceHandler<Gateway> {
         if let Some(routes) = routes {
             let route = routes
                 .iter()
-                .find(|f| f.metadata.name == Some(route.name().to_owned()) && f.metadata.namespace == route.namespace().cloned());
+                .find(|f| f.metadata.name == Some(route.name().to_owned()) && f.metadata.namespace == Some(route.namespace().clone()));
 
             if let Some(mut route) = route.map(|r| (***r).clone()) {
                 new_condition.observed_generation = route.meta().generation;

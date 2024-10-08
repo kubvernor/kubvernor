@@ -1,0 +1,29 @@
+version_info: "0"
+resources:{% for listener in listeners %}
+- "@type": type.googleapis.com/envoy.config.listener.v3.Listener
+  name: {{listener.name}}
+  address:
+    socket_address: { address: {{listener.ip_address}}, port_value: {{listener.port}} }
+  filter_chains:
+    - name: filter_chain_http
+      filter_chain_match:
+        destination_port: {{listener.port}}
+      filters:
+        - name: http_gateway
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager                                        
+            httpFilters:
+              - name: envoy.filters.http.router
+                typedConfig:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                  start_child_span: false
+            codec_type: HTTP1
+            stat_prefix: "{{listener.name}}-http_gateway-{{listener.port}}"
+            rds:
+              route_config_name: {{listener.route_name}}
+              config_source:
+                path_config_source:
+                  path: ./envoy-xds/rds.yaml
+                  watched_directory:
+                    path: ./envoy-xds
+{% endfor %}

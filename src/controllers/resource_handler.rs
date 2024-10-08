@@ -9,7 +9,7 @@ use super::{
     utils::{ResourceChecker, ResourceState, ResourceStateChecker},
     ControllerError,
 };
-use crate::state::{ResourceKey, State};
+use crate::{common::ResourceKey, state::State};
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
