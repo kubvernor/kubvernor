@@ -161,8 +161,8 @@ impl EnvoyDeployerChannelHandler {
         }
 
         let maybe_templates = Self::create_envoy_xds(gateway, routes_and_listeners);
-        if let Ok((lds, rds)) = maybe_templates {
-            let envoy_xds_config_map = Self::create_envoy_xds_config_map(&xds_cm, gateway, lds, rds);
+        if let Ok((lds, rds, cds)) = maybe_templates {
+            let envoy_xds_config_map = Self::create_envoy_xds_config_map(&xds_cm, gateway, lds, rds, cds);
             let res = config_map_api.patch(&xds_cm, &pp, &Patch::Apply(&envoy_xds_config_map)).await;
             if res.is_ok() {
                 debug!("Created config map for {}-{}", gateway.name, gateway.namespace);
@@ -189,10 +189,11 @@ impl EnvoyDeployerChannelHandler {
         }
     }
 
-    fn create_envoy_xds_config_map(name: &str, gateway: &Gateway, lds: String, routes: Vec<(String, String)>) -> ConfigMap {
+    fn create_envoy_xds_config_map(name: &str, gateway: &Gateway, lds: String, routes: Vec<(String, String)>, cds: String) -> ConfigMap {
         let mut map = BTreeMap::new();
-        map.insert("cds.yaml".to_owned(), "{}".to_owned());
+        map.insert("cds.yaml".to_owned(), cds);
         map.insert("lds.yaml".to_owned(), lds);
+
         for (file_name, rds) in routes {
             map.insert(format!("{file_name}.yaml"), rds);
         }
@@ -224,8 +225,8 @@ impl EnvoyDeployerChannelHandler {
         }
     }
 
-    fn create_envoy_xds(gateway: &Gateway, routes_and_listeners: &[(Route, Vec<GatewayListeners>)]) -> Result<(String, Vec<(String, String)>), tera::Error> {
-        #[derive(Serialize)]
+    fn create_envoy_xds(gateway: &Gateway, routes_and_listeners: &[(Route, Vec<GatewayListeners>)]) -> Result<(String, Vec<(String, String)>, String), tera::Error> {
+        #[derive(Serialize, Debug)]
         pub struct TeraListener {
             pub name: String,
             pub port: i32,
@@ -233,9 +234,23 @@ impl EnvoyDeployerChannelHandler {
             pub ip_address: String,
         }
 
-        #[derive(Serialize)]
+        #[derive(Serialize, Debug)]
+        pub struct TeraEndpoint {
+            pub service: String,
+            pub port: i32,
+            pub weight: i32,
+        }
+
+        #[derive(Serialize, Debug)]
+        pub struct TeraCluster {
+            pub name: String,
+            pub endpoints: Vec<TeraEndpoint>,
+        }
+
+        #[derive(Serialize, Debug)]
         pub struct TeraRoute {
             pub name: String,
+            pub cluster_name: String,
         }
 
         let mut tera_context = tera::Context::new();
@@ -256,6 +271,33 @@ impl EnvoyDeployerChannelHandler {
             })
             .collect();
 
+        let tera_clusters: Vec<_> = routes_and_listeners
+            .iter()
+            .filter(|(route, _listeners)| match route {
+                Route::Http(_) => true,
+                Route::Grpc(_) => false,
+            })
+            .flat_map(|(route, listeners)| {
+                route.routing_rules().iter().flat_map(|rr| {
+                    listeners.iter().map(|l| {
+                        let endpoints = rr
+                            .backends
+                            .iter()
+                            .map(|r| TeraEndpoint {
+                                service: r.endpoint.clone(),
+                                port: r.port,
+                                weight: r.weight,
+                            })
+                            .collect();
+                        TeraCluster {
+                            name: format!("cluster-{}", l.name),
+                            endpoints,
+                        }
+                    })
+                })
+            })
+            .collect();
+
         let tera_routes = routes_and_listeners
             .iter()
             .filter(|(route, _listeners)| match route {
@@ -263,9 +305,10 @@ impl EnvoyDeployerChannelHandler {
                 Route::Grpc(_) => false,
             })
             .flat_map(|(_route, listeners)| {
-                listeners.iter().map(|i| {
-                    let route_name = format!("{}-dynamic-route", i.name);
-                    (route_name.clone(), TeraRoute { name: route_name })
+                listeners.iter().map(|l| {
+                    let route_name = format!("{}-dynamic-route", l.name);
+                    let cluster_name = format!("cluster-{}", l.name);
+                    (route_name.clone(), TeraRoute { name: route_name, cluster_name })
                 })
             });
 
@@ -273,7 +316,10 @@ impl EnvoyDeployerChannelHandler {
             .into_iter()
             .filter_map(|(name, route)| {
                 tera_context.remove("route_name");
+                tera_context.remove("cluster_name");
                 tera_context.insert("route_name", &route.name);
+                tera_context.insert("cluster_name", &route.cluster_name);
+
                 let maybe_rds = TEMPLATES.render("rds.yaml.tera", &tera_context);
                 match maybe_rds {
                     Ok(rds) => Some((name, rds)),
@@ -286,9 +332,11 @@ impl EnvoyDeployerChannelHandler {
             .collect();
 
         tera_context.insert("listeners", &tera_listeners);
+        tera_context.insert("clusters", &tera_clusters);
 
         let lds = TEMPLATES.render("lds.yaml.tera", &tera_context)?;
-        Ok((lds, tera_routes))
+        let cds = TEMPLATES.render("cds.yaml.tera", &tera_context)?;
+        Ok((lds, tera_routes, cds))
     }
 
     fn create_deployment(gateway: &Gateway) -> Deployment {
@@ -697,13 +745,47 @@ mod tests {
 
     use super::EnvoyDeployerChannelHandler;
     use crate::{
-        common::{Gateway, Route, RouteConfig},
+        common::{BackendServiceConfig, Gateway, Route, RouteConfig, RoutingRule},
         controllers::gateway,
     };
 
     #[test]
     fn test_template() {
-        let route = Route::Http(RouteConfig::new("name".to_owned(), "namespace".to_owned(), Some(vec![])));
+        let mut rc = RouteConfig::new("name".to_owned(), "namespace".to_owned(), Some(vec![]));
+        rc.routing_rules = vec![
+            RoutingRule {
+                name: "routing-rule-1".to_owned(),
+                backends: vec![
+                    BackendServiceConfig {
+                        endpoint: "backend1".to_owned(),
+                        port: 1991,
+                        weight: 1,
+                    },
+                    BackendServiceConfig {
+                        endpoint: "backend2".to_owned(),
+                        port: 1992,
+                        weight: 2,
+                    },
+                ],
+            },
+            RoutingRule {
+                name: "routing-rule-2".to_owned(),
+                backends: vec![
+                    BackendServiceConfig {
+                        endpoint: "backend3".to_owned(),
+                        port: 1993,
+                        weight: 3,
+                    },
+                    BackendServiceConfig {
+                        endpoint: "backend4".to_owned(),
+                        port: 1994,
+                        weight: 4,
+                    },
+                ],
+            },
+        ];
+
+        let route = Route::Http(rc);
         let listeners = vec![GatewayListeners {
             allowed_routes: None,
             hostname: None,
@@ -712,7 +794,7 @@ mod tests {
             protocol: "HTTP".to_owned(),
             tls: None,
         }];
-        let (lds, routes) = EnvoyDeployerChannelHandler::create_envoy_xds(
+        let (lds, routes, cds) = EnvoyDeployerChannelHandler::create_envoy_xds(
             &Gateway {
                 id: uuid::Uuid::new_v4(),
                 name: "name".to_owned(),
@@ -722,7 +804,10 @@ mod tests {
             &[(route, listeners)],
         )
         .unwrap();
+        println!("{cds}");
+
         let _: serde_yaml::value::Value = serde_yaml::from_str(&lds).unwrap();
+        let _: serde_yaml::value::Value = serde_yaml::from_str(&cds).unwrap();
         for (_r_name, rds) in routes {
             let _: serde_yaml::value::Value = serde_yaml::from_str(&rds).unwrap();
         }

@@ -7,12 +7,9 @@ metadata:
 spec:
   gatewayClassName: kubvernor-gateway
   listeners:
-  - name: http-1080
+  - name: http-2080
     protocol: HTTP
     port: 2080
-  - name: tcp-1890
-    protocol: TCP
-    port: 1080
-
-
-    
+  - name: http-2081
+    protocol: HTTP
+    port: 2081

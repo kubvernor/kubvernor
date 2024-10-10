@@ -5,19 +5,19 @@ metadata:
 spec:
   parentRefs:
   - name: gateway-one
-  - name: gateway-two
+    port: 2080
 
   hostnames:
   - "www.example.com"
   - "www.example2.com"
   rules:
-  - matches:
-    - path:
-        type: PathPrefix
-        value: /login
-    - path:
-        type: PathPrefix
-        value: /data     
-    backendRefs:
-    - name: example-svc
-      port: 8080
+  - backendRefs:
+    - name: echo-service
+      port: 9080
+    # matches:
+    # - path:
+    #     type: PathPrefix
+    #     value: /login
+    # - path:
+    #     type: PathPrefix
+    #     value: /data           

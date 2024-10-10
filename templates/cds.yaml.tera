@@ -1,0 +1,18 @@
+version_info: "0"
+resources:{% for cluster in clusters %}
+- "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+  name: {{cluster.name}}
+  connect_timeout: 0.25s
+  type: STRICT_DNS
+  lb_policy: ROUND_ROBIN
+  load_assignment:
+    cluster_name: {{cluster.name}}
+    endpoints:
+      - lb_endpoints:{% for endpoint in cluster.endpoints %}
+        - endpoint:	  
+            address:
+              socket_address:
+                address: {{endpoint.service}}
+                port_value: {{endpoint.port}}
+          load_balancing_weight: {{endpoint.weight}}{% endfor %}				                  
+{% endfor %}

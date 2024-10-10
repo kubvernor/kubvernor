@@ -139,12 +139,7 @@ impl ResourceFinalizer {
 pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route> {
     state
         .get_http_routes_attached_to_gateway(gateway_id)
-        .map(|routes| {
-            routes
-                .iter()
-                .map(|r| Route::Http(RouteConfig::new(r.name_any(), r.namespace().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()), r.spec.parent_refs.clone())))
-                .collect()
-        })
+        .map(|routes| routes.iter().filter_map(|r| Route::try_from(&***r).ok()).collect())
         .unwrap_or_default()
 }
 

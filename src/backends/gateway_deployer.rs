@@ -33,7 +33,7 @@ impl GatewayDeployerChannelHandler {
                                 }
                             }
 
-                            GatewayEvent::GatewayDeleted((response_sender, gateway, routes)) => {
+                            GatewayEvent::GatewayDeleted((response_sender, _gateway, _routes)) => {
 
                                 let sent = response_sender.send(GatewayResponse::GatewayDeleted(vec![]));
                                 if let Err(e) = sent{
@@ -42,9 +42,9 @@ impl GatewayDeployerChannelHandler {
                                 }
                             }
 
-                            GatewayEvent::RouteChanged((response_sender, gateway, routes_and_listeners)) =>{
+                            GatewayEvent::RouteChanged((response_sender, gateway, _routes_and_listeners)) =>{
                                 let gateway_status = GatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: vec![]};
-                                let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload::new(RouteStatus::Attached, gateway_status)));
+                                let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload::new(RouteStatus::Attached, &gateway_status)));
                                 if let Err(e) = sent{
                                     warn!("Gateway handler closed {e:?}");
                                     return;

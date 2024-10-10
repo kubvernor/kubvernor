@@ -15,10 +15,20 @@ spec:
         app: echo-server-app
     spec:
       containers:
-      - name: echo-server-app
-        image: docker.io/kicbase/echo-server:1.0
+      - image: ealen/echo-server:latest
+        imagePullPolicy: IfNotPresent
+        name: echoserver
         ports:
         - containerPort: 9080
+        env:
+        - name: PORT
+          value: "9080"        
+    # spec:
+    #   containers:
+    #   - name: echo-server-app
+    #     image: docker.io/kicbase/echo-server:1.0
+    #     ports:
+    #     - containerPort: 9080
 ---
 apiVersion: v1
 kind: Service

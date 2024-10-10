@@ -3,7 +3,7 @@ use std::{fmt::Display, sync::Arc};
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
     gateways::{self, GatewayListeners},
-    httproutes::{HTTPRoute, HTTPRouteParentRefs},
+    httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules},
 };
 use kube::{Resource, ResourceExt};
 use kube_core::ObjectMeta;
@@ -133,10 +133,24 @@ impl Listener {
 }
 
 #[derive(Clone, Debug)]
+pub struct BackendServiceConfig {
+    pub endpoint: String,
+    pub port: i32,
+    pub weight: i32,
+}
+
+#[derive(Clone, Debug)]
+pub struct RoutingRule {
+    pub name: String,
+    pub backends: Vec<BackendServiceConfig>,
+}
+
+#[derive(Clone, Debug)]
 pub struct RouteConfig {
     name: String,
     namespace: String,
     parents: Option<Vec<HTTPRouteParentRefs>>,
+    pub routing_rules: Vec<RoutingRule>,
 }
 impl PartialEq for RouteConfig {
     fn eq(&self, other: &Self) -> bool {
@@ -156,7 +170,12 @@ impl PartialOrd for RouteConfig {
 
 impl RouteConfig {
     pub fn new(name: String, namespace: String, parents: Option<Vec<HTTPRouteParentRefs>>) -> Self {
-        Self { name, namespace, parents }
+        Self {
+            name,
+            namespace,
+            parents,
+            routing_rules: vec![],
+        }
     }
 }
 
@@ -183,15 +202,81 @@ impl Route {
             Route::Http(c) | Route::Grpc(c) => &c.parents,
         }
     }
+
+    pub fn routing_rules(&self) -> &[RoutingRule] {
+        match self {
+            Route::Http(c) | Route::Grpc(c) => &c.routing_rules,
+        }
+    }
 }
 
-impl From<&HTTPRoute> for Route {
-    fn from(value: &HTTPRoute) -> Self {
-        Route::Http(RouteConfig::new(
+impl TryFrom<&HTTPRoute> for Route {
+    type Error = ControllerError;
+    fn try_from(value: &HTTPRoute) -> Result<Self, Self::Error> {
+        let mut rc = RouteConfig::new(
             value.name_any(),
             value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
             value.spec.parent_refs.clone(),
-        ))
+        );
+        let empty_rules: Vec<HTTPRouteRules> = vec![];
+        let routing_rules = value.spec.rules.as_ref().unwrap_or(&empty_rules);
+        let routing_rules = routing_rules
+            .iter()
+            .enumerate()
+            .map(|(i, rr)| {
+                RoutingRule {
+                    name: format!("{}-{i}", value.name_any()),
+                    backends: rr
+                        .backend_refs
+                        .as_ref()
+                        .unwrap_or(&vec![])
+                        .iter()
+                        .map(|br| {
+                            BackendServiceConfig {
+                                endpoint: if let Some(namespace) = br.namespace.as_ref() {
+                                    format!("{}.{namespace}", br.name)
+                                } else {
+                                    br.name.clone()
+                                },
+                                //endpoint: "10.110.238.122".to_owned(),
+                                port: br.port.unwrap_or(0),
+                                weight: br.weight.unwrap_or(1),
+                            }
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
+        rc.routing_rules = routing_rules;
+        // vec![
+        //     RoutingRule {
+        //         name: format!("{}-r1", value.name_any()),
+        //         backends: vec![
+        //             BackendServiceConfig {
+        //                 endpoint: "echo-service".to_owned(),
+        //                 //endpoint: "10.110.238.122".to_owned(),
+        //                 port: 9080,
+        //                 weight: 1,
+        //             },
+        //             BackendServiceConfig {
+        //                 endpoint: "echo-service".to_owned(),
+        //                 //endpoint: "10.110.238.122".to_owned(),
+        //                 port: 9080,
+        //                 weight: 1,
+        //             },
+        //         ],
+        //     },
+        //     RoutingRule {
+        //         name: format!("{}-r2", value.name_any()),
+        //         backends: vec![BackendServiceConfig {
+        //             //                    endpoint: "echo-service-2.default.svc.cluster.local".to_owned(),
+        //             endpoint: "10.110.238.122".to_owned(),
+        //             port: 9080,
+        //             weight: 1,
+        //         }],
+        //     },
+        // ];
+        Ok(Route::Http(rc))
     }
 }
 
@@ -235,7 +320,7 @@ pub struct RouteProcessedPayload {
 }
 
 impl RouteProcessedPayload {
-    pub fn new(status: RouteStatus, gateway_status: GatewayStatus) -> Self {
+    pub fn new(status: RouteStatus, _gateway_status: &GatewayStatus) -> Self {
         Self { status } // gateway_status }
     }
 }

@@ -204,7 +204,7 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let empty = vec![];
         let parent_gateway_refs = resource.spec.parent_refs.as_ref().unwrap_or(&empty);
-        let route = Route::from(&**resource);
+        let route = Route::try_from(&**resource)?;
 
         let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, ResourceKey::from(parent_ref)));
         //.map(|parent_ref| (parent_ref, resource.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned())))
