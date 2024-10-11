@@ -50,16 +50,7 @@ impl GatewayDeployerChannelHandler {
                                     return;
                                 }
                             }
-                            //  GatewayEvent::RouteDeleted((response_sender, gateway, routes_and_listeners))=> {
 
-                            //     let gateway_status = GatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: vec![]};
-
-                            //     let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload::new(RouteStatus::Attached, gateway_status)));
-                            //     if let Err(e) = sent{
-                            //         warn!("Gateway handler closed {e:?}");
-                            //         return;
-                            //     }
-                            // }
                         }
                     }
                     else => {

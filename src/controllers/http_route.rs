@@ -185,9 +185,7 @@ impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
     }
 
     async fn on_deleted(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        state.delete_http_route(&id);
-        let _res = self.http_route_patcher.send(Operation::Delete((id.clone(), (**resource).clone(), self.controller_name.clone()))).await;
-        Ok(Action::requeue(RECONCILE_LONG_WAIT))
+        self.on_deleted(id, resource, state).await
     }
 }
 
@@ -248,6 +246,52 @@ impl HTTPRouteHandler<HTTPRoute> {
         Ok(Action::await_change())
     }
 
+    async fn on_deleted(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
+        let log_context = self.log_context();
+        let controller_name = &self.controller_name;
+        let gateway_channel_sender = &self.gateway_channel_sender;
+
+        let empty = vec![];
+        let parent_gateway_refs = resource.spec.parent_refs.as_ref().unwrap_or(&empty);
+
+        let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, ResourceKey::from(parent_ref)));
+
+        let parent_gateway_refs = parent_gateway_refs_keys
+            .clone()
+            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(&key).cloned()))
+            .map(|i| if i.1.is_some() { Ok(i) } else { Err(i) });
+
+        let (resolved_gateways, unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
+
+        parent_gateway_refs_keys.for_each(|(_ref, key)| state.detach_http_route_from_gateway(&id, &key));
+
+        let matching_gateways = common::RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
+
+        let mut parents = vec![];
+        for gateway in matching_gateways {
+            let linked_routes = utils::find_linked_routes(state, &ResourceKey::from(&*gateway));
+            warn!("Linked route {linked_routes:?}");
+            let listeners_and_routes = common::RouteListenerMatcher::filter_matching_routes(&gateway, &linked_routes);
+            if let Ok(status) = self.deploy_route(gateway_channel_sender, &gateway, listeners_and_routes).await {
+                debug!("{log_context} Deleting route {status:?}");
+                parents.push(status);
+            }
+        }
+
+        parents.append(&mut self.generate_status_for_unknown_gateways(&unknown_gateways, resource.metadata.generation));
+        state.delete_http_route(&id);
+
+        let _res = self
+            .http_route_patcher
+            .send(Operation::Delete((
+                self.resource_key.clone(),
+                Self::update_status_conditions((**resource).clone(), HTTPRouteStatus { parents }),
+                controller_name.to_owned(),
+            )))
+            .await;
+        Ok(Action::await_change())
+    }
+
     fn generate_status_for_unknown_gateways(&self, gateways: &[(&HTTPRouteParentRefs, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<HTTPRouteStatusParents> {
         gateways
             .iter()
@@ -281,12 +325,6 @@ impl HTTPRouteHandler<HTTPRoute> {
             warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
-        // let maybe_listeners = gateway_listeners.iter().map(backends::Listener::try_from);
-        // let (backend_listeners, errors) = utils::VerifiyItems::verify(maybe_listeners);
-        // if !errors.is_empty() {
-        //     warn!("{log_context} Misconfigured  gateway listeners {backend_gateway:?} {errors:?}");
-        //     return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
-        // }
 
         let gateway_name = format!("{}:{}", backend_gateway.namespace, backend_gateway.name);
 
