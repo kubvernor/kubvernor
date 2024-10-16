@@ -1,15 +1,9 @@
-use std::{collections::HashMap, fmt::Display, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
-use gateway_api::apis::standard::{
-    gatewayclasses::GatewayClass,
-    gateways::Gateway,
-    httproutes::{HTTPRoute, HTTPRouteParentRefs},
-};
-use kube::{Resource, ResourceExt};
-use kube_core::ObjectMeta;
+use gateway_api::apis::standard::{gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute};
 use multimap::MultiMap;
 
-use crate::{common::ResourceKey, controllers::ControllerError};
+use crate::common::ResourceKey;
 
 pub struct State {
     gateway_classes: HashMap<ResourceKey, Arc<GatewayClass>>,

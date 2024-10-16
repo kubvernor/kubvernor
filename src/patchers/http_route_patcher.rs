@@ -1,5 +1,5 @@
 use gateway_api::apis::standard::httproutes::HTTPRoute;
-use kube::{Api, Client, ResourceExt};
+use kube::{Api, Client};
 use tokio::sync::mpsc;
 
 use super::patcher::{Operation, Patcher};

@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use futures::FutureExt;
-use gateway_api::apis::standard::gateways::GatewayListeners;
 use itertools::Itertools;
 use k8s_openapi::{
     api::{
@@ -21,7 +20,10 @@ use tera::Tera;
 use tokio::sync::mpsc::{self, Receiver};
 use tracing::{debug, info, warn};
 
-use crate::common::{Gateway, GatewayEvent, GatewayProcessedPayload, GatewayResponse, GatewayStatus, Listener, ProtocolType, Route, RouteProcessedPayload, RouteStatus};
+use crate::common::{
+    ChangedContext, DeletedContext, Gateway, GatewayEvent, GatewayProcessedPayload, GatewayResponse, GatewayStatus, Listener, ListenerStatus, Route, RouteProcessedPayload, RouteStatus,
+    RouteToListenersMapping,
+};
 
 lazy_static! {
     pub static ref TEMPLATES: Tera = {
@@ -58,20 +60,23 @@ impl EnvoyDeployerChannelHandler {
         loop {
             tokio::select! {
                     Some(event) = self.event_receiver.recv() => {
-                        info!("Backend got gateway {event:#}");
+                        info!("Backend got event {event:#}");
                          match event{
-                            GatewayEvent::GatewayChanged((response_sender, gateway, routes_and_listeners)) => {
-                                self.deploy_envoy(&gateway, &routes_and_listeners).await;
-                                let _res = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload{gateway_status:GatewayStatus{ id: uuid::Uuid::new_v4(), name: gateway.name, namespace: gateway.namespace, listeners: vec![] }, attached_routes: vec![], ignored_routes: vec![]}));
+                            GatewayEvent::GatewayChanged(ChangedContext{ response_sender, gateway, route_to_listeners_mapping }) => {
+                                self.deploy_envoy(&gateway, &route_to_listeners_mapping).await;
+                                let attached_routes: Vec<_> = route_to_listeners_mapping.iter().map(|m| m.route.clone()).collect();
+                                let listener_status = gateway.listeners.iter().map(|l| ListenerStatus::Accepted((l.name().to_owned(), i32::try_from(attached_routes.len()).unwrap_or_default()))).collect();
+                                let gateway_status = GatewayStatus{ id: uuid::Uuid::new_v4(), name: gateway.name, namespace: gateway.namespace, listeners: listener_status };
+                                let _res = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload{gateway_status, attached_routes, ignored_routes: vec![]}));
                             }
 
-                            GatewayEvent::GatewayDeleted((response_sender, gateway, routes)) => {
+                            GatewayEvent::GatewayDeleted(DeletedContext{ response_sender, gateway, routes }) => {
                                 self.delete_envoy(&gateway, &routes).await;
                                 let _res = response_sender.send(GatewayResponse::GatewayDeleted(vec![]));
                             }
 
-                            GatewayEvent::RouteChanged((response_sender, gateway, routes_and_listeners)) => {
-                                self.deploy_envoy(&gateway, &routes_and_listeners).await;
+                            GatewayEvent::RouteChanged(ChangedContext{ response_sender, gateway, route_to_listeners_mapping }) => {
+                                self.deploy_envoy(&gateway, &route_to_listeners_mapping).await;
                                 let _res = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload{ status: RouteStatus::Attached}));
                             }
 
@@ -81,6 +86,64 @@ impl EnvoyDeployerChannelHandler {
                         break;
                     }
             }
+        }
+    }
+
+    async fn deploy_envoy(&self, gateway: &Gateway, route_to_listeners_mapping: &[RouteToListenersMapping]) {
+        debug!("Deploying Envoy {gateway:?}");
+        let service_api: Api<Service> = Api::namespaced(self.client.clone(), &gateway.namespace);
+        let deployment_api: Api<Deployment> = Api::namespaced(self.client.clone(), &gateway.namespace);
+        let config_map_api: Api<ConfigMap> = Api::namespaced(self.client.clone(), &gateway.namespace);
+        let (xds_cm, bootstrap_cm) = config_map_names(gateway);
+
+        let envoy_boostrap_config_map = Self::create_envoy_bootstrap_config_map(&bootstrap_cm, gateway);
+
+        let service = Self::create_service(gateway);
+        let deployment = Self::create_deployment(gateway);
+
+        let pp = PatchParams {
+            field_manager: Some(self.controller_name.clone()),
+            ..Default::default()
+        };
+
+        let res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&envoy_boostrap_config_map)).await;
+        if res.is_ok() {
+            debug!("Created bootstrap config map for {}-{}", gateway.name, gateway.namespace);
+        } else {
+            warn!("Could not create bootstrap config map for {}-{} {:?}", gateway.name, gateway.namespace, res.err());
+        }
+
+        let maybe_templates = Self::create_envoy_xds(gateway, route_to_listeners_mapping);
+        if let Ok(XdsData {
+            lds_content,
+            rds_content,
+            cds_content,
+        }) = maybe_templates
+        {
+            let envoy_xds_config_map = Self::create_envoy_xds_config_map(&xds_cm, gateway, lds_content, rds_content, cds_content);
+            let res = config_map_api.patch(&xds_cm, &pp, &Patch::Apply(&envoy_xds_config_map)).await;
+            if res.is_ok() {
+                debug!("Created xds config map for {}-{}", gateway.name, gateway.namespace);
+            } else {
+                warn!("Could not create xds config map for {}-{} {:?}", gateway.name, gateway.namespace, res.err());
+            }
+        } else {
+            warn!("Problem when processing templates {maybe_templates:?}");
+        }
+
+        let res = service_api.patch(&gateway.name, &pp, &Patch::Apply(&service)).await;
+        if res.is_ok() {
+            debug!("Created service {}-{}", gateway.name, gateway.namespace);
+        } else {
+            warn!("Could not create service  {}-{} {:?}", gateway.name, gateway.namespace, res.err());
+        }
+
+        let res = deployment_api.patch(&gateway.name, &pp, &Patch::Apply(&deployment)).await;
+
+        if res.is_ok() {
+            debug!("Created deployment {}-{}", gateway.name, gateway.namespace);
+        } else {
+            warn!("Could not create deployment  {}-{} {:?}", gateway.name, gateway.namespace, res.err());
         }
     }
 
@@ -136,66 +199,17 @@ impl EnvoyDeployerChannelHandler {
         let _res = futures::future::join_all(futures).await;
     }
 
-    async fn deploy_envoy(&self, gateway: &Gateway, routes_and_listeners: &[(Route, Vec<GatewayListeners>)]) {
-        debug!("Deploying Envoy {gateway:?}");
-        let service_api: Api<Service> = Api::namespaced(self.client.clone(), &gateway.namespace);
-        let deployment_api: Api<Deployment> = Api::namespaced(self.client.clone(), &gateway.namespace);
-        let config_map_api: Api<ConfigMap> = Api::namespaced(self.client.clone(), &gateway.namespace);
-        let (xds_cm, bootstrap_cm) = config_map_names(gateway);
-
-        let envoy_boostrap_config_map = Self::create_envoy_bootstrap_config_map(&bootstrap_cm, gateway);
-
-        let service = Self::create_service(gateway);
-        let deployment = Self::create_deployment(gateway);
-
-        let pp = PatchParams {
-            field_manager: Some(self.controller_name.clone()),
-            ..Default::default()
-        };
-
-        let res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&envoy_boostrap_config_map)).await;
-        if res.is_ok() {
-            debug!("Created config map for  {}-{}", gateway.name, gateway.namespace);
-        } else {
-            warn!("Could not create config map for {}-{} {:?}", gateway.name, gateway.namespace, res.err());
-        }
-
-        let maybe_templates = Self::create_envoy_xds(gateway, routes_and_listeners);
-        if let Ok((lds, rds, cds)) = maybe_templates {
-            let envoy_xds_config_map = Self::create_envoy_xds_config_map(&xds_cm, gateway, lds, rds, cds);
-            let res = config_map_api.patch(&xds_cm, &pp, &Patch::Apply(&envoy_xds_config_map)).await;
-            if res.is_ok() {
-                debug!("Created config map for {}-{}", gateway.name, gateway.namespace);
-            } else {
-                warn!("Could not create config map for {}-{} {:?}", gateway.name, gateway.namespace, res.err());
-            }
-        } else {
-            warn!("Problem when processing templates {maybe_templates:?}");
-        }
-
-        let res = service_api.patch(&gateway.name, &pp, &Patch::Apply(&service)).await;
-        if res.is_ok() {
-            debug!("Created service {}-{}", gateway.name, gateway.namespace);
-        } else {
-            warn!("Could not create service  {}-{} {:?}", gateway.name, gateway.namespace, res.err());
-        }
-
-        let res = deployment_api.patch(&gateway.name, &pp, &Patch::Apply(&deployment)).await;
-
-        if res.is_ok() {
-            debug!("Created deployment {}-{}", gateway.name, gateway.namespace);
-        } else {
-            warn!("Could not create deployment  {}-{} {:?}", gateway.name, gateway.namespace, res.err());
-        }
-    }
-
-    fn create_envoy_xds_config_map(name: &str, gateway: &Gateway, lds: String, routes: Vec<(String, String)>, cds: String) -> ConfigMap {
+    fn create_envoy_xds_config_map(name: &str, gateway: &Gateway, lds: String, routes: Vec<RdsData>, cds: String) -> ConfigMap {
         let mut map = BTreeMap::new();
         map.insert("cds.yaml".to_owned(), cds);
         map.insert("lds.yaml".to_owned(), lds);
 
-        for (file_name, rds) in routes {
-            map.insert(format!("{file_name}.yaml"), rds);
+        for RdsData {
+            route_file_name: route_file,
+            rds_content,
+        } in routes
+        {
+            map.insert(format!("{route_file}.yaml"), rds_content);
         }
 
         ConfigMap {
@@ -225,7 +239,7 @@ impl EnvoyDeployerChannelHandler {
         }
     }
 
-    fn create_envoy_xds(gateway: &Gateway, routes_and_listeners: &[(Route, Vec<GatewayListeners>)]) -> Result<(String, Vec<(String, String)>, String), tera::Error> {
+    fn create_envoy_xds(_gateway: &Gateway, route_to_listeners_mapping: &[RouteToListenersMapping]) -> Result<XdsData, tera::Error> {
         #[derive(Serialize, Debug)]
         pub struct TeraListener {
             pub name: String,
@@ -254,15 +268,16 @@ impl EnvoyDeployerChannelHandler {
         }
 
         let mut tera_context = tera::Context::new();
-        let tera_listeners: Vec<TeraListener> = gateway
-            .listeners
+        let tera_listeners: Vec<TeraListener> = route_to_listeners_mapping
             .iter()
+            .flat_map(|r| &r.listeners)
+            .dedup()
             .filter_map(|listener| {
-                if let Listener::Http(config) = listener {
+                if let Ok(l) = Listener::try_from(listener) {
                     Some(TeraListener {
-                        name: listener.name().to_owned(),
-                        port: config.port,
-                        route_name: format!("{}-dynamic-route", listener.name()),
+                        name: l.name().to_owned(),
+                        port: l.port(),
+                        route_name: format!("{}-dynamic-route", l.name()),
                         ip_address: "0.0.0.0".to_owned(),
                     })
                 } else {
@@ -271,13 +286,13 @@ impl EnvoyDeployerChannelHandler {
             })
             .collect();
 
-        let tera_clusters: Vec<_> = routes_and_listeners
+        let tera_clusters: Vec<_> = route_to_listeners_mapping
             .iter()
-            .filter(|(route, _listeners)| match route {
+            .filter(|RouteToListenersMapping { route, listeners: _ }| match route {
                 Route::Http(_) => true,
                 Route::Grpc(_) => false,
             })
-            .flat_map(|(route, listeners)| {
+            .flat_map(|RouteToListenersMapping { route, listeners }| {
                 route.routing_rules().iter().flat_map(|rr| {
                     listeners.iter().map(|l| {
                         let endpoints = rr
@@ -298,13 +313,13 @@ impl EnvoyDeployerChannelHandler {
             })
             .collect();
 
-        let tera_routes = routes_and_listeners
+        let tera_routes = route_to_listeners_mapping
             .iter()
-            .filter(|(route, _listeners)| match route {
+            .filter(|RouteToListenersMapping { route, listeners: _ }| match route {
                 Route::Http(_) => true,
                 Route::Grpc(_) => false,
             })
-            .flat_map(|(_route, listeners)| {
+            .flat_map(|RouteToListenersMapping { route: _, listeners }| {
                 listeners.iter().map(|l| {
                     let route_name = format!("{}-dynamic-route", l.name);
                     let cluster_name = format!("cluster-{}", l.name);
@@ -322,7 +337,7 @@ impl EnvoyDeployerChannelHandler {
 
                 let maybe_rds = TEMPLATES.render("rds.yaml.tera", &tera_context);
                 match maybe_rds {
-                    Ok(rds) => Some((name, rds)),
+                    Ok(rds) => Some(RdsData::new(name, rds)),
                     Err(e) => {
                         warn!("Can't generate RDS for route {name} {e}");
                         None
@@ -336,7 +351,7 @@ impl EnvoyDeployerChannelHandler {
 
         let lds = TEMPLATES.render("lds.yaml.tera", &tera_context)?;
         let cds = TEMPLATES.render("cds.yaml.tera", &tera_context)?;
-        Ok((lds, tera_routes, cds))
+        Ok(XdsData::new(lds, tera_routes, cds))
     }
 
     fn create_deployment(gateway: &Gateway) -> Deployment {
@@ -453,145 +468,34 @@ fn name(gw: &str, port: i32, proto: &str) -> String {
     format! {"{gw}-{port}-{}",proto.to_lowercase()}
 }
 
-// const ENVOY_POD_SPEC: &str = r#"
-// {
-//     "affinity": {
-//         "podAntiAffinity": {
-//             "preferredDuringSchedulingIgnoredDuringExecution": [
-//                 {
-//                     "podAffinityTerm": {
-//                         "labelSelector": {
-//                             "matchLabels": {
-//                                 "app": "envoy"
-//                             }
-//                         },
-//                         "topologyKey": "kubernetes.io/hostname"
-//                     },
-//                     "weight": 100
-//                 }
-//             ]
-//         }
-//     },
-//     "volumes": [
-//         {
-//             "name": "envoy-config",
-//             "configMap": {
-//                 "name": "envoy-cm",
-//                 "items": [
-//                     {
-//                         "key": "envoy-bootstrap.yaml",
-//                         "path": "envoy-bootstrap.yaml"
-//                     }
-//                 ]
-//             }
-//         },
-//         {
-//             "name": "envoy-xds",
-//             "configMap": {
-//                 "name": "envoy-xds",
-//                 "items": [
-//                     {
-//                         "key": "lds.yaml",
-//                         "path": "lds.yaml"
-//                     },
-//                     {
-//                         "key": "cds.yaml",
-//                         "path": "cds.yaml"
-//                     },
-//                     {
-//                         "key": "rds.yaml",
-//                         "path": "rds.yaml"
-//                     }
-//                 ]
-//             }
-//         }
-//     ],
-//     "containers": [
-//         {
-//             "args": [
-//                 "-c",
-//                 "/envoy-config/envoy-bootstrap.yaml",
-//                 "--service-cluster $(GATEWAY_NAMESPACE)",
-//                 "--service-node $(ENVOY_POD_NAME)",
-//                 "--log-level info"
-//             ],
-//             "command": [
-//                 "envoy"
-//             ],
-//             "image": "docker.io/envoyproxy/envoy:v1.31.0",
-//             "imagePullPolicy": "IfNotPresent",
-//             "name": "envoy",
-//             "env": [
-//                 {
-//                     "name": "GATEWAY_NAMESPACE",
-//                     "valueFrom": {
-//                         "fieldRef": {
-//                             "apiVersion": "v1",
-//                             "fieldPath": "metadata.namespace"
-//                         }
-//                     }
-//                 },
-//                 {
-//                     "name": "ENVOY_POD_NAME",
-//                     "valueFrom": {
-//                         "fieldRef": {
-//                             "apiVersion": "v1",
-//                             "fieldPath": "metadata.name"
-//                         }
-//                     }
-//                 }
-//             ],
-//             "ports": [
-//                 {
-//                     "containerPort": 8080,
-//                     "protocol": "TCP"
-//                 },
-//                 {
-//                     "containerPort": 8443,
-//                     "protocol": "TCP"
-//                 },
-//                 {
-//                     "containerPort": 8081,
-//                     "protocol": "TCP"
-//                 },
-//                 {
-//                     "containerPort": 8082,
-//                     "protocol": "TCP"
-//                 }
-//             ],
-//             "readinessProbe": {
-//                 "httpGet": {
-//                     "path": "/ready",
-//                     "port": 9901
-//                 },
-//                 "initialDelaySeconds": 3,
-//                 "periodSeconds": 4
-//             },
-//             "volumeMounts": [
-//                 {
-//                     "name": "envoy-config",
-//                     "mountPath": "/envoy-config",
-//                     "readOnly": true
-//                 },
-//                 {
-//                     "name": "envoy-xds",
-//                     "mountPath": "/envoy-xds",
-//                     "readOnly": true
-//                 }
-//             ],
-//             "lifecycle": {
-//                 "preStop": {
-//                     "httpGet": {
-//                         "path": "/shutdown",
-//                         "port": 8090,
-//                         "scheme": "HTTP"
-//                     }
-//                 }
-//             }
-//         }
-//     ]
-// }
-// "#;
+#[derive(Debug)]
+struct RdsData {
+    pub route_file_name: String,
+    pub rds_content: String,
+}
+impl RdsData {
+    fn new(route_file_name: String, rds_content: String) -> Self {
+        Self { route_file_name, rds_content }
+    }
+}
+
+#[allow(clippy::struct_field_names)]
+#[derive(Debug)]
+struct XdsData {
+    pub lds_content: String,
+    pub rds_content: Vec<RdsData>,
+    pub cds_content: String,
+}
+
+impl XdsData {
+    fn new(lds_content: String, rds_content: Vec<RdsData>, cds_content: String) -> Self {
+        Self {
+            lds_content,
+            rds_content,
+            cds_content,
+        }
+    }
+}
 
 const ENVOY_POD_SPEC: &str = r#"
 {
@@ -745,8 +649,8 @@ mod tests {
 
     use super::EnvoyDeployerChannelHandler;
     use crate::{
-        common::{BackendServiceConfig, Gateway, Route, RouteConfig, RoutingRule},
-        controllers::gateway,
+        backends::envoy_deployer::{RdsData, XdsData},
+        common::{BackendServiceConfig, Gateway, Route, RouteConfig, RouteToListenersMapping, RoutingRule},
     };
 
     #[test]
@@ -794,22 +698,26 @@ mod tests {
             protocol: "HTTP".to_owned(),
             tls: None,
         }];
-        let (lds, routes, cds) = EnvoyDeployerChannelHandler::create_envoy_xds(
+        let XdsData {
+            lds_content,
+            rds_content,
+            cds_content,
+        } = EnvoyDeployerChannelHandler::create_envoy_xds(
             &Gateway {
                 id: uuid::Uuid::new_v4(),
                 name: "name".to_owned(),
                 namespace: "namespace".to_owned(),
                 listeners: vec![],
             },
-            &[(route, listeners)],
+            &[RouteToListenersMapping::new(route, listeners)],
         )
         .unwrap();
-        println!("{cds}");
+        println!("{cds_content}");
 
-        let _: serde_yaml::value::Value = serde_yaml::from_str(&lds).unwrap();
-        let _: serde_yaml::value::Value = serde_yaml::from_str(&cds).unwrap();
-        for (_r_name, rds) in routes {
-            let _: serde_yaml::value::Value = serde_yaml::from_str(&rds).unwrap();
+        let _: serde_yaml::value::Value = serde_yaml::from_str(&lds_content).unwrap();
+        let _: serde_yaml::value::Value = serde_yaml::from_str(&cds_content).unwrap();
+        for RdsData { route_file_name: _, rds_content } in rds_content {
+            let _: serde_yaml::value::Value = serde_yaml::from_str(&rds_content).unwrap();
         }
     }
 }

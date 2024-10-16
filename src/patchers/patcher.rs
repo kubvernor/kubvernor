@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+
 use kube::{
     api::{Patch, PatchParams},
     Api, Resource, ResourceExt,
@@ -61,7 +62,7 @@ where
                     version,
                 }) => {
                     let api = self.api(&resource_key.namespace);
-                    let patch_params = PatchParams::apply(&controller_name);
+                    let patch_params = PatchParams::apply(&controller_name).force();
                     let log_context = self.log_context(&resource_key, &controller_name, version);
                     let res = api.patch_status(&resource_key.name, &patch_params, &Patch::Apply(resource)).await;
                     match res {

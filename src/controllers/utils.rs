@@ -14,7 +14,7 @@ use serde::Serialize;
 use tracing::{debug, warn};
 
 use crate::{
-    common::{ResourceKey, Route, RouteConfig, DEFAULT_NAMESPACE_NAME},
+    common::{ResourceKey, Route},
     controllers::ControllerError,
     state::State,
 };

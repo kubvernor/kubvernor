@@ -9,7 +9,6 @@ use kube::{Resource, ResourceExt};
 use kube_core::ObjectMeta;
 use thiserror::Error;
 use tokio::sync::oneshot;
-use tracing::debug;
 use uuid::Uuid;
 
 use crate::{controllers::ControllerError, state::State};
@@ -334,36 +333,106 @@ pub enum GatewayResponse {
 }
 
 #[derive(Debug)]
+pub struct RouteToListenersMapping {
+    pub route: Route,
+    pub listeners: Vec<GatewayListeners>,
+}
+
+impl RouteToListenersMapping {
+    pub fn new(route: Route, listeners: Vec<GatewayListeners>) -> Self {
+        Self { route, listeners }
+    }
+}
+
+impl Display for RouteToListenersMapping {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "route {} -> [{}]",
+            self.route.name(),
+            self.listeners
+                .iter()
+                .fold(String::new(), |acc, l| { acc + &format!("  Listener(name: {} port: {}), ", &l.name, l.port) })
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct ChangedContext {
+    pub response_sender: oneshot::Sender<GatewayResponse>,
+    pub gateway: Gateway,
+    pub route_to_listeners_mapping: Vec<RouteToListenersMapping>,
+}
+impl ChangedContext {
+    pub fn new(response_sender: oneshot::Sender<GatewayResponse>, gateway: Gateway, route_to_listeners_mapping: Vec<RouteToListenersMapping>) -> Self {
+        ChangedContext {
+            response_sender,
+            gateway,
+            route_to_listeners_mapping,
+        }
+    }
+}
+
+impl Display for ChangedContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Gateway {}.{} listeners = {} Routes {:?}",
+            self.gateway.name,
+            self.gateway.namespace,
+            self.gateway.listeners.len(),
+            self.route_to_listeners_mapping.iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct DeletedContext {
+    pub response_sender: oneshot::Sender<GatewayResponse>,
+    pub gateway: Gateway,
+    pub routes: Vec<Route>,
+}
+
+impl DeletedContext {
+    pub fn new(response_sender: oneshot::Sender<GatewayResponse>, gateway: Gateway, routes: Vec<Route>) -> Self {
+        DeletedContext { response_sender, gateway, routes }
+    }
+}
+#[derive(Debug)]
 pub enum GatewayEvent {
-    GatewayChanged((oneshot::Sender<GatewayResponse>, Gateway, Vec<(Route, Vec<GatewayListeners>)>)),
-    GatewayDeleted((oneshot::Sender<GatewayResponse>, Gateway, Vec<Route>)),
-    RouteChanged((oneshot::Sender<GatewayResponse>, Gateway, Vec<(Route, Vec<GatewayListeners>)>)),
+    GatewayChanged(ChangedContext),
+    GatewayDeleted(DeletedContext),
+    RouteChanged(ChangedContext),
 }
 
 impl Display for GatewayEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GatewayEvent::GatewayChanged((_, gateway, routes)) => write!(
+            GatewayEvent::GatewayChanged(ctx) => write!(
                 f,
-                "GatewayEvent::GatewayChanged 
-                gateway {gateway:?} 
-                routes {routes:?}"
+                "GatewayEvent::GatewayChanged
+                {ctx}" // gateway {:?}
+                       // routes {:?}",
+                       // ctx.gateway, ctx.route_to_listeners_mapping
             ),
-            GatewayEvent::GatewayDeleted((_, gateway, routes)) => {
+            GatewayEvent::GatewayDeleted(ctx) => {
                 write!(
                     f,
                     "GatewayEvent::GatewayDeleted 
-                gateway {gateway:?} 
-                routes {routes:?}"
+                gateway {:?} 
+                routes {:?}",
+                    ctx.gateway, ctx.routes
                 )
             }
 
-            GatewayEvent::RouteChanged((_, gateway, routes)) => {
+            GatewayEvent::RouteChanged(ctx) => {
                 write!(
                     f,
                     "GatewayEvent::RouteChanged                 
-                gateway {gateway:?} 
-                routes {routes:?}"
+                    {ctx}" // gateway {:?}
+                           // gateway {:?}
+                           // routes {:?}",
+                           // ctx.gateway, ctx.route_to_listeners_mapping
                 )
             }
         }
@@ -481,16 +550,15 @@ impl From<&HTTPRoute> for ResourceKey {
 
 pub struct RouteListenerMatcher {}
 impl RouteListenerMatcher {
-    pub fn filter_matching_routes(gateway: &Arc<gateways::Gateway>, routes: &[Route]) -> Vec<(Route, Vec<GatewayListeners>)> {
+    pub fn filter_matching_routes(gateway: &Arc<gateways::Gateway>, routes: &[Route]) -> Vec<RouteToListenersMapping> {
         routes
             .iter()
             .filter_map(|route| {
-                debug!("Mapping route");
                 let listeners = Self::filter_matching_route(gateway, route.parents());
                 if listeners.is_empty() {
                     None
                 } else {
-                    Some((route.clone(), listeners))
+                    Some(RouteToListenersMapping::new(route.clone(), listeners))
                 }
             })
             .collect()

@@ -22,6 +22,10 @@ spec:
       targetPort: 8082
       protocol: TCP
       name: http3
+    - port: 9901
+      targetPort: 9901
+      protocol: TCP
+      name: prometheus
 
   type: LoadBalancer
   selector:

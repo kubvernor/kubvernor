@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
-    gateways::{Gateway, GatewayListeners, GatewayStatus, GatewayStatusListeners},
+    gateways::{Gateway, GatewayListeners, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
     httproutes::{HTTPRoute, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
 };
 use k8s_openapi::{
@@ -28,7 +28,10 @@ use super::{
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, GatewayError, GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener, ListenerConfig, ListenerError, ListenerStatus, ResourceKey, Route, DEFAULT_NAMESPACE_NAME},
+    common::{
+        self, ChangedContext, DeletedContext, GatewayError, GatewayEvent, GatewayProcessedPayload, GatewayResponse, Listener, ListenerConfig, ListenerError, ListenerStatus, ResourceKey, Route,
+        DEFAULT_NAMESPACE_NAME,
+    },
     controllers::utils::VerifiyItems,
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
@@ -38,7 +41,6 @@ type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
 #[derive(Clone)]
 struct Context {
-    client: kube::Client,
     controller_name: String,
     gateway_channel_sender: mpsc::Sender<GatewayEvent>,
     state: Arc<Mutex<State>>,
@@ -50,7 +52,6 @@ struct Context {
 pub struct GatewayController {
     pub controller_name: String,
     gateway_channel_sender: mpsc::Sender<GatewayEvent>,
-    client: kube::Client,
     api: Api<Gateway>,
     state: Arc<Mutex<State>>,
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
@@ -108,8 +109,7 @@ impl GatewayController {
         GatewayController {
             controller_name,
             gateway_channel_sender,
-            api: Api::all(client.clone()),
-            client,
+            api: Api::all(client),
             state,
             gateway_patcher,
             gateway_class_patcher,
@@ -118,7 +118,6 @@ impl GatewayController {
     }
     pub fn get_controller(&self) -> BoxFuture<()> {
         let context = Arc::new(Context {
-            client: self.client.clone(),
             controller_name: self.controller_name.clone(),
             gateway_channel_sender: self.gateway_channel_sender.clone(),
             state: Arc::clone(&self.state),
@@ -289,7 +288,7 @@ impl GatewayResourceHandler<Gateway> {
         let resource_key = ResourceKey::from(&**gateway);
         let linked_routes = utils::find_linked_routes(state, &resource_key);
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = GatewayEvent::GatewayDeleted((response_sender, backend_gateway, linked_routes));
+        let listener_event = GatewayEvent::GatewayDeleted(DeletedContext::new(response_sender, backend_gateway, linked_routes));
         let _ = sender.send(listener_event).await;
         let _response = response_receiver.await;
         Ok((**gateway).clone())
@@ -305,12 +304,12 @@ impl GatewayResourceHandler<Gateway> {
         let resource_key = ResourceKey::from(&**gateway);
 
         let linked_routes = utils::find_linked_routes(state, &resource_key);
-        debug!("Linked routes {linked_routes:?}");
+        debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
 
-        let listeners_and_routes = common::RouteListenerMatcher::filter_matching_routes(&self.resource, &linked_routes);
+        let route_to_listeners_mapping = common::RouteListenerMatcher::filter_matching_routes(&self.resource, &linked_routes);
 
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = GatewayEvent::GatewayChanged((response_sender, backend_gateway, listeners_and_routes));
+        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway, route_to_listeners_mapping));
         let _ = sender.send(listener_event).await;
         let response = response_receiver.await;
 
@@ -325,7 +324,7 @@ impl GatewayResourceHandler<Gateway> {
             for attached_route in attached_routes {
                 let updated_route = self.update_accepted_route_parents(state, &attached_route, &resource_key);
                 if let Some(route) = updated_route {
-                    let route_resource_key = ResourceKey::try_from(route.meta()).unwrap();
+                    let route_resource_key = ResourceKey::from(route.meta());
                     let version = route.resource_version().clone();
                     let _res = self
                         .http_route_patcher
@@ -342,7 +341,7 @@ impl GatewayResourceHandler<Gateway> {
             for ignored_route in ignored_routes {
                 let updated_route = self.update_rejected_route_parents(state, &ignored_route, &resource_key);
                 if let Some(route) = updated_route {
-                    let route_resource_key = ResourceKey::try_from(route.meta()).unwrap();
+                    let route_resource_key = ResourceKey::from(route.meta());
                     let version = route.resource_version().clone();
                     let _res = self
                         .http_route_patcher
@@ -363,20 +362,31 @@ impl GatewayResourceHandler<Gateway> {
         }
     }
 
-    fn update_status_conditions(mut gateway: Gateway, mut gateway_status: GatewayStatus) -> Gateway {
-        let mut conditions: Vec<Condition> = vec![];
+    fn update_status_conditions(mut gateway: Gateway, listeners_status: Vec<GatewayStatusListeners>) -> Gateway {
+        let observed_generation = gateway.metadata.generation;
+        let mut status = gateway.status.unwrap_or_default();
+        let mut conditions = status.conditions.unwrap_or_default();
+
+        conditions.retain(|f| f.type_ != gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string());
+        for f in &mut conditions {
+            f.last_transition_time = Time(Utc::now());
+            f.observed_generation = observed_generation;
+            f.status = "True".to_owned();
+            f.reason = gateway_api::apis::standard::constants::GatewayConditionReason::Ready.to_string();
+        }
 
         let new_condition = Condition {
             last_transition_time: Time(Utc::now()),
             message: "Updated by controller".to_owned(),
-            observed_generation: gateway.metadata.generation,
+            observed_generation,
             reason: gateway_api::apis::standard::constants::GatewayConditionReason::Ready.to_string(),
             status: "True".to_owned(),
             type_: gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string(),
         };
         conditions.push(new_condition);
-        gateway_status.conditions = Some(conditions);
-        gateway.status = Some(gateway_status);
+        status.conditions = Some(conditions);
+        status.listeners = Some(listeners_status);
+        gateway.status = Some(status);
         gateway.metadata.managed_fields = None;
         gateway
     }
@@ -453,16 +463,29 @@ impl GatewayResourceHandler<Gateway> {
             .map(|status| match status {
                 ListenerStatus::Accepted((name, routes)) => GatewayStatusListeners {
                     attached_routes: routes,
-                    conditions: vec![Condition {
-                        last_transition_time: Time(Utc::now()),
-                        message: "Updated by controller".to_owned(),
-                        observed_generation: gateway.metadata.generation,
-                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted.to_string(),
-                        status: "True".to_owned(),
-                        type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
-                    }],
+                    conditions: vec![
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: "Updated by controller".to_owned(),
+                            observed_generation: gateway.metadata.generation,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs.to_string(),
+                            status: "True".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: "Updated by controller".to_owned(),
+                            observed_generation: gateway.metadata.generation,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted.to_string(),
+                            status: "True".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+                        },
+                    ],
                     name,
-                    supported_kinds: vec![],
+                    supported_kinds: vec![GatewayStatusListenersSupportedKinds {
+                        group: None,
+                        kind: "HTTPRoute".to_owned(),
+                    }],
                 },
                 ListenerStatus::Conflicted(name) => GatewayStatusListeners {
                     attached_routes: 0,
@@ -480,12 +503,7 @@ impl GatewayResourceHandler<Gateway> {
             })
             .collect();
 
-        let gateway_status = GatewayStatus {
-            listeners: Some(listener_statuses),
-            ..Default::default()
-        };
-
-        Self::update_status_conditions(((*self.resource).clone()).clone(), gateway_status)
+        Self::update_status_conditions(((*self.resource).clone()).clone(), listener_statuses)
     }
 
     fn update_accepted_route_parents(&self, state: &State, attached_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {

@@ -53,6 +53,7 @@ strip = false
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+#struct_field_names = "allow"
 clone_on_ref_ptr = "warn"
 disallowed-methods = "deny"
 doc_markdown = "allow"

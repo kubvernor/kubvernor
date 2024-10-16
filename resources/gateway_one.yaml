@@ -13,3 +13,6 @@ spec:
   - name: http-2081
     protocol: HTTP
     port: 2081
+  - name: prometheus-9901
+    protocol: HTTP
+    port: 9901

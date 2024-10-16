@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::apis::standard::{
-    gateways::{Gateway, GatewayListeners},
+    gateways::Gateway,
     httproutes::{self, HTTPRoute, HTTPRouteParentRefs, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
 };
 use k8s_openapi::{
@@ -12,7 +12,7 @@ use k8s_openapi::{
 };
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
-    Api, Resource, ResourceExt,
+    Api, Resource,
 };
 use tokio::sync::{
     mpsc::{self, Sender},
@@ -27,7 +27,7 @@ use super::{
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, GatewayEvent, GatewayResponse, ResourceKey, Route, RouteProcessedPayload},
+    common::{self, ChangedContext, GatewayEvent, GatewayResponse, ResourceKey, Route, RouteProcessedPayload, RouteToListenersMapping},
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
 };
@@ -74,7 +74,7 @@ impl HttpRouteController {
             http_route_patcher: self.http_route_patcher.clone(),
         });
 
-        let api = Api::<HTTPRoute>::namespaced(self.client.clone(), "default");
+        let api = Api::<HTTPRoute>::all(self.client.clone());
         Controller::new(api, Config::default())
             .run(Self::reconcile_http_route, Self::error_policy, Arc::clone(&context))
             .for_each(|_| futures::future::ready(()))
@@ -107,6 +107,8 @@ impl HttpRouteController {
             let state = state.lock().await;
             state.get_http_route_by_id(&resource_key).cloned()
         };
+
+        let _ = Route::try_from(&*resource)?;
 
         let handler = HTTPRouteHandler {
             state: Arc::clone(&ctx.state),
@@ -200,13 +202,13 @@ impl HTTPRouteHandler<HTTPRoute> {
         let controller_name = &self.controller_name;
         let gateway_channel_sender = &self.gateway_channel_sender;
 
-        let empty = vec![];
-        let parent_gateway_refs = resource.spec.parent_refs.as_ref().unwrap_or(&empty);
         let route = Route::try_from(&**resource)?;
 
+        let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
+            return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
+        };
+
         let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, ResourceKey::from(parent_ref)));
-        //.map(|parent_ref| (parent_ref, resource.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned())))
-        //.map(|(parent_ref, namespace)| (parent_ref, ResourceKey::from((parent_ref, namespace))));
 
         let parent_gateway_refs = parent_gateway_refs_keys
             .clone()
@@ -223,9 +225,9 @@ impl HTTPRouteHandler<HTTPRoute> {
         for gateway in matching_gateways {
             let mut linked_routes = utils::find_linked_routes(state, &ResourceKey::from(&*gateway));
             linked_routes.push(route.clone());
-            warn!("Linked route {linked_routes:?}");
-            let listeners_and_routes = common::RouteListenerMatcher::filter_matching_routes(&gateway, &linked_routes);
-            if let Ok(status) = self.deploy_route(gateway_channel_sender, &gateway, listeners_and_routes).await {
+            debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name() + ","));
+            let route_to_listeners_mapping = common::RouteListenerMatcher::filter_matching_routes(&gateway, &linked_routes);
+            if let Ok(status) = self.deploy_route(gateway_channel_sender, &gateway, route_to_listeners_mapping).await {
                 debug!("{log_context} Deploying route {status:?}");
                 parents.push(status);
             }
@@ -250,9 +252,11 @@ impl HTTPRouteHandler<HTTPRoute> {
         let log_context = self.log_context();
         let controller_name = &self.controller_name;
         let gateway_channel_sender = &self.gateway_channel_sender;
+        let _route = Route::try_from(&**resource)?;
 
-        let empty = vec![];
-        let parent_gateway_refs = resource.spec.parent_refs.as_ref().unwrap_or(&empty);
+        let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
+            return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
+        };
 
         let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, ResourceKey::from(parent_ref)));
 
@@ -270,7 +274,7 @@ impl HTTPRouteHandler<HTTPRoute> {
         let mut parents = vec![];
         for gateway in matching_gateways {
             let linked_routes = utils::find_linked_routes(state, &ResourceKey::from(&*gateway));
-            warn!("Linked route {linked_routes:?}");
+            debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
             let listeners_and_routes = common::RouteListenerMatcher::filter_matching_routes(&gateway, &linked_routes);
             if let Ok(status) = self.deploy_route(gateway_channel_sender, &gateway, listeners_and_routes).await {
                 debug!("{log_context} Deleting route {status:?}");
@@ -317,7 +321,7 @@ impl HTTPRouteHandler<HTTPRoute> {
             .collect()
     }
 
-    async fn deploy_route(&self, sender: &Sender<GatewayEvent>, gateway: &Gateway, gateway_listeners: Vec<(Route, Vec<GatewayListeners>)>) -> Result<HTTPRouteStatusParents> {
+    async fn deploy_route(&self, sender: &Sender<GatewayEvent>, gateway: &Gateway, route_to_listeners_mapping: Vec<RouteToListenersMapping>) -> Result<HTTPRouteStatusParents> {
         let log_context = self.log_context();
         let controller_name = &self.controller_name;
         let maybe_gateway = common::Gateway::try_from(gateway);
@@ -330,7 +334,7 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let (response_sender, response_receiver) = oneshot::channel();
 
-        let route_event = GatewayEvent::RouteChanged((response_sender, backend_gateway, gateway_listeners));
+        let route_event = GatewayEvent::RouteChanged(ChangedContext::new(response_sender, backend_gateway, route_to_listeners_mapping));
 
         let _ = sender.send(route_event).await;
         let response = response_receiver.await;

@@ -18,7 +18,7 @@ mod state;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 
-use backends::{envoy_deployer::EnvoyDeployerChannelHandler, gateway_deployer::GatewayDeployerChannelHandler};
+use backends::envoy_deployer::EnvoyDeployerChannelHandler;
 use controllers::{gateway::GatewayController, gateway_class::GatewayClassController, http_route::HttpRouteController};
 
 const STARTUP_DURATION: Duration = Duration::from_secs(10);
