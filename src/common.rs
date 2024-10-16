@@ -165,6 +165,7 @@ pub struct RouteConfig {
     namespace: String,
     parents: Option<Vec<HTTPRouteParentRefs>>,
     pub routing_rules: Vec<RoutingRule>,
+    hostnames: Vec<String>,
 }
 impl PartialEq for RouteConfig {
     fn eq(&self, other: &Self) -> bool {
@@ -189,6 +190,7 @@ impl RouteConfig {
             namespace,
             parents,
             routing_rules: vec![],
+            hostnames: vec![],
         }
     }
 }
@@ -220,6 +222,12 @@ impl Route {
     pub fn routing_rules(&self) -> &[RoutingRule] {
         match self {
             Route::Http(c) | Route::Grpc(c) => &c.routing_rules,
+        }
+    }
+
+    fn hostname(&self) -> &[String] {
+        match self {
+            Route::Http(config) | Route::Grpc(config) => &config.hostnames,
         }
     }
 }

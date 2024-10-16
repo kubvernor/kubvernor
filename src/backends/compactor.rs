@@ -1,10 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use gateway_api::apis::standard::gateways::Gateway;
-use k8s_openapi::merge_strategies::list;
-use serde::Serialize;
 
-use crate::common::{ProtocolType, RouteToListenersMapping};
+use crate::common::{ProtocolType, Route, RouteToListenersMapping};
 #[derive(Debug)]
 struct RdsData {
     pub route_file_name: String,
@@ -35,6 +33,9 @@ impl XdsData {
 }
 
 type ListenerNameToHostname = (String, Option<String>);
+type ListenerNameToRoute = (String, Route);
+
+type RouteKey = (String, String);
 
 struct CollapsedListener {
     port: i32,
@@ -44,7 +45,7 @@ struct CollapsedListener {
 struct CollapsedRoute {
     name: String,
     namespace: String,
-    listener_names: Vec<ListenerNameToHostname>,
+    listener_names: Vec<ListenerNameToRoute>,
 }
 
 fn collapse_listeners_and_routes(gateway: &Gateway, route_to_listeners_mapping: &[RouteToListenersMapping]) {
@@ -69,5 +70,27 @@ fn collapse_listeners_and_routes(gateway: &Gateway, route_to_listeners_mapping: 
         acc
     });
 
-    let collapsed_routes = route_to_listeners_mapping.iter().fold();
+    let collapsed_routes = route_to_listeners_mapping.iter().fold(BTreeMap::<RouteKey, CollapsedRoute>::new(), |mut acc, route_mapping| {
+        let key = (route_mapping.route.name().to_owned(), route_mapping.route.namespace().to_owned());
+        let maybe_added = acc.get_mut(&key);
+        if let Some(added) = maybe_added {
+            for listener in &route_mapping.listeners {
+                added.listener_names.push((listener.name.clone(), route_mapping.route.clone()));
+            }
+        } else {
+            let mut listener_names = vec![];
+            for listener in &route_mapping.listeners {
+                listener_names.push((listener.name.clone(), route_mapping.route.clone()));
+            }
+            acc.insert(
+                key.clone(),
+                CollapsedRoute {
+                    name: key.0.clone(),
+                    namespace: key.1.clone(),
+                    listener_names,
+                },
+            );
+        }
+        acc
+    });
 }

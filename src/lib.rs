@@ -12,7 +12,6 @@ pub mod backends;
 mod common;
 mod controllers;
 mod patchers;
-pub mod route;
 mod state;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
