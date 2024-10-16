@@ -25,6 +25,8 @@ use crate::common::{
     RouteToListenersMapping,
 };
 
+use super::compactor;
+
 lazy_static! {
     pub static ref TEMPLATES: Tera = {
         match Tera::new("templates/**.tera") {
@@ -99,6 +101,7 @@ impl EnvoyDeployerChannelHandler {
         let envoy_boostrap_config_map = Self::create_envoy_bootstrap_config_map(&bootstrap_cm, gateway);
 
         let service = Self::create_service(gateway);
+
         let deployment = Self::create_deployment(gateway);
 
         let pp = PatchParams {

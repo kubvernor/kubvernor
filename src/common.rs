@@ -66,6 +66,21 @@ pub enum ProtocolType {
     Udp,
 }
 
+impl TryFrom<String> for ProtocolType {
+    type Error = ControllerError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Ok(match value.to_uppercase().as_str() {
+            "HTTP" => Self::Http,
+            "HTTPS" => Self::Https,
+            "TCP" => Self::Tcp,
+            "TLS" => Self::Tls,
+            "UDP" => Self::Udp,
+            _ => return Err(ControllerError::InvalidPayload("Wrong protocol".to_owned())),
+        })
+    }
+}
+
 impl Display for ProtocolType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut e = format! {"{self:?}"};

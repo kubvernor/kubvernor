@@ -1,3 +1,4 @@
+mod compactor;
 pub mod envoy_deployer;
 pub mod gateway_deployer;
 

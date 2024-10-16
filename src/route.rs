@@ -8,6 +8,8 @@ use thiserror::Error;
 use tokio::sync::mpsc::{self, Receiver};
 use tracing::{debug, info};
 
+use crate::common::ProtocolType;
+
 #[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum RouteError {
     #[error("Unknown protocol")]
@@ -25,22 +27,6 @@ pub enum RouteStatus {
 impl std::fmt::Display for RouteStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
-    }
-}
-#[derive(Debug, Clone, PartialEq, PartialOrd, Hash, Eq)]
-pub enum ProtocolType {
-    Http,
-    Https,
-    Tcp,
-    Tls,
-    Udp,
-}
-
-impl Display for ProtocolType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut e = format! {"{self:?}"};
-        e.make_ascii_uppercase();
-        write!(f, "{e}")
     }
 }
 
