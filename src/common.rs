@@ -3,7 +3,7 @@ use std::{fmt::Display, sync::Arc};
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
     gateways::{self, GatewayListeners},
-    httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules},
+    httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesMatches},
 };
 use kube::{Resource, ResourceExt};
 use kube_core::ObjectMeta;
@@ -152,11 +152,16 @@ pub struct BackendServiceConfig {
     pub port: i32,
     pub weight: i32,
 }
+#[derive(Clone, Debug)]
+pub struct RouteMatch{
+    path: String
+}
 
 #[derive(Clone, Debug)]
 pub struct RoutingRule {
     pub name: String,
     pub backends: Vec<BackendServiceConfig>,
+    pub matching_rules: Vec<HTTPRouteRulesMatches>
 }
 
 #[derive(Clone, Debug)]
@@ -248,6 +253,7 @@ impl TryFrom<&HTTPRoute> for Route {
             .map(|(i, rr)| {
                 RoutingRule {
                     name: format!("{}-{i}", value.name_any()),
+                    matching_rules: rr.matches.clone().unwrap_or_default(), 
                     backends: rr
                         .backend_refs
                         .as_ref()

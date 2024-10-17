@@ -662,6 +662,7 @@ mod tests {
         rc.routing_rules = vec![
             RoutingRule {
                 name: "routing-rule-1".to_owned(),
+                matching_rules: vec![], 
                 backends: vec![
                     BackendServiceConfig {
                         endpoint: "backend1".to_owned(),
@@ -677,6 +678,7 @@ mod tests {
             },
             RoutingRule {
                 name: "routing-rule-2".to_owned(),
+                matching_rules: vec![], 
                 backends: vec![
                     BackendServiceConfig {
                         endpoint: "backend3".to_owned(),

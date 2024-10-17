@@ -1,8 +1,12 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use gateway_api::apis::standard::gateways::Gateway;
+use kube::ResourceExt;
+use serde::Serialize;
 
 use crate::common::{ProtocolType, Route, RouteToListenersMapping};
+
+use super::envoy_deployer::TEMPLATES;
 #[derive(Debug)]
 struct RdsData {
     pub route_file_name: String,
@@ -37,60 +41,394 @@ type ListenerNameToRoute = (String, Route);
 
 type RouteKey = (String, String);
 
-struct CollapsedListener {
-    port: i32,
-    listener_map: HashMap<ProtocolType, Vec<ListenerNameToHostname>>,
+
+#[derive(Debug)]
+struct EnvoyVirutalHost{
+    name: String,
+    hostname: Option<String>, 
+    route: Route,
+
 }
 
+impl Ord for EnvoyVirutalHost{
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name.cmp(&other.name)
+    }        
+}
+
+impl Eq for EnvoyVirutalHost{
+
+}
+
+impl PartialOrd for EnvoyVirutalHost{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.name.cmp(&other.name))
+    }
+}
+
+impl PartialEq for EnvoyVirutalHost{
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.hostname == other.hostname && self.route == other.route
+    }
+}
+
+#[derive(Debug)]
+struct EnvoyListener {
+    name: String, 
+    port: i32,
+    http_listener_map: BTreeSet<EnvoyVirutalHost>,
+    tcp_listener_map: BTreeSet<ListenerNameToHostname>
+}
+
+#[derive(Debug)]
 struct CollapsedRoute {
     name: String,
     namespace: String,
     listener_names: Vec<ListenerNameToRoute>,
 }
 
-fn collapse_listeners_and_routes(gateway: &Gateway, route_to_listeners_mapping: &[RouteToListenersMapping]) {
-    let collapsed_listeners = gateway.spec.listeners.iter().fold(BTreeMap::<i32, CollapsedListener>::new(), |mut acc, listener| {
+
+
+pub fn collapse_listeners_and_routes(gateway: &Gateway, route_to_listeners_mapping: &[RouteToListenersMapping]) ->BTreeMap<i32, EnvoyListener>{
+    let envoy_listeners = gateway.spec.listeners.iter().fold(BTreeMap::<i32, EnvoyListener>::new(), |mut acc, listener| {
         let port = listener.port;
+        let name = format!("{}-{}",gateway.name_any(), port);
         let protocol_type = ProtocolType::try_from(listener.protocol.clone()).unwrap_or(ProtocolType::Http);
         let maybe_added = acc.get_mut(&port);
 
         if let Some(added) = maybe_added {
-            let maybe_protocol = added.listener_map.get_mut(&protocol_type);
-            if let Some(protocol_map) = maybe_protocol {
-                protocol_map.push((listener.name.clone(), listener.hostname.clone()));
-            } else {
-                added.listener_map.insert(protocol_type, vec![(listener.name.clone(), listener.hostname.clone())]);
-            }
-        } else {
-            let mut listener_map = HashMap::new();
-            listener_map.insert(protocol_type, vec![(listener.name.clone(), listener.hostname.clone())]);
-            acc.insert(port, CollapsedListener { port, listener_map });
-        }
+            match protocol_type{
+                ProtocolType::Http => {
 
-        acc
-    });
-
-    let collapsed_routes = route_to_listeners_mapping.iter().fold(BTreeMap::<RouteKey, CollapsedRoute>::new(), |mut acc, route_mapping| {
-        let key = (route_mapping.route.name().to_owned(), route_mapping.route.namespace().to_owned());
-        let maybe_added = acc.get_mut(&key);
-        if let Some(added) = maybe_added {
-            for listener in &route_mapping.listeners {
-                added.listener_names.push((listener.name.clone(), route_mapping.route.clone()));
-            }
-        } else {
-            let mut listener_names = vec![];
-            for listener in &route_mapping.listeners {
-                listener_names.push((listener.name.clone(), route_mapping.route.clone()));
-            }
-            acc.insert(
-                key.clone(),
-                CollapsedRoute {
-                    name: key.0.clone(),
-                    namespace: key.1.clone(),
-                    listener_names,
+                    for RouteToListenersMapping{ route, listeners } in route_to_listeners_mapping{
+                        for route_listener in listeners{
+                            if route_listener.name == listener.name{
+                                added.http_listener_map.insert(EnvoyVirutalHost{ name: listener.name.clone(), hostname: listener.hostname.clone(), route: route.clone() });                        
+                            }
+                        }
+                    }
+                
+                    
+                },                
+                ProtocolType::Tcp => {
+                    added.tcp_listener_map.insert((listener.name.clone(), listener.hostname.clone()));            
                 },
-            );
+                _ => ()                
+            }            
+        } else {
+            match protocol_type{
+                ProtocolType::Http => {
+                    let mut listener_map = BTreeSet::new();
+                    for RouteToListenersMapping{ route, listeners } in route_to_listeners_mapping{
+                        for route_listener in listeners{
+                            if route_listener.name == listener.name{
+                                listener_map.insert(EnvoyVirutalHost{ name: listener.name.clone(), hostname: listener.hostname.clone(), route: route.clone() });                        
+                            }
+                        }
+                    }                    
+                    acc.insert(port, EnvoyListener { name, port, http_listener_map: listener_map, tcp_listener_map: BTreeSet::new() });
+                },                
+                ProtocolType::Tcp => {
+                    let mut listener_map = BTreeSet::new();
+                    listener_map.insert((listener.name.clone(), listener.hostname.clone()));
+                    acc.insert(port, EnvoyListener { name, port, http_listener_map: BTreeSet::new(), tcp_listener_map: listener_map});
+
+                },                
+                _ => ()                
+            }
+            
         }
+
         acc
     });
+    envoy_listeners
+
+}
+
+pub fn genereate_rds(listener: &EnvoyListener)->String{
+    
+    #[derive(Serialize)]
+    struct VeraRouteConfigs{
+        pub path: String, 
+        pub cluster_name: String, 
+    }
+
+    #[derive(Serialize)]
+    struct TeraVirtualHost{
+        pub hostname: String, 
+        pub route_configs: Vec<VeraRouteConfigs>
+    }
+
+    #[derive(Serialize)]
+    struct TeraRoute{
+        pub name: String, 
+        pub virtual_hosts: Vec<TeraVirtualHost>
+    }
+    let mut tera_context = tera::Context::new();
+    let EnvoyListener{ name, port, http_listener_map, tcp_listener_map } = listener;
+
+
+    let tvh: Vec<TeraVirtualHost> = http_listener_map.iter().map(|evc| {
+        TeraVirtualHost{            
+            hostname: evc.hostname.clone().unwrap_or("*".to_owned()),
+            route_configs: evc.route.routing_rules().iter().flat_map(|rr|{
+                rr.matching_rules.iter().map(|mr|{
+                    VeraRouteConfigs{
+                        path: mr.path.clone().unwrap().value.unwrap(),
+                        cluster_name: rr.name.clone(),
+                    }
+                })                
+            }).collect(),
+        }
+    }).collect();
+
+    let tr = TeraRoute{
+        name: name.clone(),
+        virtual_hosts: tvh
+    };
+    tera_context.insert("route", &tr);
+    
+    TEMPLATES.render("rds.yaml.tera", &tera_context).unwrap()    
+
+}
+
+#[cfg(test)]
+mod tests {
+    use gateway_api::apis::standard::{gateways::Gateway, httproutes::HTTPRoute};
+
+    use crate::{backends::compactor::genereate_rds, common::{Route, RouteToListenersMapping}};
+
+    use super::collapse_listeners_and_routes;
+
+    // https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/refs/heads/main/conformance/tests/gateway-http-listener-isolation.yaml
+    #[test]
+    pub fn test1(){
+        let gateway: Gateway = serde_yaml::from_str(GATEWAY_YAML).unwrap();
+        let route1: HTTPRoute = serde_yaml::from_str(ROUTE1_YAML).unwrap();        
+        let route2: HTTPRoute = serde_yaml::from_str(ROUTE2_YAML).unwrap();        
+        let route3: HTTPRoute = serde_yaml::from_str(ROUTE3_YAML).unwrap();        
+        let route4: HTTPRoute = serde_yaml::from_str(ROUTE4_YAML).unwrap();        
+
+        let route11 = Route::try_from(&route1).unwrap();
+        let route12 = Route::try_from(&route2).unwrap();
+        let route13 = Route::try_from(&route3).unwrap();
+        let route14 = Route::try_from(&route4).unwrap();
+
+        let listener1 = gateway.spec.listeners[0].clone();
+        let listener2 = gateway.spec.listeners[1].clone();
+        let listener3 = gateway.spec.listeners[2].clone();
+        let listener4 = gateway.spec.listeners[3].clone();
+        let listener5 = gateway.spec.listeners[4].clone();
+        let listener6 = gateway.spec.listeners[5].clone();
+        let listener7 = gateway.spec.listeners[6].clone();
+        let listener8 = gateway.spec.listeners[7].clone();
+        let listener9 = gateway.spec.listeners[8].clone();
+        let listener10 = gateway.spec.listeners[9].clone();
+        let listener11 = gateway.spec.listeners[10].clone();
+        let listener12 = gateway.spec.listeners[11].clone();
+        
+        
+        let route_mapping = vec![
+            RouteToListenersMapping{ route: route11, listeners: vec![listener1, listener9] },
+            RouteToListenersMapping{ route: route12, listeners: vec![listener2, listener10] },
+            RouteToListenersMapping{ route: route13, listeners: vec![listener3] },
+            RouteToListenersMapping{ route: route14, listeners: vec![listener4] }
+        ];
+
+        let collapsed_listeners = collapse_listeners_and_routes(&gateway, &route_mapping);
+        dbg!(&collapsed_listeners);   
+        let l = &collapsed_listeners[&80];
+        let rds = genereate_rds(l);
+        println!("{rds}");
+
+
+    }
+
+
+
+const GATEWAY_YAML: &str = r#"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: http-listener-isolation
+  namespace: gateway-conformance-infra
+spec:
+  gatewayClassName: my-class
+  listeners:
+  - name: empty-hostname
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: wildcard-example-com
+    port: 80
+    protocol: HTTP
+    hostname: "*.example.com"
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: wildcard-foo-example-com
+    port: 80
+    protocol: HTTP
+    hostname: "*.foo.example.com"
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: abc-foo-example-com
+    port: 80
+    protocol: HTTP
+    hostname: "abc.foo.example.com"
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: empty-hostname-tcp
+    port: 80
+    protocol: TCP
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: wildcard-example-com-tcp
+    port: 80
+    protocol: TCP
+    hostname: "*.example.com"
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: wildcard-foo-example-com-tcp
+    port: 80
+    protocol: TCP
+    hostname: "*.foo.example.com"
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: abc-foo-example-com-tcp
+    port: 80
+    protocol: TCP
+    hostname: "abc.foo.example.com"
+    allowedRoutes:
+      namespaces:
+        from: All        
+  - name: empty-hostname-9090
+    port: 9090
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: wildcard-example-com-9090
+    port: 9090
+    protocol: HTTP
+    hostname: "*.example.com"
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: wildcard-foo-example-com-9090
+    port: 9090
+    protocol: HTTP
+    hostname: "*.foo.example.com"
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: abc-foo-example-com-tcp-9090
+    port: 9090
+    protocol: HTTP
+    hostname: "abc.foo.example.com"
+    allowedRoutes:
+      namespaces:
+        from: All                
+"#;
+
+const ROUTE1_YAML: &str = r"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: attaches-to-empty-hostname
+  namespace: gateway-conformance-infra
+spec:
+  parentRefs:
+  - name: http-listener-isolation
+    namespace: gateway-conformance-infra
+    sectionName: empty-hostname
+  - name: http-listener-isolation
+    namespace: gateway-conformance-infra
+    sectionName: empty-hostname-9090        
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /empty-hostname
+    backendRefs:
+    - name: infra-backend-v1
+      port: 8080
+";
+
+const ROUTE2_YAML: &str = r"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: attaches-to-wildcard-example-com
+  namespace: gateway-conformance-infra
+spec:
+  parentRefs:
+  - name: http-listener-isolation
+    namespace: gateway-conformance-infra
+    sectionName: wildcard-example-com
+  - name: http-listener-isolation
+    namespace: gateway-conformance-infra
+    sectionName: wildcard-example-com-9090    
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /wildcard-example-com
+    backendRefs:
+    - name: infra-backend-v1
+      port: 8080
+";
+
+const ROUTE3_YAML: &str = r"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: attaches-to-wildcard-foo-example-com
+  namespace: gateway-conformance-infra
+spec:
+  parentRefs:
+  - name: http-listener-isolation
+    namespace: gateway-conformance-infra
+    sectionName: wildcard-foo-example-com
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /wildcard-foo-example-com
+    backendRefs:
+    - name: infra-backend-v1
+      port: 8080
+";
+
+const ROUTE4_YAML: &str = r"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: attaches-to-abc-foo-example-com
+  namespace: gateway-conformance-infra
+spec:
+  parentRefs:
+  - name: http-listener-isolation
+    namespace: gateway-conformance-infra
+    sectionName: abc-foo-example-com
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /abc-foo-example-com
+    backendRefs:
+    - name: infra-backend-v1
+      port: 8080
+";
+
+
+
+
 }

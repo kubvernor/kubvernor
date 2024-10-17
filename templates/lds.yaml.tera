@@ -18,12 +18,12 @@ resources:{% for listener in listeners %}
                   "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
                   start_child_span: false
             codec_type: HTTP1
-            stat_prefix: "{{listener.name}}-http_gateway-{{listener.port}}"
+            stat_prefix: "{{listener.name}}-{{listener.port}}-stats"
             rds:
-              route_config_name: {{listener.route_name}}
+              route_config_name: {{listener.name}}-{{listener.port}}-route
               config_source:
                 path_config_source:
-                  path: ./envoy-xds/{{listener.route_name}}.yaml
+                  path: ./envoy-xds/{{listener.name}}-{{listener.port}}-route.yaml
                   watched_directory:
                     path: ./envoy-xds
 {% endfor %}
