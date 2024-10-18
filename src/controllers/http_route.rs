@@ -334,7 +334,7 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let (response_sender, response_receiver) = oneshot::channel();
 
-        let route_event = GatewayEvent::RouteChanged(ChangedContext::new(response_sender, backend_gateway, route_to_listeners_mapping));
+        let route_event = GatewayEvent::RouteChanged(ChangedContext::new(response_sender, backend_gateway, gateway.clone(), route_to_listeners_mapping));
 
         let _ = sender.send(route_event).await;
         let response = response_receiver.await;

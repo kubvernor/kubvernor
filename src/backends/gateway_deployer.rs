@@ -21,7 +21,7 @@ impl GatewayDeployerChannelHandler {
                     Some(event) = self.event_receiver.recv() => {
                         info!("Backend got gateway {event:#}");
                          match event{
-                            GatewayEvent::GatewayChanged(ChangedContext{ response_sender, gateway, route_to_listeners_mapping }) => {
+                            GatewayEvent::GatewayChanged(ChangedContext{ response_sender, gateway, kube_gateway: _,  route_to_listeners_mapping }) => {
                                 let (attached_routes, ignored_routes):(Vec<_>, Vec<_>) = Iterator::partition(route_to_listeners_mapping.iter().enumerate(), |f| f.0 % 2 ==0  );
                                 let attached_routes = attached_routes.into_iter().map(|i| i.1.route.clone()).collect();
                                 let ignored_routes = ignored_routes.into_iter().map(|i| i.1.route.clone()).collect();
@@ -43,7 +43,7 @@ impl GatewayDeployerChannelHandler {
                                 }
                             }
 
-                            GatewayEvent::RouteChanged(ChangedContext{ response_sender, gateway, route_to_listeners_mapping: _ }) =>{
+                            GatewayEvent::RouteChanged(ChangedContext{ response_sender, gateway, kube_gateway: _, route_to_listeners_mapping: _ }) =>{
                                 let gateway_status = GatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: vec![]};
                                 let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload::new(RouteStatus::Attached, &gateway_status)));
                                 if let Err(e) = sent{

@@ -2,7 +2,7 @@ use std::{fmt::Display, sync::Arc};
 
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
-    gateways::{self, GatewayListeners},
+    gateways::{self, Gateway as KubeGateway, GatewayListeners},
     httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesMatches},
 };
 use kube::{Resource, ResourceExt};
@@ -153,15 +153,15 @@ pub struct BackendServiceConfig {
     pub weight: i32,
 }
 #[derive(Clone, Debug)]
-pub struct RouteMatch{
-    path: String
+pub struct RouteMatch {
+    path: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct RoutingRule {
     pub name: String,
     pub backends: Vec<BackendServiceConfig>,
-    pub matching_rules: Vec<HTTPRouteRulesMatches>
+    pub matching_rules: Vec<HTTPRouteRulesMatches>,
 }
 
 #[derive(Clone, Debug)]
@@ -253,7 +253,7 @@ impl TryFrom<&HTTPRoute> for Route {
             .map(|(i, rr)| {
                 RoutingRule {
                     name: format!("{}-{i}", value.name_any()),
-                    matching_rules: rr.matches.clone().unwrap_or_default(), 
+                    matching_rules: rr.matches.clone().unwrap_or_default(),
                     backends: rr
                         .backend_refs
                         .as_ref()
@@ -390,13 +390,15 @@ impl Display for RouteToListenersMapping {
 pub struct ChangedContext {
     pub response_sender: oneshot::Sender<GatewayResponse>,
     pub gateway: Gateway,
+    pub kube_gateway: KubeGateway,
     pub route_to_listeners_mapping: Vec<RouteToListenersMapping>,
 }
 impl ChangedContext {
-    pub fn new(response_sender: oneshot::Sender<GatewayResponse>, gateway: Gateway, route_to_listeners_mapping: Vec<RouteToListenersMapping>) -> Self {
+    pub fn new(response_sender: oneshot::Sender<GatewayResponse>, gateway: Gateway, kube_gateway: KubeGateway, route_to_listeners_mapping: Vec<RouteToListenersMapping>) -> Self {
         ChangedContext {
             response_sender,
             gateway,
+            kube_gateway,
             route_to_listeners_mapping,
         }
     }

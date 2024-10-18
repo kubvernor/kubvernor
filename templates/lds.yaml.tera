@@ -1,7 +1,7 @@
 version_info: "0"
 resources:{% for listener in listeners %}
 - "@type": type.googleapis.com/envoy.config.listener.v3.Listener
-  name: {{listener.name}}
+  name: {{listener.name}}-{{listener.port}}
   address:
     socket_address: { address: {{listener.ip_address}}, port_value: {{listener.port}} }
   filter_chains:

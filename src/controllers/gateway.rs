@@ -309,7 +309,8 @@ impl GatewayResourceHandler<Gateway> {
         let route_to_listeners_mapping = common::RouteListenerMatcher::filter_matching_routes(&self.resource, &linked_routes);
 
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway, route_to_listeners_mapping));
+
+        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway, (**gateway).clone(), route_to_listeners_mapping));
         let _ = sender.send(listener_event).await;
         let response = response_receiver.await;
 
