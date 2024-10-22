@@ -31,6 +31,7 @@ where
     pub resource: R,
     pub controller_name: String,
     pub version: Option<String>,
+    pub response_sender: tokio::sync::oneshot::Sender<Result<R, kube::Error>>,
 }
 
 pub struct FinalizerContext {
@@ -56,15 +57,18 @@ where
             match event {
                 Operation::PatchStatus(PatchContext {
                     resource_key,
-                    resource,
+                    mut resource,
                     controller_name,
                     version,
+                    response_sender,
                 }) => {
+                    resource.meta_mut().resource_version = Option::<String>::None;
                     let api = self.api(&resource_key.namespace);
                     let patch_params = PatchParams::apply(&controller_name).force();
                     let log_context = self.log_context(&resource_key, &controller_name, version);
+
                     let res = api.patch_status(&resource_key.name, &patch_params, &Patch::Apply(resource)).await;
-                    match res {
+                    match &res {
                         Ok(_new_gateway) => {
                             info!("{log_context} patch status result ok");
                         }
@@ -72,6 +76,7 @@ where
                             warn!("{log_context} patch status failed {e:?}");
                         }
                     }
+                    let _ = response_sender.send(res);
                 }
                 Operation::PatchFinalizer(FinalizerContext {
                     resource_key,

@@ -6,17 +6,19 @@ spec:
   parentRefs:
   - name: gateway-one
     port: 2081
+  - name: gateway-two
+    port: 3081    
   hostnames:
   - "www.example.com"
   rules:
   - backendRefs:
     - name: echo-service
       port: 9080
-    # matches:
-    # - path:
-    #     type: PathPrefix
-    #     value: /login
-    # - path:
-    #     type: PathPrefix
-    #     value: /data             
+    matches:
+    - path:
+        type: PathPrefix
+        value: /login2
+    - path:
+        type: PathPrefix
+        value: /data2             
 

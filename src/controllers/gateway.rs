@@ -292,7 +292,7 @@ impl GatewayResourceHandler<Gateway> {
         Ok((**gateway).clone())
     }
 
-    async fn deploy_gateway(&self, sender: &Sender<GatewayEvent>, gateway: &Arc<Gateway>, state: &State) -> Result<Gateway> {
+    async fn deploy_gateway(&self, sender: &Sender<GatewayEvent>, gateway: &Arc<Gateway>, state: &mut State) -> Result<Gateway> {
         let log_context = self.log_context();
         let maybe_gateway = common::Gateway::try_from(&**gateway);
         let Ok(backend_gateway) = maybe_gateway else {
@@ -313,7 +313,7 @@ impl GatewayResourceHandler<Gateway> {
         let response = response_receiver.await;
 
         if let Ok(GatewayResponse::GatewayProcessed(gateway_processed)) = response {
-            let gateway_event_handler = GatewayProcessedHandler {
+            let mut gateway_event_handler = GatewayProcessedHandler {
                 gateway_processed_payload: gateway_processed,
                 gateway: Arc::clone(gateway),
                 state,
@@ -335,32 +335,54 @@ impl GatewayResourceHandler<Gateway> {
     /// * we should update gatway's status if the route count has changed for a listener
     /// * we should update the route's status and reflect that the ownership might changed
     ///
-    async fn on_new_or_changed(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
+    async fn on_new_or_changed(&self, gateway_id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         let sender = &self.gateway_channel_sender;
         let updated_gateway = self.deploy_gateway(sender, resource, state).await?;
-        state.save_gateway(id.clone(), resource);
-
+        state.save_gateway(gateway_id.clone(), resource);
+        let (sender, receiver) = oneshot::channel();
         let _res = self
             .gateway_patcher
             .send(Operation::PatchStatus(PatchContext {
-                resource_key: id,
+                resource_key: gateway_id.clone(),
                 resource: updated_gateway,
                 controller_name: self.controller_name.clone(),
                 version: self.version.clone(),
+                response_sender: sender,
             }))
             .await;
+        let patched_gateway = receiver.await;
+        if let Ok(maybe_patched) = patched_gateway {
+            match maybe_patched {
+                Ok(mut patched_gateway) => {
+                    //patched_gateway.metadata.resource_version = None;
+                    state.save_gateway(gateway_id, &Arc::new(patched_gateway));
+                }
+                Err(e) => {
+                    warn!("{} Error while patching {e}", self.log_context());
+                }
+            }
+        }
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 
-    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
+    async fn on_status_changed(&self, gateway_id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         let controller_name = &self.controller_name;
         let gateway_class_name = &self.gateway_class_name;
         if let Some(status) = &resource.status {
             if let Some(conditions) = &status.conditions {
                 if conditions.iter().any(|c| c.type_ == gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string()) {
-                    state.save_gateway(id, resource);
+                    state.save_gateway(gateway_id, resource);
                     self.add_finalizer_to_gateway_class(gateway_class_name).await;
-                    let _ = self.add_finalizer(controller_name).await;
+                    let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
+                        finalizers.iter().any(|f| f == controller_name)
+                    } else {
+                        false
+                    };
+
+                    if !has_finalizer {
+                        let _ = self.add_finalizer(controller_name).await;
+                    }
+
                     return Ok(Action::requeue(RECONCILE_LONG_WAIT));
                 }
             }

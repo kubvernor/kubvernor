@@ -283,6 +283,7 @@ pub struct GatewayStatus {
     pub name: String,
     pub namespace: String,
     pub listeners: Vec<ListenerStatus>,
+    pub attached_addresses: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -319,7 +320,8 @@ pub enum GatewayResponse {
     GatewayProcessed(GatewayProcessedPayload),
     GatewayDeleted(Vec<RouteStatus>),
     RouteProcessed(RouteProcessedPayload),
-    RouteDeleted,
+    GatewayProcessingError,
+    RouteProcessingError,
 }
 
 #[derive(Debug)]
@@ -431,7 +433,7 @@ impl Display for GatewayEvent {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct ResourceKey {
     pub group: String,
     pub namespace: String,
