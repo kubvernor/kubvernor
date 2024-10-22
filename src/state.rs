@@ -2,7 +2,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use gateway_api::apis::standard::{gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute};
 use multimap::MultiMap;
-use tracing::debug;
 
 use crate::common::ResourceKey;
 
@@ -12,7 +11,7 @@ pub struct State {
     http_routes: HashMap<ResourceKey, Arc<HTTPRoute>>,
     gateways_with_routes: MultiMap<ResourceKey, ResourceKey>,
 }
-
+#[allow(dead_code)]
 impl State {
     pub fn new() -> Self {
         Self {
@@ -34,10 +33,6 @@ impl State {
 
     pub fn delete_gateway(&mut self, id: &ResourceKey) {
         self.gateways.remove(id);
-    }
-
-    pub fn get_gateways(&self) -> std::collections::hash_map::Values<'_, ResourceKey, Arc<Gateway>> {
-        self.gateways.values()
     }
 
     pub fn get_gateway(&self, id: &ResourceKey) -> Option<&Arc<Gateway>> {
@@ -91,6 +86,10 @@ impl State {
 
     pub fn get_http_route_by_id(&self, id: &ResourceKey) -> Option<&Arc<HTTPRoute>> {
         self.http_routes.get(id)
+    }
+
+    pub fn get_gateways(&self) -> std::collections::hash_map::Values<'_, ResourceKey, Arc<Gateway>> {
+        self.gateways.values()
     }
 
     pub fn http_routes(&self) -> &HashMap<ResourceKey, Arc<HTTPRoute>> {

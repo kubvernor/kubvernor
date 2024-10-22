@@ -28,7 +28,7 @@ use super::{
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, ChangedContext, GatewayEvent, GatewayResponse, ResourceKey, Route, RouteProcessedPayload, RouteToListenersMapping},
+    common::{self, ChangedContext, GatewayEvent, GatewayResponse, ResourceKey, Route, RouteToListenersMapping},
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
 };
@@ -356,7 +356,7 @@ impl HTTPRouteHandler<HTTPRoute> {
         if let Ok(GatewayResponse::GatewayProcessed(gateway_processed)) = response {
             let gateway_event_handler = GatewayProcessedHandler {
                 gateway_processed_payload: gateway_processed,
-                gateway: gateway.clone(),
+                gateway: Arc::clone(&gateway),
                 state,
                 log_context: log_context.to_string(),
                 resource_key,
@@ -368,59 +368,6 @@ impl HTTPRouteHandler<HTTPRoute> {
             warn!("{log_context} {response:?} ... Problem {response:?}");
             Err(ControllerError::BackendError)
         }
-
-        // if let Ok(GatewayResponse::RouteProcessed(RouteProcessedPayload { route_status, gateway_status })) = response {
-        //     match route_status {
-        //         common::RouteStatus::Attached => {
-        //             debug!("{log_context} Route attached to {gateway_name}",);
-        //             Ok(HTTPRouteStatusParents {
-        //                 conditions: Some(vec![Condition {
-        //                     last_transition_time: Time(Utc::now()),
-        //                     message: "Updated by controller".to_owned(),
-        //                     observed_generation: gateway.metadata.generation,
-        //                     reason: "Accepted".to_owned(),
-        //                     status: "True".to_owned(),
-        //                     type_: "Accepted".to_owned(),
-        //                 }]),
-        //                 controller_name: (*controller_name).clone(),
-        //                 parent_ref: HTTPRouteStatusParentsParentRef {
-        //                     namespace: gateway.meta().namespace.clone(),
-        //                     name: gateway.meta().name.clone().unwrap_or_default(),
-        //                     ..Default::default()
-        //                 },
-        //             })
-        //         }
-
-        //         common::RouteStatus::Ignored => {
-        //             debug!("{log_context} Route rejected by {gateway_name}",);
-        //             Ok(HTTPRouteStatusParents {
-        //                 conditions: Some(vec![Condition {
-        //                     last_transition_time: Time(Utc::now()),
-        //                     message: "Updated by controller".to_owned(),
-        //                     observed_generation: gateway.metadata.generation,
-        //                     reason: "NotAllowedByListeners".to_owned(),
-        //                     status: "False".to_owned(),
-        //                     type_: "Accepted".to_owned(),
-        //                 }]),
-        //                 controller_name: (*controller_name).clone(),
-        //                 parent_ref: HTTPRouteStatusParentsParentRef {
-        //                     namespace: gateway.meta().namespace.clone(),
-        //                     name: gateway.meta().name.clone().unwrap_or_default(),
-        //                     ..Default::default()
-        //                 },
-        //             })
-        //         }
-        //     }
-        // } else {
-        //     warn!("{log_context} ... Problem {response:?}");
-        //     Err(ControllerError::BackendError)
-        // }
-    }
-
-    fn update_status_conditions(mut route: HTTPRoute, route_status: HTTPRouteStatus) -> HTTPRoute {
-        route.status = Some(route_status);
-        route.metadata.managed_fields = None;
-        route
     }
 
     async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {

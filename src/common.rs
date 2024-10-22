@@ -27,14 +27,6 @@ pub enum GatewayError {
     ConversionProblem(String),
 }
 
-#[derive(Error, Debug, PartialEq, PartialOrd)]
-pub enum RouteError {
-    #[error("Unknown protocol")]
-    UnknownProtocol(String),
-    #[error("Route is not distinct")]
-    NotDistinct(String, i32, ProtocolType, Option<String>),
-}
-
 #[derive(Clone, Error, Debug, PartialEq, PartialOrd)]
 pub enum ListenerStatus {
     Accepted((String, i32)),
@@ -151,10 +143,6 @@ pub struct BackendServiceConfig {
     pub endpoint: String,
     pub port: i32,
     pub weight: i32,
-}
-#[derive(Clone, Debug)]
-pub struct RouteMatch {
-    path: String,
 }
 
 #[derive(Clone, Debug)]
@@ -276,34 +264,7 @@ impl TryFrom<&HTTPRoute> for Route {
             })
             .collect();
         rc.routing_rules = routing_rules;
-        // vec![
-        //     RoutingRule {
-        //         name: format!("{}-r1", value.name_any()),
-        //         backends: vec![
-        //             BackendServiceConfig {
-        //                 endpoint: "echo-service".to_owned(),
-        //                 //endpoint: "10.110.238.122".to_owned(),
-        //                 port: 9080,
-        //                 weight: 1,
-        //             },
-        //             BackendServiceConfig {
-        //                 endpoint: "echo-service".to_owned(),
-        //                 //endpoint: "10.110.238.122".to_owned(),
-        //                 port: 9080,
-        //                 weight: 1,
-        //             },
-        //         ],
-        //     },
-        //     RoutingRule {
-        //         name: format!("{}-r2", value.name_any()),
-        //         backends: vec![BackendServiceConfig {
-        //             //                    endpoint: "echo-service-2.default.svc.cluster.local".to_owned(),
-        //             endpoint: "10.110.238.122".to_owned(),
-        //             port: 9080,
-        //             weight: 1,
-        //         }],
-        //     },
-        // ];
+
         Ok(Route::Http(rc))
     }
 }
@@ -478,6 +439,7 @@ pub struct ResourceKey {
     pub kind: String,
 }
 
+#[allow(dead_code)]
 impl ResourceKey {
     pub fn new(name: &str) -> Self {
         Self {
