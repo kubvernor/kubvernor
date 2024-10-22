@@ -47,12 +47,19 @@ pub async fn start(args: Args) -> Result<()> {
         envoy_gateway_channel_sender.clone(),
         client.clone(),
         Arc::clone(&state),
-        gateway_patcher_channel,
+        gateway_patcher_channel.clone(),
         gateway_class_patcher_channel,
         http_route_patcher_channel.clone(),
     );
 
-    let http_route_controller = HttpRouteController::new(args.controller_name.clone(), client, envoy_gateway_channel_sender, state, http_route_patcher_channel);
+    let http_route_controller = HttpRouteController::new(
+        args.controller_name.clone(),
+        client,
+        envoy_gateway_channel_sender,
+        state,
+        http_route_patcher_channel,
+        gateway_patcher_channel,
+    );
 
     let gateway_patcher = gateway_patcher.start().boxed();
     let gateway_class_patcher = gateway_class_patcher.start().boxed();

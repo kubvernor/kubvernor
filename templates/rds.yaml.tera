@@ -7,8 +7,7 @@ resources:
     domains:
     - "{{vc.hostname}}"
     routes:{% for route_conf in vc.route_configs %}            
-      - match:
-          prefix: "{{route_conf.path}}"	  
-        route:
+      - route:
           cluster: {{route_conf.cluster_name}}
-          {% endfor %}{% endfor %}          
+        match:
+          {{route_conf.path.match_type}}: {{route_conf.path.path}}{% endfor %}{% endfor %}          

@@ -45,7 +45,7 @@ impl GatewayDeployerChannelHandler {
 
                             GatewayEvent::RouteChanged(ChangedContext{ response_sender, gateway, kube_gateway: _, route_to_listeners_mapping: _ }) =>{
                                 let gateway_status = GatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: vec![]};
-                                let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload::new(RouteStatus::Attached, &gateway_status)));
+                                let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload::new(RouteStatus::Attached, gateway_status)));
                                 if let Err(e) = sent{
                                     warn!("Gateway handler closed {e:?}");
                                     return;

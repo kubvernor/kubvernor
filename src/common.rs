@@ -343,13 +343,13 @@ impl GatewayProcessedPayload {
 
 #[derive(Debug)]
 pub struct RouteProcessedPayload {
-    pub status: RouteStatus,
-    //pub gateway_status: GatewayStatus,
+    pub route_status: RouteStatus,
+    pub gateway_status: GatewayStatus,
 }
 
 impl RouteProcessedPayload {
-    pub fn new(status: RouteStatus, _gateway_status: &GatewayStatus) -> Self {
-        Self { status } // gateway_status }
+    pub fn new(status: RouteStatus, gateway_status: GatewayStatus) -> Self {
+        Self { route_status: status, gateway_status }
     }
 }
 

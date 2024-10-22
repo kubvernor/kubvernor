@@ -1,6 +1,7 @@
 use std::time::Duration;
 pub mod gateway;
 pub mod gateway_class;
+mod gateway_processed_handler;
 pub mod http_route;
 mod resource_handler;
 mod utils;

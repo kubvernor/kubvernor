@@ -3,11 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use gateway_api::apis::standard::gateways::Gateway;
 use kube::ResourceExt;
 use serde::Serialize;
-use tracing::{debug, warn};
-
-use crate::common::{ProtocolType, Route, RouteToListenersMapping};
+use tracing::warn;
 
 use super::envoy_deployer::TEMPLATES;
+use crate::common::{ProtocolType, Route, RouteToListenersMapping};
 #[derive(Debug)]
 pub struct RdsData {
     pub route_name: String,
@@ -183,7 +182,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
     fn genereate_rds(listener: &EnvoyListener) -> Result<RdsData, Error> {
         #[derive(Serialize)]
         struct VeraRouteConfigs {
-            pub path: String,
+            pub path: Option<TeraPath>,
             pub cluster_name: String,
         }
 
@@ -198,6 +197,13 @@ impl<'a> EnvoyXDSGenerator<'a> {
             pub name: String,
             pub virtual_hosts: Vec<TeraVirtualHost>,
         }
+
+        #[derive(Serialize)]
+        struct TeraPath {
+            pub path: String,
+            pub match_type: String,
+        }
+
         let mut tera_context = tera::Context::new();
         let EnvoyListener {
             name,
@@ -216,7 +222,14 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     .iter()
                     .flat_map(|rr| {
                         rr.matching_rules.iter().map(|mr| VeraRouteConfigs {
-                            path: mr.path.clone().unwrap().value.unwrap(),
+                            path: mr.path.clone().map(|matcher| TeraPath {
+                                path: matcher.value.unwrap_or_default(),
+                                match_type: matcher.r#type.map_or(String::new(), |f| match f {
+                                    gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
+                                    gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => "prefix".to_owned(),
+                                    gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
+                                }),
+                            }),
                             cluster_name: rr.name.clone(),
                         })
                     })
@@ -229,8 +242,8 @@ impl<'a> EnvoyXDSGenerator<'a> {
             virtual_hosts: tvh,
         };
         tera_context.insert("route", &tr);
-
-        Ok(RdsData::new(route_name, TEMPLATES.render("rds.yaml.tera", &tera_context)?))
+        let rds_content = TEMPLATES.render("rds.yaml.tera", &tera_context)?;
+        Ok(RdsData::new(route_name, rds_content))
     }
 
     fn genereate_cds(listeners: &[EnvoyListener]) -> Result<String, Error> {
@@ -309,6 +322,7 @@ mod tests {
     };
 
     // https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/refs/heads/main/conformance/tests/gateway-http-listener-isolation.yaml
+    #[allow(clippy::similar_names)]
     #[test]
     pub fn test1() {
         let gateway: Gateway = serde_yaml::from_str(GATEWAY_YAML).unwrap();
@@ -326,14 +340,14 @@ mod tests {
         let listener2 = gateway.spec.listeners[1].clone();
         let listener3 = gateway.spec.listeners[2].clone();
         let listener4 = gateway.spec.listeners[3].clone();
-        let listener5 = gateway.spec.listeners[4].clone();
-        let listener6 = gateway.spec.listeners[5].clone();
-        let listener7 = gateway.spec.listeners[6].clone();
-        let listener8 = gateway.spec.listeners[7].clone();
+        let _listener5 = gateway.spec.listeners[4].clone();
+        let _listener6 = gateway.spec.listeners[5].clone();
+        let _listener7 = gateway.spec.listeners[6].clone();
+        let _listener8 = gateway.spec.listeners[7].clone();
         let listener9 = gateway.spec.listeners[8].clone();
         let listener10 = gateway.spec.listeners[9].clone();
-        let listener11 = gateway.spec.listeners[10].clone();
-        let listener12 = gateway.spec.listeners[11].clone();
+        let _listener11 = gateway.spec.listeners[10].clone();
+        let _listener12 = gateway.spec.listeners[11].clone();
 
         let route_mapping = vec![
             RouteToListenersMapping {
@@ -357,8 +371,9 @@ mod tests {
             gateway: &gateway,
             route_mapping: &route_mapping,
         };
+
         let xds_data = generator.generate_xds().unwrap();
-        dbg!(&xds_data);
+
         let XdsData {
             lds_content,
             rds_content,
@@ -491,7 +506,10 @@ spec:
   - matches:
     - path:
         type: PathPrefix
-        value: /empty-hostname
+        value: /empty-hostname    
+    - path:
+        type: Exact
+        value: /empty-hostname-2
     backendRefs:
     - name: infra-backend-v1
       port: 8080
