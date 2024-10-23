@@ -2,7 +2,8 @@ use tokio::sync::mpsc::{self, Receiver};
 use tracing::{info, warn};
 
 use crate::common::{
-    ChangedContext, DeletedContext, Gateway, GatewayEvent, GatewayProcessedPayload, GatewayResponse, GatewayStatus, ListenerStatus, Route, RouteProcessedPayload, RouteStatus, RouteToListenersMapping,
+    ChangedContext, DeletedContext, DeployedGatewayStatus, Gateway, GatewayEvent, GatewayProcessedPayload, GatewayResponse, ListenerStatus, Route, RouteProcessedPayload, RouteStatus,
+    RouteToListenersMapping,
 };
 
 pub struct GatewayDeployerChannelHandler {
@@ -26,7 +27,7 @@ impl GatewayDeployerChannelHandler {
                                 let attached_routes = attached_routes.into_iter().map(|i| i.1.route.clone()).collect();
                                 let ignored_routes = ignored_routes.into_iter().map(|i| i.1.route.clone()).collect();
                                 let processed = deploy_gateway(&gateway,&route_to_listeners_mapping);
-                                let gateway_status = GatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: processed, attached_addresses: vec![]};
+                                let gateway_status = DeployedGatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: processed, attached_addresses: vec![]};
                                 let sent = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload::new(gateway_status, attached_routes, ignored_routes)));
                                 if let Err(e) = sent{
                                     warn!("Gateway handler closed {e:?}");
@@ -44,7 +45,7 @@ impl GatewayDeployerChannelHandler {
                             }
 
                             GatewayEvent::RouteChanged(ChangedContext{ response_sender, gateway, kube_gateway: _, route_to_listeners_mapping: _ }) =>{
-                                let gateway_status = GatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: vec![], attached_addresses: vec![]};
+                                let gateway_status = DeployedGatewayStatus{ id: gateway.id, name: gateway.name, namespace: gateway.namespace, listeners: vec![], attached_addresses: vec![]};
                                 let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload::new(RouteStatus::Attached, gateway_status)));
                                 if let Err(e) = sent{
                                     warn!("Gateway handler closed {e:?}");

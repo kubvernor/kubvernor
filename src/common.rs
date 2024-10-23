@@ -2,7 +2,7 @@ use std::{fmt::Display, sync::Arc};
 
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
-    gateways::{self, Gateway as KubeGateway, GatewayListeners},
+    gateways::{self, Gateway as KubeGateway, GatewayListeners, GatewayListenersAllowedRoutes},
     httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesMatches},
 };
 use kube::{Resource, ResourceExt};
@@ -81,16 +81,36 @@ impl Display for ProtocolType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ListenerConfig {
     pub name: String,
     pub port: i32,
     pub hostname: Option<String>,
+    pub allowed_routes: Option<GatewayListenersAllowedRoutes>,
+}
+
+impl PartialOrd for ListenerConfig {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match self.name.partial_cmp(&other.name) {
+            Some(core::cmp::Ordering::Equal) => {}
+            ord => return ord,
+        }
+        match self.port.partial_cmp(&other.port) {
+            Some(core::cmp::Ordering::Equal) => {}
+            ord => return ord,
+        }
+        self.hostname.partial_cmp(&other.hostname)
+    }
 }
 
 impl ListenerConfig {
     pub fn new(name: String, port: i32, hostname: Option<String>) -> Self {
-        Self { name, port, hostname }
+        Self {
+            name,
+            port,
+            hostname,
+            allowed_routes: None,
+        }
     }
 }
 
@@ -278,7 +298,19 @@ pub struct Gateway {
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct GatewayStatus {
+pub struct Label {
+    label: String,
+    value: String,
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub struct Annotation {
+    label: String,
+    value: String,
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub struct DeployedGatewayStatus {
     pub id: Uuid,
     pub name: String,
     pub namespace: String,
@@ -286,17 +318,17 @@ pub struct GatewayStatus {
     pub attached_addresses: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GatewayProcessedPayload {
-    pub gateway_status: GatewayStatus,
+    pub deployed_gateway_status: DeployedGatewayStatus,
     pub attached_routes: Vec<Route>,
     pub ignored_routes: Vec<Route>,
 }
 
 impl GatewayProcessedPayload {
-    pub fn new(gateway_status: GatewayStatus, attached_routes: Vec<Route>, ignored_routes: Vec<Route>) -> Self {
+    pub fn new(gateway_status: DeployedGatewayStatus, attached_routes: Vec<Route>, ignored_routes: Vec<Route>) -> Self {
         Self {
-            gateway_status,
+            deployed_gateway_status: gateway_status,
             attached_routes,
             ignored_routes,
         }
@@ -306,12 +338,15 @@ impl GatewayProcessedPayload {
 #[derive(Debug)]
 pub struct RouteProcessedPayload {
     pub route_status: RouteStatus,
-    pub gateway_status: GatewayStatus,
+    pub deployed_gateway_status: DeployedGatewayStatus,
 }
 
 impl RouteProcessedPayload {
-    pub fn new(status: RouteStatus, gateway_status: GatewayStatus) -> Self {
-        Self { route_status: status, gateway_status }
+    pub fn new(status: RouteStatus, gateway_status: DeployedGatewayStatus) -> Self {
+        Self {
+            route_status: status,
+            deployed_gateway_status: gateway_status,
+        }
     }
 }
 

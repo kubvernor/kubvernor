@@ -4,7 +4,6 @@ use std::{
 };
 
 use gateway_api::apis::standard::{gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute};
-use multimap::MultiMap;
 
 use crate::common::ResourceKey;
 

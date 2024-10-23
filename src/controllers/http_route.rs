@@ -260,8 +260,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                 let patched_gateway = receiver.await;
                 if let Ok(maybe_patched) = patched_gateway {
                     match maybe_patched {
-                        Ok(mut patched_gateway) => {
-                            //                            patched_gateway.metadata.resource_version = None;
+                        Ok(patched_gateway) => {
                             state.save_gateway(gateway_id.clone(), &Arc::new(patched_gateway));
                         }
                         Err(e) => {
@@ -321,10 +320,8 @@ impl HTTPRouteHandler<HTTPRoute> {
                 let patched_gateway = receiver.await;
                 if let Ok(maybe_patched) = patched_gateway {
                     match maybe_patched {
-                        Ok(mut patched_gateway) => {
-                            //                            patched_gateway.metadata.resource_version = None;
-                            state.save_gateway(gateway_id.clone(), &Arc::new(patched_gateway));
-                        }
+                        Ok(patched_gateway) => state.save_gateway(gateway_id.clone(), &Arc::new(patched_gateway)),
+
                         Err(e) => {
                             warn!("{} Error while patching {e}", self.log_context());
                         }
@@ -384,9 +381,9 @@ impl HTTPRouteHandler<HTTPRoute> {
         let response = response_receiver.await;
 
         if let Ok(GatewayResponse::GatewayProcessed(gateway_processed)) = response {
-            let mut gateway_event_handler = GatewayProcessedHandler {
+            let gateway_event_handler = GatewayProcessedHandler {
                 gateway_processed_payload: gateway_processed,
-                gateway: Arc::clone(&gateway),
+                gateway: (*gateway).clone(),
                 state,
                 log_context: log_context.to_string(),
                 resource_key,

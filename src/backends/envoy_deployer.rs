@@ -6,7 +6,7 @@ use itertools::Itertools;
 use k8s_openapi::{
     api::{
         apps::v1::{Deployment, DeploymentSpec},
-        core::v1::{ConfigMap, ConfigMapVolumeSource, ContainerPort, KeyToPath, PodSpec, PodTemplateSpec, Service, ServicePort, ServiceSpec, Volume},
+        core::v1::{ConfigMap, ConfigMapVolumeSource, ContainerPort, KeyToPath, PodSpec, PodTemplateSpec, Service, ServiceAccount, ServicePort, ServiceSpec, Volume},
     },
     apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
 };
@@ -23,7 +23,7 @@ use tracing::{debug, info, warn};
 use super::xds_generator::{self, RdsData};
 use crate::{
     backends::xds_generator::XdsData,
-    common::{ChangedContext, DeletedContext, Gateway, GatewayEvent, GatewayProcessedPayload, GatewayResponse, GatewayStatus, ListenerStatus, Route, RouteToListenersMapping},
+    common::{ChangedContext, DeletedContext, DeployedGatewayStatus, Gateway, GatewayEvent, GatewayProcessedPayload, GatewayResponse, ListenerStatus, Route, RouteToListenersMapping},
 };
 
 lazy_static! {
@@ -68,8 +68,8 @@ impl EnvoyDeployerChannelHandler {
                                     let attached_addresses = Self::find_gateway_addresses(&service);
                                     let attached_routes: Vec<_> = route_to_listeners_mapping.iter().map(|m| m.route.clone()).collect();
                                     let listener_status = gateway.listeners.iter().map(|l| ListenerStatus::Accepted((l.name().to_owned(), i32::try_from(attached_routes.len()).unwrap_or_default()))).collect();
-                                    let gateway_status = GatewayStatus{ id: uuid::Uuid::new_v4(), name: gateway.name, namespace: gateway.namespace, listeners: listener_status, attached_addresses };
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload{gateway_status, attached_routes, ignored_routes: vec![]}));
+                                    let deployed_gateway_status = DeployedGatewayStatus{ id: uuid::Uuid::new_v4(), name: gateway.name, namespace: gateway.namespace, listeners: listener_status, attached_addresses };
+                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload{deployed_gateway_status, attached_routes, ignored_routes: vec![]}));
                                 }else{
                                     let _res = response_sender.send(GatewayResponse::GatewayProcessingError);
                                 }
@@ -85,9 +85,8 @@ impl EnvoyDeployerChannelHandler {
                                     let attached_addresses = Self::find_gateway_addresses(&service);
                                     let attached_routes: Vec<_> = route_to_listeners_mapping.iter().map(|m| m.route.clone()).collect();
                                     let listener_status = gateway.listeners.iter().map(|l| ListenerStatus::Accepted((l.name().to_owned(), i32::try_from(attached_routes.len()).unwrap_or_default()))).collect();
-                                    let gateway_status = GatewayStatus{ id: uuid::Uuid::new_v4(), name: gateway.name, namespace: gateway.namespace, listeners: listener_status, attached_addresses };
-                                    //let _res = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload{ route_status: RouteStatus::Attached, gateway_status}));
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload{gateway_status, attached_routes, ignored_routes: vec![]}));
+                                    let deployed_gateway_status = DeployedGatewayStatus{ id: uuid::Uuid::new_v4(), name: gateway.name, namespace: gateway.namespace, listeners: listener_status, attached_addresses };
+                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload{deployed_gateway_status, attached_routes, ignored_routes: vec![]}));
                                 }else{
                                     let _res = response_sender.send(GatewayResponse::GatewayProcessingError);
                                 };
@@ -104,7 +103,9 @@ impl EnvoyDeployerChannelHandler {
 
     async fn deploy_envoy(&self, gateway: &Gateway, kube_gateway: &KubeGateway, route_to_listeners_mapping: &[RouteToListenersMapping]) -> std::result::Result<Service, kube::Error> {
         debug!("Deploying Envoy {gateway:?}");
+
         let service_api: Api<Service> = Api::namespaced(self.client.clone(), &gateway.namespace);
+        let service_account_api: Api<ServiceAccount> = Api::namespaced(self.client.clone(), &gateway.namespace);
         let deployment_api: Api<Deployment> = Api::namespaced(self.client.clone(), &gateway.namespace);
         let config_map_api: Api<ConfigMap> = Api::namespaced(self.client.clone(), &gateway.namespace);
         let (xds_cm, bootstrap_cm) = config_map_names(gateway);
@@ -113,6 +114,7 @@ impl EnvoyDeployerChannelHandler {
 
         let deployment = Self::create_deployment(gateway);
         let service = Self::create_service(gateway);
+        let service_account = Self::create_service_account(gateway);
 
         let pp = PatchParams {
             field_manager: Some(self.controller_name.clone()),
@@ -144,6 +146,10 @@ impl EnvoyDeployerChannelHandler {
 
         debug!("Service status {:?}", service.status);
         debug!("Created service {}-{}", gateway.name, gateway.namespace);
+
+        let service_account = service_account_api.patch(&gateway.name, &pp, &Patch::Apply(&service_account)).await?;
+        debug!("Service account status {:?}", service_account);
+
         Ok(service)
     }
 
@@ -152,9 +158,20 @@ impl EnvoyDeployerChannelHandler {
         let service_api: Api<Service> = Api::namespaced(self.client.clone(), &gateway.namespace);
         let deployment_api: Api<Deployment> = Api::namespaced(self.client.clone(), &gateway.namespace);
         let config_map_api: Api<ConfigMap> = Api::namespaced(self.client.clone(), &gateway.namespace);
+        let service_account_api: Api<ServiceAccount> = Api::namespaced(self.client.clone(), &gateway.namespace);
         let dp = DeleteParams { ..Default::default() };
         let (xds_cm, bootstrap_cm) = config_map_names(gateway);
         let futures = [
+            service_account_api
+                .delete(&gateway.name, &dp)
+                .map(|f| {
+                    if f.is_ok() {
+                        debug!("Deleted for  {}-{}", gateway.name, gateway.namespace);
+                    } else {
+                        warn!("Could not delete {}-{} {:?}", gateway.name, gateway.namespace, f.err());
+                    }
+                })
+                .boxed(),
             service_api
                 .delete(&gateway.name, &dp)
                 .map(|f| {
@@ -250,7 +267,7 @@ impl EnvoyDeployerChannelHandler {
     }
 
     fn create_deployment(gateway: &Gateway) -> Deployment {
-        let mut labels = BTreeMap::new();
+        let mut labels = Self::create_labels(gateway);
         let ports = gateway
             .listeners
             .iter()
@@ -321,6 +338,26 @@ impl EnvoyDeployerChannelHandler {
         }
     }
 
+    fn create_labels(_gateway: &Gateway) -> BTreeMap<String, String> {
+        BTreeMap::new()
+    }
+
+    fn create_service_account(gateway: &Gateway) -> ServiceAccount {
+        ServiceAccount {
+            metadata: ObjectMeta {
+                name: Some(gateway.name.clone()),
+                namespace: Some(gateway.namespace.clone()),
+                labels: Some(Self::create_labels(gateway)),
+
+                ..Default::default()
+            },
+
+            automount_service_account_token: None,
+            image_pull_secrets: None,
+            secrets: None,
+        }
+    }
+
     fn create_service(gateway: &Gateway) -> Service {
         let ports = gateway
             .listeners
@@ -341,7 +378,7 @@ impl EnvoyDeployerChannelHandler {
             metadata: ObjectMeta {
                 name: Some(gateway.name.clone()),
                 namespace: Some(gateway.namespace.clone()),
-
+                labels: Some(Self::create_labels(gateway)),
                 ..Default::default()
             },
             spec: Some(ServiceSpec {

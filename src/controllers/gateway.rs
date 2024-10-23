@@ -4,10 +4,13 @@ use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
-    gateways::{Gateway, GatewayListeners},
+    gateways::{Gateway, GatewayListeners, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
     httproutes::HTTPRoute,
 };
-
+use k8s_openapi::{
+    apimachinery::pkg::apis::meta::v1::{Condition, Time},
+    chrono::Utc,
+};
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
     Api, Resource,
@@ -57,7 +60,8 @@ impl TryFrom<&GatewayListeners> for Listener {
     type Error = ListenerError;
 
     fn try_from(gateway_listener: &GatewayListeners) -> std::result::Result<Self, Self::Error> {
-        let config = ListenerConfig::new(gateway_listener.name.clone(), gateway_listener.port, gateway_listener.hostname.clone());
+        let mut config = ListenerConfig::new(gateway_listener.name.clone(), gateway_listener.port, gateway_listener.hostname.clone());
+        config.allowed_routes.clone_from(&gateway_listener.allowed_routes);
 
         match gateway_listener.protocol.as_str() {
             "HTTP" => Ok(Self::Http(config)),
@@ -294,12 +298,15 @@ impl GatewayResourceHandler<Gateway> {
 
     async fn deploy_gateway(&self, sender: &Sender<GatewayEvent>, gateway: &Arc<Gateway>, state: &mut State) -> Result<Gateway> {
         let log_context = self.log_context();
-        let maybe_gateway = common::Gateway::try_from(&**gateway);
+        let mut updated_gateway = (**gateway).clone();
+        let maybe_gateway = common::Gateway::try_from(&updated_gateway);
         let Ok(backend_gateway) = maybe_gateway else {
             warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
-        let resource_key = ResourceKey::from(&**gateway);
+        let resource_key = ResourceKey::from(&updated_gateway);
+
+        Self::resolve_listeners_status(&mut updated_gateway);
 
         let linked_routes = utils::find_linked_routes(state, &resource_key);
         debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
@@ -308,14 +315,14 @@ impl GatewayResourceHandler<Gateway> {
 
         let (response_sender, response_receiver) = oneshot::channel();
 
-        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway, (**gateway).clone(), route_to_listeners_mapping));
+        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway, updated_gateway.clone(), route_to_listeners_mapping));
         let _ = sender.send(listener_event).await;
         let response = response_receiver.await;
 
         if let Ok(GatewayResponse::GatewayProcessed(gateway_processed)) = response {
-            let mut gateway_event_handler = GatewayProcessedHandler {
+            let gateway_event_handler = GatewayProcessedHandler {
                 gateway_processed_payload: gateway_processed,
-                gateway: Arc::clone(gateway),
+                gateway: updated_gateway,
                 state,
                 log_context: log_context.to_string(),
                 resource_key,
@@ -353,15 +360,11 @@ impl GatewayResourceHandler<Gateway> {
         let patched_gateway = receiver.await;
         if let Ok(maybe_patched) = patched_gateway {
             match maybe_patched {
-                Ok(mut patched_gateway) => {
-                    //patched_gateway.metadata.resource_version = None;
-                    state.save_gateway(gateway_id, &Arc::new(patched_gateway));
-                }
-                Err(e) => {
-                    warn!("{} Error while patching {e}", self.log_context());
-                }
+                Ok(patched_gateway) => state.save_gateway(gateway_id, &Arc::new(patched_gateway)),
+                Err(e) => warn!("{} Error while patching {e}", self.log_context()),
             }
         }
+
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 
@@ -413,5 +416,60 @@ impl GatewayResourceHandler<Gateway> {
                 finalizer_name: GATEWAY_CLASS_FINALIZER_NAME.to_owned(),
             }))
             .await;
+    }
+
+    fn resolve_listeners_status(gateway: &mut Gateway) {
+        let mut status = gateway.status.clone().unwrap_or_default();
+        let mut listeners_statuses = vec![];
+        gateway.spec.listeners.iter().for_each(|m| {
+            if let Some(ar) = m.allowed_routes.as_ref() {
+                if let Some(kinds) = ar.kinds.as_ref() {
+                    let cloned_kinds = kinds.clone();
+                    let has_http_route = kinds.iter().any(|k| k.kind == "HTTPRoute");
+                    cloned_kinds.clone().retain(|k| k.kind != "HTTPRoute");
+                    if cloned_kinds.is_empty() {
+                        listeners_statuses.push(GatewayStatusListeners {
+                            attached_routes: 0,
+                            conditions: vec![Condition {
+                                last_transition_time: Time(Utc::now()),
+                                message: "Updated by controller".to_owned(),
+                                observed_generation: gateway.metadata.generation,
+                                reason: gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs.to_string(),
+                                status: "True".to_owned(),
+                                type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            }],
+                            name: m.name.clone(),
+                            supported_kinds: vec![],
+                            // supported_kinds: vec![GatewayStatusListenersSupportedKinds {
+                            //     group: None,
+                            //     kind: "HTTPRoute".to_owned(),
+                            // }],
+                        });
+                    } else {
+                        listeners_statuses.push(GatewayStatusListeners {
+                            attached_routes: 0,
+                            conditions: vec![Condition {
+                                last_transition_time: Time(Utc::now()),
+                                message: "Updated by controller".to_owned(),
+                                observed_generation: gateway.metadata.generation,
+                                reason: gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds.to_string(),
+                                status: "False".to_owned(),
+                                type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            }],
+                            name: m.name.clone(),
+                            supported_kinds: if has_http_route {
+                                vec![GatewayStatusListenersSupportedKinds {
+                                    group: None,
+                                    kind: "HTTPRoute".to_owned(),
+                                }]
+                            } else {
+                                vec![]
+                            },
+                        });
+                    }
+                };
+            }
+        });
+        status.listeners = Some(listeners_statuses);
     }
 }
