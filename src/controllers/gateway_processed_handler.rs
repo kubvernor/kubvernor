@@ -36,7 +36,7 @@ impl<'a> GatewayProcessedHandler<'a> {
             ignored_routes,
         } = &self.gateway_processed_payload.clone();
 
-        debug!("{} Attached routes  {attached_routes:?}", &self.log_context);
+        debug!("{} Attached routes {attached_routes:?}", &self.log_context);
         self.update_gateway_resource(gateway_status);
         self.update_routes(attached_routes, ignored_routes).await;
         Ok(self.gateway)

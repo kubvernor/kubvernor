@@ -262,6 +262,7 @@ impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
     async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         self.on_status_changed(id, resource, state).await
     }
+
     async fn on_deleted(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         self.on_deleted(id, resource, state).await
     }
@@ -360,7 +361,11 @@ impl GatewayResourceHandler<Gateway> {
         let patched_gateway = receiver.await;
         if let Ok(maybe_patched) = patched_gateway {
             match maybe_patched {
-                Ok(patched_gateway) => state.save_gateway(gateway_id, &Arc::new(patched_gateway)),
+                Ok(patched_gateway) => {
+                    let patched_gateway = Arc::new(patched_gateway);
+                    state.save_gateway(gateway_id.clone(), &patched_gateway);
+                    _ = self.on_version_not_changed(gateway_id, &patched_gateway, state).await;
+                }
                 Err(e) => warn!("{} Error while patching {e}", self.log_context()),
             }
         }
@@ -369,6 +374,31 @@ impl GatewayResourceHandler<Gateway> {
     }
 
     async fn on_status_changed(&self, gateway_id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
+        let controller_name = &self.controller_name;
+        let gateway_class_name = &self.gateway_class_name;
+        if let Some(status) = &resource.status {
+            if let Some(conditions) = &status.conditions {
+                if conditions.iter().any(|c| c.type_ == gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string()) {
+                    state.save_gateway(gateway_id, resource);
+                    self.add_finalizer_to_gateway_class(gateway_class_name).await;
+                    let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
+                        finalizers.iter().any(|f| f == controller_name)
+                    } else {
+                        false
+                    };
+
+                    if !has_finalizer {
+                        let _ = self.add_finalizer(controller_name).await;
+                    }
+
+                    return Ok(Action::requeue(RECONCILE_LONG_WAIT));
+                }
+            }
+        }
+        Err(ControllerError::ResourceHasWrongStatus)
+    }
+
+    async fn on_version_not_changed(&self, gateway_id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         let controller_name = &self.controller_name;
         let gateway_class_name = &self.gateway_class_name;
         if let Some(status) = &resource.status {
@@ -421,30 +451,31 @@ impl GatewayResourceHandler<Gateway> {
     fn resolve_listeners_status(gateway: &mut Gateway) {
         let mut status = gateway.status.clone().unwrap_or_default();
         let mut listeners_statuses = vec![];
+
         gateway.spec.listeners.iter().for_each(|m| {
+            let resolved_condition = GatewayStatusListeners {
+                attached_routes: 0,
+                conditions: vec![Condition {
+                    last_transition_time: Time(Utc::now()),
+                    message: "Updated by controller".to_owned(),
+                    observed_generation: gateway.metadata.generation,
+                    reason: gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs.to_string(),
+                    status: "True".to_owned(),
+                    type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                }],
+                name: m.name.clone(),
+                supported_kinds: vec![GatewayStatusListenersSupportedKinds {
+                    group: None,
+                    kind: "HTTPRoute".to_owned(),
+                }],
+            };
             if let Some(ar) = m.allowed_routes.as_ref() {
                 if let Some(kinds) = ar.kinds.as_ref() {
                     let cloned_kinds = kinds.clone();
                     let has_http_route = kinds.iter().any(|k| k.kind == "HTTPRoute");
                     cloned_kinds.clone().retain(|k| k.kind != "HTTPRoute");
                     if cloned_kinds.is_empty() {
-                        listeners_statuses.push(GatewayStatusListeners {
-                            attached_routes: 0,
-                            conditions: vec![Condition {
-                                last_transition_time: Time(Utc::now()),
-                                message: "Updated by controller".to_owned(),
-                                observed_generation: gateway.metadata.generation,
-                                reason: gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs.to_string(),
-                                status: "True".to_owned(),
-                                type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
-                            }],
-                            name: m.name.clone(),
-                            supported_kinds: vec![],
-                            // supported_kinds: vec![GatewayStatusListenersSupportedKinds {
-                            //     group: None,
-                            //     kind: "HTTPRoute".to_owned(),
-                            // }],
-                        });
+                        listeners_statuses.push(resolved_condition);
                     } else {
                         listeners_statuses.push(GatewayStatusListeners {
                             attached_routes: 0,
@@ -467,9 +498,14 @@ impl GatewayResourceHandler<Gateway> {
                             },
                         });
                     }
-                };
+                } else {
+                    listeners_statuses.push(resolved_condition);
+                }
+            } else {
+                listeners_statuses.push(resolved_condition);
             }
         });
         status.listeners = Some(listeners_statuses);
+        gateway.status = Some(status);
     }
 }
