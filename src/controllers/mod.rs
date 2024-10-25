@@ -8,7 +8,7 @@ mod utils;
 pub use utils::{FinalizerPatcher, LogContext, ResourceFinalizer};
 
 #[allow(dead_code)]
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]
 pub enum ControllerError {
     PatchFailed,
     AlreadyAdded,

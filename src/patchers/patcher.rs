@@ -66,7 +66,6 @@ where
                     let api = self.api(&resource_key.namespace);
                     let patch_params = PatchParams::apply(&controller_name).force();
                     let log_context = self.log_context(&resource_key, &controller_name, version);
-
                     let res = api.patch_status(&resource_key.name, &patch_params, &Patch::Apply(resource)).await;
                     match &res {
                         Ok(_new_gateway) => {

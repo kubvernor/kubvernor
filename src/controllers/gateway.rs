@@ -4,17 +4,19 @@ use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
-    gateways::{Gateway, GatewayListeners, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
+    gateways::{Gateway, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
     httproutes::HTTPRoute,
 };
 use k8s_openapi::{
+    api::core::v1::Secret,
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
 };
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
-    Api, Resource,
+    Api, Client, Resource,
 };
+use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot, Mutex,
@@ -28,8 +30,8 @@ use super::{
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, ChangedContext, DeletedContext, GatewayError, GatewayEvent, GatewayResponse, Listener, ListenerConfig, ListenerError, ResourceKey, DEFAULT_NAMESPACE_NAME},
-    controllers::{gateway_processed_handler::GatewayProcessedHandler, utils::VerifiyItems},
+    common::{self, ChangedContext, DeletedContext, GatewayEvent, GatewayResponse, ListenerCondition, ProtocolType, ResourceKey},
+    controllers::gateway_processed_handler::GatewayProcessedHandler,
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
 };
@@ -39,6 +41,7 @@ type Result<T, E = ControllerError> = std::result::Result<T, E>;
 #[derive(Clone)]
 struct Context {
     controller_name: String,
+    client: Client,
     gateway_channel_sender: mpsc::Sender<GatewayEvent>,
     state: Arc<Mutex<State>>,
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
@@ -54,44 +57,7 @@ pub struct GatewayController {
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
     gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
-}
-
-impl TryFrom<&GatewayListeners> for Listener {
-    type Error = ListenerError;
-
-    fn try_from(gateway_listener: &GatewayListeners) -> std::result::Result<Self, Self::Error> {
-        let mut config = ListenerConfig::new(gateway_listener.name.clone(), gateway_listener.port, gateway_listener.hostname.clone());
-        config.allowed_routes.clone_from(&gateway_listener.allowed_routes);
-
-        match gateway_listener.protocol.as_str() {
-            "HTTP" => Ok(Self::Http(config)),
-            "HTTPS" => Ok(Self::Https(config)),
-            "TCP" => Ok(Self::Tcp(config)),
-            "TLS" => Ok(Self::Tls(config)),
-            "UDP" => Ok(Self::Udp(config)),
-            _ => Err(ListenerError::UnknownProtocol(gateway_listener.protocol.clone())),
-        }
-    }
-}
-
-impl TryFrom<&Gateway> for crate::common::Gateway {
-    type Error = GatewayError;
-
-    fn try_from(gateway: &Gateway) -> std::result::Result<Self, Self::Error> {
-        let id = Uuid::parse_str(&gateway.metadata.uid.clone().unwrap_or_default()).map_err(|_| GatewayError::ConversionProblem("Can't parse uuid".to_owned()))?;
-        let name = gateway.metadata.name.clone().unwrap_or_default();
-        if name.is_empty() {
-            return Err(GatewayError::ConversionProblem("Name can't be empty".to_owned()));
-        }
-        let namespace = gateway.metadata.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
-
-        let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) = VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
-        if !listener_validation_errrors.is_empty() {
-            return Err(GatewayError::ConversionProblem("Misconfigured listeners".to_owned()));
-        }
-
-        Ok(Self { id, name, namespace, listeners })
-    }
+    client: kube::Client,
 }
 
 impl GatewayController {
@@ -107,11 +73,12 @@ impl GatewayController {
         GatewayController {
             controller_name,
             gateway_channel_sender,
-            api: Api::all(client),
+            api: Api::all(client.clone()),
             state,
             gateway_patcher,
             gateway_class_patcher,
             http_route_patcher,
+            client,
         }
     }
     pub fn get_controller(&self) -> BoxFuture<()> {
@@ -122,6 +89,7 @@ impl GatewayController {
             gateway_patcher: self.gateway_patcher.clone(),
             gateway_class_patcher: self.gateway_class_patcher.clone(),
             http_route_patcher: self.http_route_patcher.clone(),
+            client: self.client.clone(),
         });
 
         Controller::new(self.api.clone(), Config::default())
@@ -183,6 +151,7 @@ impl GatewayController {
 
         let handler = GatewayResourceHandler {
             state: Arc::clone(&ctx.state),
+            client: ctx.client.clone(),
             resource_key,
             controller_name: controller_name.clone(),
             gateway_class_name,
@@ -217,6 +186,7 @@ impl GatewayController {
 
 struct GatewayResourceHandler<R> {
     state: Arc<Mutex<State>>,
+    client: Client,
     resource_key: ResourceKey,
     controller_name: String,
     resource: Arc<R>,
@@ -301,13 +271,15 @@ impl GatewayResourceHandler<Gateway> {
         let log_context = self.log_context();
         let mut updated_gateway = (**gateway).clone();
         let maybe_gateway = common::Gateway::try_from(&updated_gateway);
-        let Ok(backend_gateway) = maybe_gateway else {
+        let Ok(mut backend_gateway) = maybe_gateway else {
             warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
         let resource_key = ResourceKey::from(&updated_gateway);
 
-        Self::resolve_listeners_status(&mut updated_gateway);
+        self.validate_certificates(&mut backend_gateway).await;
+        debug!("Gateway {backend_gateway:?}");
+        self.resolve_listeners_statuses(&backend_gateway, &mut updated_gateway);
 
         let linked_routes = utils::find_linked_routes(state, &resource_key);
         debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
@@ -448,64 +420,115 @@ impl GatewayResourceHandler<Gateway> {
             .await;
     }
 
-    fn resolve_listeners_status(gateway: &mut Gateway) {
-        let mut status = gateway.status.clone().unwrap_or_default();
+    fn resolve_listeners_statuses(&self, gateway: &common::Gateway, kube_gateway: &mut Gateway) {
+        let log_context = self.log_context();
+        let mut status = kube_gateway.status.clone().unwrap_or_default();
         let mut listeners_statuses = vec![];
+        let generation = kube_gateway.metadata.generation;
 
-        gateway.spec.listeners.iter().for_each(|m| {
-            let resolved_condition = GatewayStatusListeners {
-                attached_routes: 0,
-                conditions: vec![Condition {
-                    last_transition_time: Time(Utc::now()),
-                    message: "Updated by controller".to_owned(),
-                    observed_generation: gateway.metadata.generation,
-                    reason: gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs.to_string(),
-                    status: "True".to_owned(),
-                    type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
-                }],
-                name: m.name.clone(),
-                supported_kinds: vec![GatewayStatusListenersSupportedKinds {
-                    group: None,
-                    kind: "HTTPRoute".to_owned(),
-                }],
-            };
-            if let Some(ar) = m.allowed_routes.as_ref() {
-                if let Some(kinds) = ar.kinds.as_ref() {
-                    let cloned_kinds = kinds.clone();
-                    let has_http_route = kinds.iter().any(|k| k.kind == "HTTPRoute");
-                    cloned_kinds.clone().retain(|k| k.kind != "HTTPRoute");
-                    if cloned_kinds.is_empty() {
-                        listeners_statuses.push(resolved_condition);
-                    } else {
-                        listeners_statuses.push(GatewayStatusListeners {
-                            attached_routes: 0,
-                            conditions: vec![Condition {
-                                last_transition_time: Time(Utc::now()),
-                                message: "Updated by controller".to_owned(),
-                                observed_generation: gateway.metadata.generation,
-                                reason: gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds.to_string(),
-                                status: "False".to_owned(),
-                                type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
-                            }],
-                            name: m.name.clone(),
-                            supported_kinds: if has_http_route {
-                                vec![GatewayStatusListenersSupportedKinds {
-                                    group: None,
-                                    kind: "HTTPRoute".to_owned(),
-                                }]
-                            } else {
-                                vec![]
-                            },
+        gateway.listeners.iter().for_each(|l| {
+            let name = l.name().to_owned();
+            debug!("{log_context} Processing listener {name}");
+            let mut listener_status = GatewayStatusListeners { name, ..Default::default() };
+            let listener_conditions = &mut listener_status.conditions;
+
+            for condition in l.conditions() {
+                let (status, type_, reason) = condition.resolved_type();
+                let status = status.to_owned();
+                let type_ = type_.to_string();
+                let reason = reason.to_string();
+                match condition {
+                    common::ListenerCondition::Resolved(allowed_routes) => {
+                        listener_conditions.push(Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: "Updated by controller".to_owned(),
+                            observed_generation: generation,
+                            reason,
+                            status,
+                            type_,
                         });
+                        listener_status.supported_kinds = allowed_routes.iter().map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() }).collect();
                     }
-                } else {
-                    listeners_statuses.push(resolved_condition);
+
+                    common::ListenerCondition::ResolvedWithNotAllowedRoutes(allowed_routes) => {
+                        listener_conditions.push(Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: "Updated by controller".to_owned(),
+                            observed_generation: generation,
+                            reason,
+                            status,
+                            type_,
+                        });
+                        listener_status.supported_kinds = allowed_routes.iter().map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() }).collect();
+                    }
+
+                    _ => {
+                        listener_conditions.push(Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: "Updated by controller".to_owned(),
+                            observed_generation: generation,
+                            reason,
+                            status,
+                            type_,
+                        });
+                        listener_status.supported_kinds = vec![];
+                    }
                 }
-            } else {
-                listeners_statuses.push(resolved_condition);
             }
+            listeners_statuses.push(listener_status);
         });
         status.listeners = Some(listeners_statuses);
-        gateway.status = Some(status);
+        kube_gateway.status = Some(status);
+    }
+
+    async fn validate_certificates(&self, gateway: &mut common::Gateway) {
+        debug!("Validating certs");
+        let client = self.client.clone();
+        let log_context = self.log_context();
+        for listener in &mut gateway.listeners.iter_mut().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
+            let listener_data = listener.data_mut();
+            let conditions = &mut listener_data.conditions;
+            for certificate_key in &listener_data.config.certificates {
+                let secret_api: Api<Secret> = Api::namespaced(client.clone(), &certificate_key.namespace);
+                if let Ok(secret) = secret_api.get(&certificate_key.name).await {
+                    if secret.type_ == Some("kubernetes.io/tls".to_owned()) {
+                        if let Some(data) = secret.data {
+                            let private_key = data.get("tls.key");
+                            let certificate = data.get("tls.crt");
+                            match (private_key, certificate) {
+                                (Some(private_key), Some(certificate)) => {
+                                    let valid_cert = CertificateDer::from_pem_slice(&certificate.0);
+                                    let valid_key = PrivateKeyDer::from_pem_slice(&private_key.0);
+                                    match (valid_cert, valid_key) {
+                                        (Ok(_), Ok(_)) => debug!("Private key and certificate are valid"),
+                                        (Ok(_), Err(e)) => {
+                                            debug!("{log_context} Key is invalid {e}");
+                                            _ = conditions.replace(ListenerCondition::InvalidCertificates);
+                                        }
+                                        (Err(e), Ok(_)) => {
+                                            debug!("{log_context} Certificate is invalid {e}");
+                                            _ = conditions.replace(ListenerCondition::InvalidCertificates);
+                                        }
+                                        (Err(e_cert), Err(e_key)) => {
+                                            debug!("{log_context} Key and cer certificate are invalid {e_cert}{e_key}");
+                                            _ = conditions.replace(ListenerCondition::InvalidCertificates);
+                                        }
+                                    };
+                                }
+                                _ => {
+                                    _ = conditions.replace(ListenerCondition::InvalidCertificates);
+                                }
+                            }
+                        } else {
+                            _ = conditions.replace(ListenerCondition::InvalidCertificates);
+                        }
+                    } else {
+                        _ = conditions.replace(ListenerCondition::InvalidCertificates);
+                    }
+                } else {
+                    _ = conditions.replace(ListenerCondition::InvalidCertificates);
+                }
+            }
+        }
     }
 }

@@ -48,11 +48,11 @@ impl<'a> GatewayProcessedHandler<'a> {
         debug!("{log_context} listener statuses {:?}", &deployed_gateway_status.listeners);
 
         let listener_statuses = Self::generate_processed_listeners_conditions(gateway.metadata.generation, deployed_gateway_status);
-        Self::update_status_conditions(&mut self.gateway, listener_statuses);
-        Self::update_status_addresses(&mut self.gateway, &deployed_gateway_status.attached_addresses);
+        Self::update_gateway_status_conditions(&mut self.gateway, listener_statuses);
+        Self::update_gateway_status_addresses(&mut self.gateway, &deployed_gateway_status.attached_addresses);
     }
 
-    fn update_status_conditions(gateway: &mut Gateway, listeners_status: Vec<GatewayStatusListeners>) {
+    fn update_gateway_status_conditions(gateway: &mut Gateway, listeners_status: Vec<GatewayStatusListeners>) {
         let observed_generation = gateway.metadata.generation;
         let mut status = gateway.status.clone().unwrap_or_default();
         let mut conditions = status.conditions.unwrap_or_default();
@@ -78,7 +78,7 @@ impl<'a> GatewayProcessedHandler<'a> {
         if status.listeners.is_none() && !listeners_status.is_empty() {
             error!("Status listeners should not be empty here");
         }
-        status.listeners = Some(Self::merge_isteners_statuses(status.listeners.clone().unwrap_or_default(), listeners_status));
+        status.listeners = Some(Self::merge_listeners_statuses(status.listeners.clone().unwrap_or_default(), listeners_status));
         gateway.status = Some(status);
         gateway.metadata.managed_fields = None;
     }
@@ -228,13 +228,13 @@ impl<'a> GatewayProcessedHandler<'a> {
         None
     }
 
-    fn update_status_addresses(gateway: &mut Gateway, attached_addresses: &[String]) {
+    fn update_gateway_status_addresses(gateway: &mut Gateway, attached_addresses: &[String]) {
         let mut status = gateway.status.clone().unwrap_or_default();
         status.addresses = Some(attached_addresses.iter().map(|a| GatewayStatusAddresses { r#type: None, value: a.clone() }).collect::<Vec<_>>());
         gateway.status = Some(status);
     }
 
-    fn merge_isteners_statuses(mut all_listeners_statuses: Vec<GatewayStatusListeners>, mut deployed_listeners_statuses: Vec<GatewayStatusListeners>) -> Vec<GatewayStatusListeners> {
+    fn merge_listeners_statuses(mut all_listeners_statuses: Vec<GatewayStatusListeners>, mut deployed_listeners_statuses: Vec<GatewayStatusListeners>) -> Vec<GatewayStatusListeners> {
         for listener in &mut all_listeners_statuses {
             if let Some(deployed_listener) = deployed_listeners_statuses.iter_mut().find(|f| f.name == listener.name) {
                 listener.conditions.append(&mut deployed_listener.conditions);

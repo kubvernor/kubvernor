@@ -1,8 +1,8 @@
-use std::{fmt::Display, sync::Arc};
+use std::{collections::BTreeSet, fmt::Display, sync::Arc};
 
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
-    gateways::{self, Gateway as KubeGateway, GatewayListeners, GatewayListenersAllowedRoutes},
+    gateways::{self, Gateway as KubeGateway, GatewayListeners},
     httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesMatches},
 };
 use kube::{Resource, ResourceExt};
@@ -58,10 +58,10 @@ pub enum ProtocolType {
     Udp,
 }
 
-impl TryFrom<String> for ProtocolType {
+impl TryFrom<&String> for ProtocolType {
     type Error = ControllerError;
 
-    fn try_from(value: String) -> Result<Self, Self::Error> {
+    fn try_from(value: &String) -> Result<Self, Self::Error> {
         Ok(match value.to_uppercase().as_str() {
             "HTTP" => Self::Http,
             "HTTPS" => Self::Https,
@@ -81,12 +81,12 @@ impl Display for ProtocolType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct ListenerConfig {
     pub name: String,
     pub port: i32,
     pub hostname: Option<String>,
-    pub allowed_routes: Option<GatewayListenersAllowedRoutes>,
+    pub certificates: Vec<ResourceKey>,
 }
 
 impl PartialOrd for ListenerConfig {
@@ -109,36 +109,32 @@ impl ListenerConfig {
             name,
             port,
             hostname,
-            allowed_routes: None,
+            certificates: vec![],
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Listener {
-    Http(ListenerConfig),
-    Https(ListenerConfig),
-    Tcp(ListenerConfig),
-    Tls(ListenerConfig),
-    Udp(ListenerConfig),
+    Http(ListenerData),
+    Https(ListenerData),
+    Tcp(ListenerData),
+    Tls(ListenerData),
+    Udp(ListenerData),
 }
-
-// #[derive(Clone, Debug, PartialEq, PartialOrd)]
-// pub enum ListenerStatus {
-//     Accpeted(i32),
-//     Conflicted,
-// }
 
 impl Listener {
     pub fn name(&self) -> &str {
         match self {
-            Listener::Http(config) | Listener::Https(config) | Listener::Tcp(config) | Listener::Tls(config) | Listener::Udp(config) => config.name.as_str(),
+            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
+                listener_data.config.name.as_str()
+            }
         }
     }
 
     pub fn port(&self) -> i32 {
         match self {
-            Listener::Http(config) | Listener::Https(config) | Listener::Tcp(config) | Listener::Tls(config) | Listener::Udp(config) => config.port,
+            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => listener_data.config.port,
         }
     }
 
@@ -153,8 +149,104 @@ impl Listener {
     }
     pub fn hostname(&self) -> Option<&String> {
         match self {
-            Listener::Http(config) | Listener::Https(config) | Listener::Tcp(config) | Listener::Tls(config) | Listener::Udp(config) => config.hostname.as_ref(),
+            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
+                listener_data.config.hostname.as_ref()
+            }
         }
+    }
+
+    pub fn config(&self) -> &ListenerConfig {
+        match self {
+            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => &listener_data.config,
+        }
+    }
+
+    pub fn conditions(&self) -> impl Iterator<Item = &ListenerCondition> {
+        match self {
+            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
+                listener_data.conditions.iter()
+            }
+        }
+    }
+
+    pub fn conditions_mut(&mut self) -> &mut ListenerConditions {
+        match self {
+            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
+                &mut listener_data.conditions
+            }
+        }
+    }
+
+    pub fn data_mut(&mut self) -> &mut ListenerData {
+        match self {
+            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => listener_data,
+        }
+    }
+}
+
+pub type ListenerConditions = BTreeSet<ListenerCondition>;
+
+#[derive(Clone, Default, Debug, PartialEq, PartialOrd)]
+pub struct ListenerData {
+    pub config: ListenerConfig,
+    pub conditions: ListenerConditions,
+}
+
+impl TryFrom<&GatewayListeners> for Listener {
+    type Error = ListenerError;
+
+    fn try_from(gateway_listener: &GatewayListeners) -> std::result::Result<Self, Self::Error> {
+        let secrets = gateway_listener
+            .tls
+            .as_ref()
+            .and_then(|tls| {
+                tls.certificate_refs.as_ref().map(|refs| {
+                    refs.iter()
+                        .map(|r| ResourceKey::from((r.group.clone(), r.namespace.clone(), r.name.clone(), r.kind.clone())))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap_or_default();
+
+        let mut config = ListenerConfig::new(gateway_listener.name.clone(), gateway_listener.port, gateway_listener.hostname.clone());
+        config.certificates = secrets;
+
+        let condition = validate_allowed_routes(gateway_listener);
+        let mut listener_conditions = ListenerConditions::new();
+        _ = listener_conditions.replace(condition);
+        let listener_data = ListenerData {
+            config,
+            conditions: listener_conditions,
+        };
+
+        match gateway_listener.protocol.as_str() {
+            "HTTP" => Ok(Self::Http(listener_data)),
+            "HTTPS" => Ok(Self::Https(listener_data)),
+            "TCP" => Ok(Self::Tcp(listener_data)),
+            "TLS" => Ok(Self::Tls(listener_data)),
+            "UDP" => Ok(Self::Udp(listener_data)),
+            _ => Err(ListenerError::UnknownProtocol(gateway_listener.protocol.clone())),
+        }
+    }
+}
+
+impl TryFrom<&KubeGateway> for Gateway {
+    type Error = GatewayError;
+
+    fn try_from(gateway: &KubeGateway) -> std::result::Result<Self, Self::Error> {
+        let id = Uuid::parse_str(&gateway.metadata.uid.clone().unwrap_or_default()).map_err(|_| GatewayError::ConversionProblem("Can't parse uuid".to_owned()))?;
+        let name = gateway.metadata.name.clone().unwrap_or_default();
+        if name.is_empty() {
+            return Err(GatewayError::ConversionProblem("Name can't be empty".to_owned()));
+        }
+        let namespace = gateway.metadata.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+
+        let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) = VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
+        if !listener_validation_errrors.is_empty() {
+            return Err(GatewayError::ConversionProblem("Misconfigured listeners".to_owned()));
+        }
+
+        Ok(Self { id, name, namespace, listeners })
     }
 }
 
@@ -529,6 +621,17 @@ impl From<&ObjectMeta> for ResourceKey {
         }
     }
 }
+impl From<(Option<String>, Option<String>, String, Option<String>)> for ResourceKey {
+    fn from((group, namespace, name, kind): (Option<String>, Option<String>, String, Option<String>)) -> Self {
+        let namespace = namespace.unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+        Self {
+            group: group.unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
+            namespace,
+            name: name.to_owned(),
+            kind: kind.unwrap_or(DEFAULT_KIND_NAME.to_owned()),
+        }
+    }
+}
 
 impl From<&HTTPRouteParentRefs> for ResourceKey {
     fn from(route_parent: &HTTPRouteParentRefs) -> Self {
@@ -640,4 +743,103 @@ where
     F: Fn(&GatewayListeners) -> bool,
 {
     gateway.spec.listeners.iter().filter(|f| filter(f)).cloned().collect()
+}
+
+pub struct VerifiyItems;
+
+impl VerifiyItems {
+    #[allow(clippy::unwrap_used)]
+    pub fn verify<I, E>(iter: impl Iterator<Item = std::result::Result<I, E>>) -> (Vec<I>, Vec<E>)
+    where
+        I: std::fmt::Debug,
+        E: std::fmt::Debug,
+    {
+        let (good, bad): (Vec<_>, Vec<_>) = iter.partition(std::result::Result::is_ok);
+        let good: Vec<_> = good.into_iter().map(|i| i.unwrap()).collect();
+        let bad: Vec<_> = bad.into_iter().map(|i| i.unwrap_err()).collect();
+        (good, bad)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ListenerCondition {
+    Resolved(Vec<String>),
+    ResolvedWithNotAllowedRoutes(Vec<String>),
+    InvalidAllowedRoutes,
+    InvalidCertificates,
+}
+
+impl Ord for ListenerCondition {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let (_, self_type, _) = self.resolved_type();
+        let (_, other_type, _) = other.resolved_type();
+        self_type.to_string().cmp(&other_type.to_string())
+    }
+}
+impl PartialOrd for ListenerCondition {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for ListenerCondition {}
+
+impl ListenerCondition {
+    pub fn resolved_type(
+        &self,
+    ) -> (
+        &'static str,
+        gateway_api::apis::standard::constants::ListenerConditionType,
+        gateway_api::apis::standard::constants::ListenerConditionReason,
+    ) {
+        match self {
+            ListenerCondition::Resolved(_) => (
+                "True",
+                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
+                gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
+            ),
+            ListenerCondition::ResolvedWithNotAllowedRoutes(_) => (
+                "False",
+                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
+                gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
+            ),
+            ListenerCondition::InvalidAllowedRoutes => (
+                "False",
+                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
+                gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds,
+            ),
+            ListenerCondition::InvalidCertificates => (
+                "False",
+                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
+                gateway_api::apis::standard::constants::ListenerConditionReason::InvalidCertificateRef,
+            ),
+        }
+    }
+}
+
+const APPROVED_ROUTES: [&str; 2] = ["HTTPRoute", "TCPRoute"];
+
+fn validate_allowed_routes(gateway_listeners: &GatewayListeners) -> ListenerCondition {
+    if let Some(ar) = gateway_listeners.allowed_routes.as_ref() {
+        if let Some(kinds) = ar.kinds.as_ref() {
+            let cloned_kinds = kinds.clone().into_iter().map(|k| k.kind);
+            let (supported, invalid): (Vec<_>, Vec<_>) = cloned_kinds.partition(|f| APPROVED_ROUTES.contains(&f.as_str()));
+
+            if invalid.is_empty() {
+                ListenerCondition::Resolved(supported)
+            } else if !supported.is_empty() {
+                ListenerCondition::ResolvedWithNotAllowedRoutes(supported)
+            } else {
+                ListenerCondition::InvalidAllowedRoutes
+            }
+        } else if gateway_listeners.protocol == "HTTP" || gateway_listeners.protocol == "HTTPS" {
+            ListenerCondition::Resolved(vec!["HTTPRoute".to_owned()])
+        } else {
+            ListenerCondition::Resolved(vec![])
+        }
+    } else if gateway_listeners.protocol == "HTTP" || gateway_listeners.protocol == "HTTPS" {
+        ListenerCondition::Resolved(vec!["HTTPRoute".to_owned()])
+    } else {
+        ListenerCondition::Resolved(vec![])
+    }
 }

@@ -24,11 +24,11 @@ use uuid::Uuid;
 use super::{
     gateway_processed_handler::GatewayProcessedHandler,
     resource_handler::ResourceHandler,
-    utils::{self, LogContext, ResourceCheckerArgs, ResourceState, VerifiyItems},
+    utils::{self, LogContext, ResourceCheckerArgs, ResourceState},
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, ChangedContext, GatewayEvent, GatewayResponse, ResourceKey, Route, RouteToListenersMapping},
+    common::{self, ChangedContext, GatewayEvent, GatewayResponse, ResourceKey, Route, RouteToListenersMapping, VerifiyItems},
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
 };

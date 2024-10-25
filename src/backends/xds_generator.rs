@@ -109,7 +109,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
         let envoy_listeners = gateway.spec.listeners.iter().fold(BTreeMap::<i32, EnvoyListener>::new(), |mut acc, listener| {
             let port = listener.port;
             let name = gateway.name_any();
-            let protocol_type = ProtocolType::try_from(listener.protocol.clone()).unwrap_or(ProtocolType::Http);
+            let protocol_type = ProtocolType::try_from(&listener.protocol).unwrap_or(ProtocolType::Http);
             let maybe_added = acc.get_mut(&port);
 
             if let Some(added) = maybe_added {

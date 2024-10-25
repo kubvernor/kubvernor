@@ -30,22 +30,6 @@ pub enum ResourceState {
     StatusNotChanged,
 }
 
-pub struct VerifiyItems;
-
-impl VerifiyItems {
-    #[allow(clippy::unwrap_used)]
-    pub fn verify<I, E>(iter: impl Iterator<Item = std::result::Result<I, E>>) -> (Vec<I>, Vec<E>)
-    where
-        I: std::fmt::Debug,
-        E: std::fmt::Debug,
-    {
-        let (good, bad): (Vec<_>, Vec<_>) = iter.partition(std::result::Result::is_ok);
-        let good: Vec<_> = good.into_iter().map(|i| i.unwrap()).collect();
-        let bad: Vec<_> = bad.into_iter().map(|i| i.unwrap_err()).collect();
-        (good, bad)
-    }
-}
-
 pub struct FinalizerPatcher {}
 
 impl FinalizerPatcher {
