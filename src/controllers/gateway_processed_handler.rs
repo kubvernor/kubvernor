@@ -17,6 +17,8 @@ use crate::{
     state::State,
 };
 
+use super::utils::ListenerStatusesMerger;
+
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 pub struct GatewayProcessedHandler<'a> {
     pub gateway_processed_payload: GatewayProcessedPayload,
@@ -78,7 +80,7 @@ impl<'a> GatewayProcessedHandler<'a> {
         if status.listeners.is_none() && !listeners_status.is_empty() {
             error!("Status listeners should not be empty here");
         }
-        status.listeners = Some(Self::merge_listeners_statuses(status.listeners.clone().unwrap_or_default(), listeners_status));
+        status.listeners = Some(ListenerStatusesMerger::new(status.listeners.clone().unwrap_or_default()).merge(listeners_status));
         gateway.status = Some(status);
         gateway.metadata.managed_fields = None;
     }
@@ -232,16 +234,6 @@ impl<'a> GatewayProcessedHandler<'a> {
         let mut status = gateway.status.clone().unwrap_or_default();
         status.addresses = Some(attached_addresses.iter().map(|a| GatewayStatusAddresses { r#type: None, value: a.clone() }).collect::<Vec<_>>());
         gateway.status = Some(status);
-    }
-
-    fn merge_listeners_statuses(mut all_listeners_statuses: Vec<GatewayStatusListeners>, mut deployed_listeners_statuses: Vec<GatewayStatusListeners>) -> Vec<GatewayStatusListeners> {
-        for listener in &mut all_listeners_statuses {
-            if let Some(deployed_listener) = deployed_listeners_statuses.iter_mut().find(|f| f.name == listener.name) {
-                listener.conditions.append(&mut deployed_listener.conditions);
-                listener.attached_routes = deployed_listener.attached_routes;
-            }
-        }
-        all_listeners_statuses
     }
 
     fn generate_processed_listeners_conditions(generation: Option<i64>, deployed_gateway_status: &DeployedGatewayStatus) -> Vec<GatewayStatusListeners> {

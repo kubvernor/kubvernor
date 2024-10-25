@@ -1,20 +1,22 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::{collections::BTreeSet, marker::PhantomData, sync::Arc};
 
-use gateway_api::apis::standard::gateways::Gateway;
+use gateway_api::apis::standard::gateways::{Gateway, GatewayStatusListeners};
+use k8s_openapi::{api::core::v1::Secret, apimachinery::pkg::apis::meta::v1::Condition};
 use kube::{
     api::{Patch, PatchParams},
     runtime::{
         controller::Action,
         finalizer::{self, Error},
     },
-    Api, Resource, ResourceExt,
+    Api, Client, Resource, ResourceExt,
 };
 use kube_core::{PartialObjectMeta, PartialObjectMetaExt};
+use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
 use serde::Serialize;
 use tracing::{debug, warn};
 
 use crate::{
-    common::{ResourceKey, Route},
+    common::{self, ListenerCondition, ProtocolType, ResourceKey, Route},
     controllers::ControllerError,
     state::State,
 };
@@ -148,5 +150,132 @@ impl<'a> LogContext<'a, Gateway> {
             version,
             resource_type: std::marker::PhantomData,
         }
+    }
+}
+
+pub struct ListenerStatusesMerger {
+    all_listeners_statuses: Vec<GatewayStatusListeners>,
+}
+impl ListenerStatusesMerger {
+    pub fn new(all_listeners_statuses: Vec<GatewayStatusListeners>) -> Self {
+        Self { all_listeners_statuses }
+    }
+    pub fn merge(mut self, mut deployed_listeners_statuses: Vec<GatewayStatusListeners>) -> Vec<GatewayStatusListeners> {
+        #[derive(Debug)]
+        struct ListenerConditionHolder {
+            type_: String,
+            condition: Condition,
+        }
+
+        impl Eq for ListenerConditionHolder {}
+
+        impl Ord for ListenerConditionHolder {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                self.type_.cmp(&other.type_)
+            }
+        }
+        impl PartialOrd for ListenerConditionHolder {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.type_.cmp(&other.type_))
+            }
+        }
+        impl PartialEq for ListenerConditionHolder {
+            fn eq(&self, other: &Self) -> bool {
+                self.type_ == other.type_
+            }
+        }
+
+        for listener in &mut self.all_listeners_statuses {
+            if let Some(deployed_listener) = deployed_listeners_statuses.iter_mut().find(|f| f.name == listener.name) {
+                let mut listener_conditions = listener
+                    .conditions
+                    .iter()
+                    .map(|c| ListenerConditionHolder {
+                        type_: c.type_.clone(),
+                        condition: c.clone(),
+                    })
+                    .collect::<BTreeSet<_>>();
+                let deployed_conditions = deployed_listener.conditions.iter().map(|c| ListenerConditionHolder {
+                    type_: c.type_.clone(),
+                    condition: c.clone(),
+                });
+                for c in deployed_conditions {
+                    let _ = listener_conditions.replace(c);
+                }
+
+                listener.conditions = listener_conditions.into_iter().map(|c| c.condition).collect();
+                listener.attached_routes = deployed_listener.attached_routes;
+            }
+        }
+        self.all_listeners_statuses
+    }
+}
+
+pub struct ListenerTlsConfigValidator {
+    gateway: common::Gateway,
+    client: Client,
+    log_context: String,
+}
+
+impl ListenerTlsConfigValidator {
+    pub fn new(gateway: common::Gateway, client: Client, log_context: String) -> Self {
+        Self { gateway, client, log_context }
+    }
+
+    pub async fn validate(mut self) -> common::Gateway {
+        let client = self.client.clone();
+        let log_context = self.log_context;
+        debug!("{log_context} Validating certs");
+
+        for listener in self.gateway.listeners.iter_mut().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
+            let listener_data = listener.data_mut();
+            let name = listener_data.config.name.clone();
+            let conditions = &mut listener_data.conditions;
+            let supported_routes = conditions.get(&ListenerCondition::Resolved(vec![])).map(ListenerCondition::supported_routes).unwrap_or_default();
+            debug!("{log_context} Supported routes {name} {supported_routes:?}");
+            for certificate_key in &listener_data.config.certificates {
+                let secret_api: Api<Secret> = Api::namespaced(client.clone(), &certificate_key.namespace);
+                if let Ok(secret) = secret_api.get(&certificate_key.name).await {
+                    if secret.type_ == Some("kubernetes.io/tls".to_owned()) {
+                        let supported_routes = supported_routes.clone();
+                        if let Some(data) = secret.data {
+                            let private_key = data.get("tls.key");
+                            let certificate = data.get("tls.crt");
+                            match (private_key, certificate) {
+                                (Some(private_key), Some(certificate)) => {
+                                    let valid_cert = CertificateDer::from_pem_slice(&certificate.0);
+                                    let valid_key = PrivateKeyDer::from_pem_slice(&private_key.0);
+                                    match (valid_cert, valid_key) {
+                                        (Ok(_), Ok(_)) => debug!("{log_context} Private key and certificate are valid"),
+                                        (Ok(_), Err(e)) => {
+                                            debug!("{log_context} Key is invalid {e}");
+                                            _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes));
+                                        }
+                                        (Err(e), Ok(_)) => {
+                                            debug!("{log_context} Certificate is invalid {e}");
+                                            _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes));
+                                        }
+                                        (Err(e_cert), Err(e_key)) => {
+                                            debug!("{log_context} Key and cer certificate are invalid {e_cert}{e_key}");
+                                            _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes));
+                                        }
+                                    };
+                                }
+                                _ => {
+                                    _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes));
+                                }
+                            }
+                        } else {
+                            _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes));
+                        }
+                    } else {
+                        _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes.clone()));
+                    }
+                } else {
+                    _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes.clone()));
+                }
+            }
+        }
+        self.gateway
     }
 }

@@ -8,7 +8,6 @@ use gateway_api::apis::standard::{
     httproutes::HTTPRoute,
 };
 use k8s_openapi::{
-    api::core::v1::Secret,
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
 };
@@ -16,7 +15,7 @@ use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource,
 };
-use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
+
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot, Mutex,
@@ -30,8 +29,8 @@ use super::{
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, ChangedContext, DeletedContext, GatewayEvent, GatewayResponse, ListenerCondition, ProtocolType, ResourceKey},
-    controllers::gateway_processed_handler::GatewayProcessedHandler,
+    common::{self, ChangedContext, DeletedContext, GatewayEvent, GatewayResponse, ResourceKey},
+    controllers::{gateway_processed_handler::GatewayProcessedHandler, utils::ListenerTlsConfigValidator},
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
 };
@@ -270,14 +269,15 @@ impl GatewayResourceHandler<Gateway> {
     async fn deploy_gateway(&self, sender: &Sender<GatewayEvent>, gateway: &Arc<Gateway>, state: &mut State) -> Result<Gateway> {
         let log_context = self.log_context();
         let mut updated_gateway = (**gateway).clone();
+
         let maybe_gateway = common::Gateway::try_from(&updated_gateway);
-        let Ok(mut backend_gateway) = maybe_gateway else {
+        let Ok(backend_gateway) = maybe_gateway else {
             warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
         let resource_key = ResourceKey::from(&updated_gateway);
+        let backend_gateway = ListenerTlsConfigValidator::new(backend_gateway, self.client.clone(), log_context.to_string()).validate().await;
 
-        self.validate_certificates(&mut backend_gateway).await;
         debug!("Gateway {backend_gateway:?}");
         self.resolve_listeners_statuses(&backend_gateway, &mut updated_gateway);
 
@@ -430,6 +430,7 @@ impl GatewayResourceHandler<Gateway> {
             let name = l.name().to_owned();
             debug!("{log_context} Processing listener {name}");
             let mut listener_status = GatewayStatusListeners { name, ..Default::default() };
+
             let listener_conditions = &mut listener_status.conditions;
 
             for condition in l.conditions() {
@@ -438,7 +439,9 @@ impl GatewayResourceHandler<Gateway> {
                 let type_ = type_.to_string();
                 let reason = reason.to_string();
                 match condition {
-                    common::ListenerCondition::Resolved(allowed_routes) => {
+                    common::ListenerCondition::Resolved(allowed_routes)
+                    | common::ListenerCondition::ResolvedWithNotAllowedRoutes(allowed_routes)
+                    | common::ListenerCondition::InvalidCertificates(allowed_routes) => {
                         listener_conditions.push(Condition {
                             last_transition_time: Time(Utc::now()),
                             message: "Updated by controller".to_owned(),
@@ -450,19 +453,7 @@ impl GatewayResourceHandler<Gateway> {
                         listener_status.supported_kinds = allowed_routes.iter().map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() }).collect();
                     }
 
-                    common::ListenerCondition::ResolvedWithNotAllowedRoutes(allowed_routes) => {
-                        listener_conditions.push(Condition {
-                            last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
-                            observed_generation: generation,
-                            reason,
-                            status,
-                            type_,
-                        });
-                        listener_status.supported_kinds = allowed_routes.iter().map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() }).collect();
-                    }
-
-                    _ => {
+                    common::ListenerCondition::InvalidAllowedRoutes => {
                         listener_conditions.push(Condition {
                             last_transition_time: Time(Utc::now()),
                             message: "Updated by controller".to_owned(),
@@ -479,56 +470,5 @@ impl GatewayResourceHandler<Gateway> {
         });
         status.listeners = Some(listeners_statuses);
         kube_gateway.status = Some(status);
-    }
-
-    async fn validate_certificates(&self, gateway: &mut common::Gateway) {
-        debug!("Validating certs");
-        let client = self.client.clone();
-        let log_context = self.log_context();
-        for listener in &mut gateway.listeners.iter_mut().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
-            let listener_data = listener.data_mut();
-            let conditions = &mut listener_data.conditions;
-            for certificate_key in &listener_data.config.certificates {
-                let secret_api: Api<Secret> = Api::namespaced(client.clone(), &certificate_key.namespace);
-                if let Ok(secret) = secret_api.get(&certificate_key.name).await {
-                    if secret.type_ == Some("kubernetes.io/tls".to_owned()) {
-                        if let Some(data) = secret.data {
-                            let private_key = data.get("tls.key");
-                            let certificate = data.get("tls.crt");
-                            match (private_key, certificate) {
-                                (Some(private_key), Some(certificate)) => {
-                                    let valid_cert = CertificateDer::from_pem_slice(&certificate.0);
-                                    let valid_key = PrivateKeyDer::from_pem_slice(&private_key.0);
-                                    match (valid_cert, valid_key) {
-                                        (Ok(_), Ok(_)) => debug!("Private key and certificate are valid"),
-                                        (Ok(_), Err(e)) => {
-                                            debug!("{log_context} Key is invalid {e}");
-                                            _ = conditions.replace(ListenerCondition::InvalidCertificates);
-                                        }
-                                        (Err(e), Ok(_)) => {
-                                            debug!("{log_context} Certificate is invalid {e}");
-                                            _ = conditions.replace(ListenerCondition::InvalidCertificates);
-                                        }
-                                        (Err(e_cert), Err(e_key)) => {
-                                            debug!("{log_context} Key and cer certificate are invalid {e_cert}{e_key}");
-                                            _ = conditions.replace(ListenerCondition::InvalidCertificates);
-                                        }
-                                    };
-                                }
-                                _ => {
-                                    _ = conditions.replace(ListenerCondition::InvalidCertificates);
-                                }
-                            }
-                        } else {
-                            _ = conditions.replace(ListenerCondition::InvalidCertificates);
-                        }
-                    } else {
-                        _ = conditions.replace(ListenerCondition::InvalidCertificates);
-                    }
-                } else {
-                    _ = conditions.replace(ListenerCondition::InvalidCertificates);
-                }
-            }
-        }
     }
 }

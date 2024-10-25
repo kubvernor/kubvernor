@@ -165,9 +165,7 @@ impl EnvoyDeployerChannelHandler {
             service_account_api
                 .delete(&gateway.name, &dp)
                 .map(|f| {
-                    if f.is_ok() {
-                        debug!("Deleted for  {}-{}", gateway.name, gateway.namespace);
-                    } else {
+                    if f.is_err() {
                         warn!("Could not delete {}-{} {:?}", gateway.name, gateway.namespace, f.err());
                     }
                 })
@@ -175,9 +173,7 @@ impl EnvoyDeployerChannelHandler {
             service_api
                 .delete(&gateway.name, &dp)
                 .map(|f| {
-                    if f.is_ok() {
-                        debug!("Deleted for  {}-{}", gateway.name, gateway.namespace);
-                    } else {
+                    if f.is_err() {
                         warn!("Could not delete {}-{} {:?}", gateway.name, gateway.namespace, f.err());
                     }
                 })
@@ -185,9 +181,7 @@ impl EnvoyDeployerChannelHandler {
             deployment_api
                 .delete(&gateway.name, &dp)
                 .map(|f| {
-                    if f.is_ok() {
-                        debug!("Deleted for  {}-{}", gateway.name, gateway.namespace);
-                    } else {
+                    if f.is_err() {
                         warn!("Could not delete {}-{} {:?}", gateway.name, gateway.namespace, f.err());
                     }
                 })
@@ -195,9 +189,7 @@ impl EnvoyDeployerChannelHandler {
             config_map_api
                 .delete(&xds_cm, &dp)
                 .map(|f| {
-                    if f.is_ok() {
-                        debug!("Deleted for  {}-{}", gateway.name, gateway.namespace);
-                    } else {
+                    if f.is_err() {
                         warn!("Could not delete {}-{} {:?}", gateway.name, gateway.namespace, f.err());
                     }
                 })
@@ -205,9 +197,7 @@ impl EnvoyDeployerChannelHandler {
             config_map_api
                 .delete(&bootstrap_cm, &dp)
                 .map(|f| {
-                    if f.is_ok() {
-                        debug!("Deleted for  {}-{}", gateway.name, gateway.namespace);
-                    } else {
+                    if f.is_err() {
                         warn!("Could not delete {}-{} {:?}", gateway.name, gateway.namespace, f.err());
                     }
                 })

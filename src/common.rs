@@ -212,6 +212,7 @@ impl TryFrom<&GatewayListeners> for Listener {
         config.certificates = secrets;
 
         let condition = validate_allowed_routes(gateway_listener);
+
         let mut listener_conditions = ListenerConditions::new();
         _ = listener_conditions.replace(condition);
         let listener_data = ListenerData {
@@ -766,7 +767,7 @@ pub enum ListenerCondition {
     Resolved(Vec<String>),
     ResolvedWithNotAllowedRoutes(Vec<String>),
     InvalidAllowedRoutes,
-    InvalidCertificates,
+    InvalidCertificates(Vec<String>),
 }
 
 impl Ord for ListenerCondition {
@@ -798,21 +799,24 @@ impl ListenerCondition {
                 gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
                 gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
             ),
-            ListenerCondition::ResolvedWithNotAllowedRoutes(_) => (
-                "False",
-                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
-                gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
-            ),
-            ListenerCondition::InvalidAllowedRoutes => (
+            ListenerCondition::ResolvedWithNotAllowedRoutes(_) | ListenerCondition::InvalidAllowedRoutes => (
                 "False",
                 gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
                 gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds,
             ),
-            ListenerCondition::InvalidCertificates => (
+            ListenerCondition::InvalidCertificates(_) => (
                 "False",
                 gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
                 gateway_api::apis::standard::constants::ListenerConditionReason::InvalidCertificateRef,
             ),
+        }
+    }
+    pub fn supported_routes(&self) -> Vec<String> {
+        match self {
+            ListenerCondition::Resolved(supported_routes) | ListenerCondition::ResolvedWithNotAllowedRoutes(supported_routes) | ListenerCondition::InvalidCertificates(supported_routes) => {
+                supported_routes.clone()
+            }
+            ListenerCondition::InvalidAllowedRoutes => vec![],
         }
     }
 }
