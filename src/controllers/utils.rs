@@ -1,7 +1,10 @@
 use std::{collections::BTreeSet, marker::PhantomData, sync::Arc};
 
 use gateway_api::apis::standard::gateways::{Gateway, GatewayStatusListeners};
-use k8s_openapi::{api::core::v1::Secret, apimachinery::pkg::apis::meta::v1::Condition};
+use k8s_openapi::{
+    api::core::v1::{Secret, Service},
+    apimachinery::pkg::apis::meta::v1::Condition,
+};
 use kube::{
     api::{Patch, PatchParams},
     runtime::{
@@ -16,7 +19,7 @@ use serde::Serialize;
 use tracing::{debug, warn};
 
 use crate::{
-    common::{self, ListenerCondition, ProtocolType, ResourceKey, Route},
+    common::{self, Backend, ListenerCondition, ProtocolType, ResourceKey, Route},
     controllers::ControllerError,
     state::State,
 };
@@ -129,6 +132,15 @@ pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route>
         .unwrap_or_default()
 }
 
+pub async fn resolve_route_backends(client: Client, routes: Vec<Route>, log_context: String) -> Vec<Route> {
+    let futures: Vec<_> = routes
+        .into_iter()
+        .map(|route| RouteBackendResolver::new(route, client.clone(), log_context.clone()).resolve())
+        .collect();
+    let routes = futures::future::join_all(futures);
+    routes.await
+}
+
 pub struct LogContext<'a, T> {
     pub controller_name: &'a str,
     pub resource_key: &'a ResourceKey,
@@ -138,7 +150,9 @@ pub struct LogContext<'a, T> {
 
 impl<T> std::fmt::Display for LogContext<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}: resource_id: {},  version: {:?}", self.resource_type, self.resource_key, self.version)
+        let resource = format!("{:?}", &self.resource_type);
+        let resource = &resource["PhantomData".len()..];
+        write!(f, "{}: resource_id: {},  version: {:?}", resource, self.resource_key, self.version)
     }
 }
 
@@ -277,5 +291,46 @@ impl ListenerTlsConfigValidator {
             }
         }
         self.gateway
+    }
+}
+
+pub struct RouteBackendResolver {
+    route: common::Route,
+    client: Client,
+    log_context: String,
+}
+
+impl RouteBackendResolver {
+    pub fn new(route: common::Route, client: Client, log_context: String) -> Self {
+        Self { route, client, log_context }
+    }
+
+    pub async fn resolve(self) -> common::Route {
+        let mut route = self.route;
+        let route_config = route.config_mut();
+        let mut unresolved_count = 0;
+        for rule in &mut route_config.routing_rules {
+            let mut new_backends = vec![];
+            for backend in &rule.backends {
+                let client = self.client.clone();
+                let backend_config = backend.config().clone();
+                let backend_namespace = backend_config.resource_key.namespace.clone();
+                let backend_name = backend_config.resource_key.name.clone();
+                let service_api: Api<Service> = Api::namespaced(client, &backend_namespace);
+                if (service_api.get(&backend_name).await).is_ok() {
+                    new_backends.push(Backend::Resolved(backend_config));
+                } else {
+                    debug!("{} can't resolve {:?}", self.log_context, &backend_config.resource_key);
+                    new_backends.push(Backend::Unresolved(backend_config));
+                    unresolved_count += 1;
+                }
+            }
+            rule.backends = new_backends;
+        }
+        route_config.resolution_status = match unresolved_count {
+            0 => common::ResolutionStatus::Resolved,
+            _ => common::ResolutionStatus::NotResolved,
+        };
+        route
     }
 }

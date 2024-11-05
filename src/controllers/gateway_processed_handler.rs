@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use gateway_api::apis::standard::{
     gateways::{Gateway, GatewayStatusAddresses, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
     httproutes::{HTTPRoute, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
@@ -28,6 +30,7 @@ pub struct GatewayProcessedHandler<'a> {
     pub resource_key: ResourceKey,
     pub route_patcher: Sender<Operation<HTTPRoute>>,
     pub controller_name: String,
+    pub per_listener_calculated_attached_routes: HashMap<String, u32>,
 }
 
 impl<'a> GatewayProcessedHandler<'a> {
@@ -178,21 +181,38 @@ impl<'a> GatewayProcessedHandler<'a> {
     }
 
     fn update_rejected_route_parents(&self, rejected_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
-        self.update_route_parents(
-            rejected_route,
-            gateway_id,
-            (
-                "Rejected",
-                vec![Condition {
-                    last_transition_time: Time(Utc::now()),
-                    message: "Updated by controller".to_owned(),
-                    observed_generation: None,
-                    reason: "Rejected".to_owned(),
-                    status: "False".to_owned(),
-                    type_: "Rejected".to_owned(),
-                }],
-            ),
-        )
+        let conditions = match rejected_route.resolution_status() {
+            crate::common::ResolutionStatus::Resolved => vec![Condition {
+                last_transition_time: Time(Utc::now()),
+                message: "Updated by controller".to_owned(),
+                observed_generation: None,
+                reason: gateway_api::apis::standard::constants::ListenerConditionReason::Invalid.to_string(),
+                status: "False".to_owned(),
+                type_: gateway_api::apis::standard::constants::ListenerConditionType::Conflicted.to_string(),
+            }],
+
+            crate::common::ResolutionStatus::PartiallyResolved | crate::common::ResolutionStatus::NotResolved => {
+                vec![
+                    Condition {
+                        last_transition_time: Time(Utc::now()),
+                        message: "Updated by controller".to_owned(),
+                        observed_generation: None,
+                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs.to_string(),
+                        status: "False".to_owned(),
+                        type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                    },
+                    Condition {
+                        last_transition_time: Time(Utc::now()),
+                        message: "Updated by controller".to_owned(),
+                        observed_generation: None,
+                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::Programmed.to_string(),
+                        status: "False".to_owned(),
+                        type_: gateway_api::apis::standard::constants::ListenerConditionType::Programmed.to_string(),
+                    },
+                ]
+            }
+        };
+        self.update_route_parents(rejected_route, gateway_id, ("Rejected", conditions))
     }
 
     fn update_route_parents(&self, route: &Route, gateway_id: &ResourceKey, (new_condition_name, mut new_conditions): (&'static str, Vec<Condition>)) -> Option<HTTPRoute> {
@@ -268,7 +288,7 @@ impl<'a> GatewayProcessedHandler<'a> {
                     }],
                 },
                 ListenerStatus::Conflicted(name) => GatewayStatusListeners {
-                    attached_routes: 0,
+                    attached_routes: 1,
                     conditions: vec![Condition {
                         last_transition_time: Time(Utc::now()),
                         message: "Updated by controller".to_owned(),

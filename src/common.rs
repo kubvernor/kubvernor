@@ -1,14 +1,19 @@
-use std::{collections::BTreeSet, fmt::Display, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    fmt::Display,
+    sync::Arc,
+};
 
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
-    gateways::{self, Gateway as KubeGateway, GatewayListeners},
-    httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesMatches},
+    gateways::{self, Gateway as KubeGateway, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom},
+    httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesBackendRefs, HTTPRouteRulesMatches},
 };
 use kube::{Resource, ResourceExt};
 use kube_core::ObjectMeta;
 use thiserror::Error;
 use tokio::sync::oneshot;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 use crate::{controllers::ControllerError, state::State};
@@ -231,28 +236,9 @@ impl TryFrom<&GatewayListeners> for Listener {
     }
 }
 
-impl TryFrom<&KubeGateway> for Gateway {
-    type Error = GatewayError;
-
-    fn try_from(gateway: &KubeGateway) -> std::result::Result<Self, Self::Error> {
-        let id = Uuid::parse_str(&gateway.metadata.uid.clone().unwrap_or_default()).map_err(|_| GatewayError::ConversionProblem("Can't parse uuid".to_owned()))?;
-        let name = gateway.metadata.name.clone().unwrap_or_default();
-        if name.is_empty() {
-            return Err(GatewayError::ConversionProblem("Name can't be empty".to_owned()));
-        }
-        let namespace = gateway.metadata.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
-
-        let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) = VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
-        if !listener_validation_errrors.is_empty() {
-            return Err(GatewayError::ConversionProblem("Misconfigured listeners".to_owned()));
-        }
-
-        Ok(Self { id, name, namespace, listeners })
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct BackendServiceConfig {
+    pub resource_key: ResourceKey,
     pub endpoint: String,
     pub port: i32,
     pub weight: i32,
@@ -261,18 +247,42 @@ pub struct BackendServiceConfig {
 #[derive(Clone, Debug)]
 pub struct RoutingRule {
     pub name: String,
-    pub backends: Vec<BackendServiceConfig>,
+    pub backends: Vec<Backend>,
     pub matching_rules: Vec<HTTPRouteRulesMatches>,
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub enum ResolutionStatus {
+    Resolved,
+    PartiallyResolved,
+    NotResolved,
+}
+
+#[derive(Clone, Debug)]
+pub enum Backend {
+    Resolved(BackendServiceConfig),
+    Unresolved(BackendServiceConfig),
+    Maybe(BackendServiceConfig),
+}
+impl Backend {
+    pub fn config(&self) -> &BackendServiceConfig {
+        match self {
+            Backend::Resolved(backend_service_config) | Backend::Unresolved(backend_service_config) | Backend::Maybe(backend_service_config) => backend_service_config,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct RouteConfig {
     name: String,
     namespace: String,
+    pub resource_key: ResourceKey,
     parents: Option<Vec<HTTPRouteParentRefs>>,
     pub routing_rules: Vec<RoutingRule>,
     hostnames: Vec<String>,
+    pub resolution_status: ResolutionStatus,
 }
+
 impl PartialEq for RouteConfig {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name && self.namespace == other.namespace
@@ -290,13 +300,15 @@ impl PartialOrd for RouteConfig {
 }
 
 impl RouteConfig {
-    pub fn new(name: String, namespace: String, parents: Option<Vec<HTTPRouteParentRefs>>) -> Self {
+    pub fn new(resource_key: ResourceKey, parents: Option<Vec<HTTPRouteParentRefs>>) -> Self {
         Self {
-            name,
-            namespace,
+            name: resource_key.name.clone(),
+            namespace: resource_key.namespace.clone(),
+            resource_key,
             parents,
             routing_rules: vec![],
             hostnames: vec![],
+            resolution_status: ResolutionStatus::Resolved,
         }
     }
 }
@@ -308,6 +320,11 @@ pub enum Route {
 }
 
 impl Route {
+    pub fn resource_key(&self) -> &ResourceKey {
+        match self {
+            Route::Http(c) | Route::Grpc(c) => &c.resource_key,
+        }
+    }
     pub fn name(&self) -> &str {
         match self {
             Route::Http(c) | Route::Grpc(c) => &c.name,
@@ -336,16 +353,29 @@ impl Route {
             Route::Http(config) | Route::Grpc(config) => &config.hostnames,
         }
     }
+    pub fn config(&self) -> &RouteConfig {
+        match self {
+            Route::Http(config) | Route::Grpc(config) => config,
+        }
+    }
+
+    pub fn resolution_status(&self) -> &ResolutionStatus {
+        match self {
+            Route::Http(config) | Route::Grpc(config) => &config.resolution_status,
+        }
+    }
+
+    pub fn config_mut(&mut self) -> &mut RouteConfig {
+        match self {
+            Route::Http(config) | Route::Grpc(config) => config,
+        }
+    }
 }
 
 impl TryFrom<&HTTPRoute> for Route {
     type Error = ControllerError;
     fn try_from(value: &HTTPRoute) -> Result<Self, Self::Error> {
-        let mut rc = RouteConfig::new(
-            value.name_any(),
-            value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
-            value.spec.parent_refs.clone(),
-        );
+        let mut rc = RouteConfig::new(ResourceKey::from(value), value.spec.parent_refs.clone());
         let empty_rules: Vec<HTTPRouteRules> = vec![];
         let routing_rules = value.spec.rules.as_ref().unwrap_or(&empty_rules);
         let routing_rules = routing_rules
@@ -361,7 +391,8 @@ impl TryFrom<&HTTPRoute> for Route {
                         .unwrap_or(&vec![])
                         .iter()
                         .map(|br| {
-                            BackendServiceConfig {
+                            Backend::Maybe(BackendServiceConfig {
+                                resource_key: ResourceKey::from(br),
                                 endpoint: if let Some(namespace) = br.namespace.as_ref() {
                                     format!("{}.{namespace}", br.name)
                                 } else {
@@ -370,7 +401,7 @@ impl TryFrom<&HTTPRoute> for Route {
                                 //endpoint: "10.110.238.122".to_owned(),
                                 port: br.port.unwrap_or(0),
                                 weight: br.weight.unwrap_or(1),
-                            }
+                            })
                         })
                         .collect(),
                 }
@@ -388,6 +419,26 @@ pub struct Gateway {
     pub name: String,
     pub namespace: String,
     pub listeners: Vec<Listener>,
+}
+
+impl TryFrom<&KubeGateway> for Gateway {
+    type Error = GatewayError;
+
+    fn try_from(gateway: &KubeGateway) -> std::result::Result<Self, Self::Error> {
+        let id = Uuid::parse_str(&gateway.metadata.uid.clone().unwrap_or_default()).map_err(|_| GatewayError::ConversionProblem("Can't parse uuid".to_owned()))?;
+        let name = gateway.metadata.name.clone().unwrap_or_default();
+        if name.is_empty() {
+            return Err(GatewayError::ConversionProblem("Name can't be empty".to_owned()));
+        }
+        let namespace = gateway.metadata.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+
+        let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) = VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
+        if !listener_validation_errrors.is_empty() {
+            return Err(GatewayError::ConversionProblem("Misconfigured listeners".to_owned()));
+        }
+
+        Ok(Self { id, name, namespace, listeners })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -452,7 +503,7 @@ pub enum GatewayResponse {
     RouteProcessingError,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RouteToListenersMapping {
     pub route: Route,
     pub listeners: Vec<GatewayListeners>,
@@ -682,13 +733,26 @@ impl From<&HTTPRoute> for ResourceKey {
     }
 }
 
+impl From<&HTTPRouteRulesBackendRefs> for ResourceKey {
+    fn from(value: &HTTPRouteRulesBackendRefs) -> Self {
+        let namespace = value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+
+        Self {
+            group: DEFAULT_GROUP_NAME.to_owned(),
+            namespace,
+            name: value.name.clone(),
+            kind: DEFAULT_KIND_NAME.to_owned(),
+        }
+    }
+}
+
 pub struct RouteListenerMatcher {}
 impl RouteListenerMatcher {
     pub fn filter_matching_routes(gateway: &Arc<gateways::Gateway>, routes: &[Route]) -> Vec<RouteToListenersMapping> {
         routes
             .iter()
             .filter_map(|route| {
-                let listeners = Self::filter_matching_route(gateway, route.parents());
+                let listeners = Self::filter_matching_route(gateway, route.parents(), route.resource_key());
                 if listeners.is_empty() {
                     None
                 } else {
@@ -698,19 +762,24 @@ impl RouteListenerMatcher {
             .collect()
     }
 
-    pub fn filter_matching_route(gateway: &Arc<gateways::Gateway>, route_parents: &Option<Vec<HTTPRouteParentRefs>>) -> Vec<GatewayListeners> {
+    fn filter_matching_route(gateway: &Arc<gateways::Gateway>, route_parents: &Option<Vec<HTTPRouteParentRefs>>, route_key: &ResourceKey) -> Vec<GatewayListeners> {
         let mut routes_and_listeners: Vec<GatewayListeners> = vec![];
         if let Some(route_parents) = route_parents {
             for route_parent in route_parents {
-                let route_key = ResourceKey::from(route_parent);
+                let route_parent_key = ResourceKey::from(route_parent);
                 let gateway_key = ResourceKey::from(&**gateway);
-                if route_key.name == gateway_key.name && route_key.namespace == gateway_key.namespace {
+                if route_parent_key.name == gateway_key.name && route_parent_key.namespace == gateway_key.namespace {
+                    let matching_gateway_listeners = filter_listeners_by_namespace(gateway, &gateway_key, route_key);
+                    let matching_gateway_listeners = matching_gateway_listeners.collect::<Vec<_>>();
+                    debug!("Matching listeners {:?}", matching_gateway_listeners);
+                    let matching_gateway_listeners = matching_gateway_listeners.into_iter();
                     let mut matched = match (route_parent.port, &route_parent.section_name) {
-                        (Some(port), Some(section_name)) => filter_listeners_by_name_or_port(gateway, |gl| gl.port == port && gl.name == *section_name),
-                        (Some(port), None) => filter_listeners_by_name_or_port(gateway, |gl| gl.port == port),
-                        (None, Some(section_name)) => filter_listeners_by_name_or_port(gateway, |gl| gl.name == *section_name),
-                        (None, None) => filter_listeners_by_name_or_port(gateway, |_| true),
+                        (Some(port), Some(section_name)) => filter_gateway_listeners_by_name_or_port(matching_gateway_listeners, |gl| gl.port == port && gl.name == *section_name),
+                        (Some(port), None) => filter_gateway_listeners_by_name_or_port(matching_gateway_listeners, |gl| gl.port == port),
+                        (None, Some(section_name)) => filter_gateway_listeners_by_name_or_port(matching_gateway_listeners, |gl| gl.name == *section_name),
+                        (None, None) => filter_gateway_listeners_by_name_or_port(matching_gateway_listeners, |_| true),
                     };
+                    debug!("Appending {route_parent:?} {matched:?}");
                     routes_and_listeners.append(&mut matched);
                 }
             }
@@ -739,11 +808,50 @@ impl RouteListenerMatcher {
     }
 }
 
+fn filter_listeners_by_namespace<'a>(gateway: &Arc<gateways::Gateway>, gateway_key: &'a ResourceKey, route_key: &'a ResourceKey) -> impl Iterator<Item = GatewayListeners> + 'a {
+    let listeners = gateway.spec.listeners.clone();
+    listeners.into_iter().filter(|l| {
+        let mut is_allowed = true;
+        if let Some(allowed_routes) = &l.allowed_routes {
+            if let Some(allowed_kinds) = &allowed_routes.kinds {
+                if !allowed_kinds.is_empty() {
+                    is_allowed = allowed_kinds.iter().map(|k| &k.kind).any(|f| f == "HTTPRoute");
+                }
+            }
+
+            if let Some(GatewayListenersAllowedRoutesNamespaces { from: Some(selector_type), selector }) = &allowed_routes.namespaces {
+                match selector_type {
+                    GatewayListenersAllowedRoutesNamespacesFrom::All => {}
+                    GatewayListenersAllowedRoutesNamespacesFrom::Selector => {
+                        if let Some(selector) = selector {
+                            warn!("Selector {selector:?}");
+                            todo!();
+                        }
+                    }
+                    GatewayListenersAllowedRoutesNamespacesFrom::Same => {
+                        if route_key.namespace != gateway_key.namespace {
+                            is_allowed = false;
+                        }
+                    }
+                }
+            }
+        }
+        is_allowed
+    })
+}
+
 fn filter_listeners_by_name_or_port<F>(gateway: &Arc<gateways::Gateway>, filter: F) -> Vec<GatewayListeners>
 where
     F: Fn(&GatewayListeners) -> bool,
 {
     gateway.spec.listeners.iter().filter(|f| filter(f)).cloned().collect()
+}
+
+fn filter_gateway_listeners_by_name_or_port<F>(gateway_listeners: impl Iterator<Item = GatewayListeners>, filter: F) -> Vec<GatewayListeners>
+where
+    F: Fn(&GatewayListeners) -> bool,
+{
+    gateway_listeners.filter(|f| filter(f)).collect()
 }
 
 pub struct VerifiyItems;
@@ -846,4 +954,22 @@ fn validate_allowed_routes(gateway_listeners: &GatewayListeners) -> ListenerCond
     } else {
         ListenerCondition::Resolved(vec![])
     }
+}
+
+pub fn calculate_attached_routes(mapped_routes: &[RouteToListenersMapping]) -> HashMap<String, u32> {
+    let mut attached_routes = HashMap::new();
+
+    for mapping in mapped_routes {
+        debug!("Route  {}", mapping);
+        mapping.listeners.iter().for_each(|l| {
+            debug!("Listener {}", l.name);
+            if let Some(counter) = attached_routes.get_mut(&l.name) {
+                *counter += 1;
+            } else {
+                attached_routes.insert(l.name.clone(), 1);
+            }
+        });
+    }
+
+    attached_routes
 }

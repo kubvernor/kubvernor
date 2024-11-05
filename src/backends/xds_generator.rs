@@ -6,7 +6,7 @@ use serde::Serialize;
 use tracing::warn;
 
 use super::envoy_deployer::TEMPLATES;
-use crate::common::{ProtocolType, Route, RouteToListenersMapping};
+use crate::common::{Backend, ProtocolType, Route, RouteToListenersMapping};
 #[derive(Debug)]
 pub struct RdsData {
     pub route_name: String,
@@ -269,6 +269,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         let endpoints = rr
                             .backends
                             .iter()
+                            .map(Backend::config)
                             .map(|r| TeraEndpoint {
                                 service: r.endpoint.clone(),
                                 port: r.port,

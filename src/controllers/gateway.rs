@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
@@ -29,7 +29,7 @@ use super::{
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, ChangedContext, DeletedContext, GatewayEvent, GatewayResponse, ResourceKey},
+    common::{self, calculate_attached_routes, ChangedContext, DeletedContext, GatewayEvent, GatewayResponse, ResolutionStatus, ResourceKey, RouteToListenersMapping},
     controllers::{gateway_processed_handler::GatewayProcessedHandler, utils::ListenerTlsConfigValidator},
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
@@ -276,6 +276,7 @@ impl GatewayResourceHandler<Gateway> {
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
         let resource_key = ResourceKey::from(&updated_gateway);
+
         let backend_gateway = ListenerTlsConfigValidator::new(backend_gateway, self.client.clone(), log_context.to_string()).validate().await;
 
         debug!("Gateway {backend_gateway:?}");
@@ -283,16 +284,30 @@ impl GatewayResourceHandler<Gateway> {
 
         let linked_routes = utils::find_linked_routes(state, &resource_key);
         debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
-
         let route_to_listeners_mapping = common::RouteListenerMatcher::filter_matching_routes(&self.resource, &linked_routes);
+        let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);
+        debug!("Attached route counts {:?}", per_listener_calculated_attached_routes);
+        let (resolved_linked_routes, mut unresolved_linked_routes): (Vec<_>, Vec<_>) =
+            Iterator::partition(utils::resolve_route_backends(self.client.clone(), linked_routes, log_context.to_string()).await.into_iter(), |f| {
+                *f.resolution_status() == ResolutionStatus::Resolved
+            });
+        debug!("Resolved linked routes {}", resolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
+        debug!("Unresolved linked routes {}", unresolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
+
+        let filtered_route_to_listeners_mapping = route_to_listeners_mapping.clone().into_iter().filter(|f| resolved_linked_routes.contains(&f.route)).collect();
+        debug!("Filtered linked routes {:?}", filtered_route_to_listeners_mapping);
+
+        todo!();
+        // here we should update listener statuses for unresoled routes
 
         let (response_sender, response_receiver) = oneshot::channel();
 
-        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway, updated_gateway.clone(), route_to_listeners_mapping));
+        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway, updated_gateway.clone(), filtered_route_to_listeners_mapping));
         let _ = sender.send(listener_event).await;
         let response = response_receiver.await;
 
-        if let Ok(GatewayResponse::GatewayProcessed(gateway_processed)) = response {
+        if let Ok(GatewayResponse::GatewayProcessed(mut gateway_processed)) = response {
+            gateway_processed.ignored_routes.append(&mut unresolved_linked_routes);
             let gateway_event_handler = GatewayProcessedHandler {
                 gateway_processed_payload: gateway_processed,
                 gateway: updated_gateway,
@@ -301,6 +316,7 @@ impl GatewayResourceHandler<Gateway> {
                 resource_key,
                 route_patcher: self.http_route_patcher.clone(),
                 controller_name: self.controller_name.clone(),
+                per_listener_calculated_attached_routes,
             };
             gateway_event_handler.deploy_gateway().await
         } else {
@@ -315,10 +331,10 @@ impl GatewayResourceHandler<Gateway> {
     /// * we should update gatway's status if the route count has changed for a listener
     /// * we should update the route's status and reflect that the ownership might changed
     ///
-    async fn on_new_or_changed(&self, gateway_id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
+    async fn on_new_or_changed(&self, gateway_id: ResourceKey, gateway: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         let sender = &self.gateway_channel_sender;
-        let updated_gateway = self.deploy_gateway(sender, resource, state).await?;
-        state.save_gateway(gateway_id.clone(), resource);
+        let updated_gateway = self.deploy_gateway(sender, gateway, state).await?;
+        state.save_gateway(gateway_id.clone(), gateway);
         let (sender, receiver) = oneshot::channel();
         let _res = self
             .gateway_patcher

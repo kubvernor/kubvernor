@@ -14,8 +14,8 @@ spec:
       namespaces:
         from: All
       kinds:
-       - kind: InvalidRoute
-       - kind: HTTPRoute    
+        - kind: InvalidRoute
+        - kind: HTTPRoute
   - name: http-2081
     protocol: HTTP
     port: 2081
@@ -25,6 +25,21 @@ spec:
     allowedRoutes:
       namespaces:
         from: All
-        kinds:
-          - kind: InvalidRoute
-            - kind: HTTPRoute
+      kinds:
+        - kind: InvalidRoute
+  - name: invalid-9901
+    protocol: HTTPS
+    port: 9901
+    tls:
+      certificateRefs:
+        - group: ""
+          kind: JDKJKDSecret
+          name: malformed-certificate                    
+  - name: invalid-990122
+    protocol: HTTPS
+    port: 9902
+    tls:
+      certificateRefs:
+        - group: ""
+          kind: Secret
+          name: malformed-certificate          

@@ -4,31 +4,31 @@ metadata:
   name: route-three
 spec:
   parentRefs:
-  - name: gateway-one
-  - name: gateway-two
+    - name: gateway-one
+    - name: gateway-two
   hostnames:
-  - "www.example.com"
-  - "www.example2.com"
+    - "www.example.com"
+    - "www.example2.com"
   rules:
-  - matches:
-    - path:
-        type: PathPrefix
-        value: /login
-    - path:
-        type: PathPrefix
-        value: /data     
-    backendRefs:
-    - name: example-svc
-      port: 8080
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /login
+        - path:
+            type: PathPrefix
+            value: /data
+      backendRefs:
+        - name: does-not-exist
+          port: 8080
 status:
   parents:
     - conditions:
-      - lastTransitionTime: "2024-09-30T14:22:09Z"
-        message: Updated by controller
-        observedGeneration: 1
-        reason: Accepted
-        status: "True"
-        type: Accepted
+        - lastTransitionTime: "2024-09-30T14:22:09Z"
+          message: Updated by controller
+          observedGeneration: 1
+          reason: Accepted
+          status: "True"
+          type: Accepted
       controllerName: kubvernor.com/proxy-controller2
       parentRef:
         group: gateway.networking.k8s.io
@@ -36,12 +36,12 @@ status:
         name: gateway-one
         namespace: default
     - conditions:
-      - lastTransitionTime: "2024-09-30T14:22:09Z"
-        message: Updated by controller
-        observedGeneration: 1
-        reason: BackendNotFound
-        status: "False"
-        type: ResolvedRefs
+        - lastTransitionTime: "2024-09-30T14:22:09Z"
+          message: Updated by controller
+          observedGeneration: 1
+          reason: BackendNotFound
+          status: "False"
+          type: ResolvedRefs
       controllerName: kubvernor.com/proxy-controller2
       parentRef:
         group: gateway.networking.k8s.io

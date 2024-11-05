@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
@@ -12,7 +12,7 @@ use k8s_openapi::{
 };
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
-    Api, Resource,
+    Api, Client, Resource,
 };
 use tokio::sync::{
     mpsc::{self, Sender},
@@ -28,7 +28,7 @@ use super::{
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, ChangedContext, GatewayEvent, GatewayResponse, ResourceKey, Route, RouteToListenersMapping, VerifiyItems},
+    common::{self, calculate_attached_routes, ChangedContext, GatewayEvent, GatewayResponse, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping, VerifiyItems},
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
 };
@@ -42,6 +42,7 @@ struct Context {
     state: Arc<Mutex<State>>,
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
+    client: Client,
 }
 
 pub struct HttpRouteController {
@@ -78,6 +79,7 @@ impl HttpRouteController {
             state: Arc::clone(&self.state),
             http_route_patcher: self.http_route_patcher.clone(),
             gateway_patcher: self.gateway_patcher.clone(),
+            client: self.client.clone(),
         });
 
         let api = Api::<HTTPRoute>::all(self.client.clone());
@@ -126,6 +128,7 @@ impl HttpRouteController {
             gateway_channel_sender: ctx.gateway_channel_sender.clone(),
             http_route_patcher,
             gateway_patcher,
+            client: ctx.client.clone(),
         };
         handler.process(maybe_stored_route, Self::check_spec, Self::check_status).await
     }
@@ -158,6 +161,7 @@ struct HTTPRouteHandler<R> {
     gateway_channel_sender: mpsc::Sender<GatewayEvent>,
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
+    client: Client,
 }
 
 #[async_trait]
@@ -239,9 +243,32 @@ impl HTTPRouteHandler<HTTPRoute> {
         for gateway in matching_gateways {
             let gateway_id = ResourceKey::from(&*gateway);
             let linked_routes = utils::find_linked_routes(state, &gateway_id);
-            debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name() + ","));
+
+            debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
             let route_to_listeners_mapping = common::RouteListenerMatcher::filter_matching_routes(&gateway, &linked_routes);
-            if let Ok(updated_gateway) = self.deploy_route(gateway_channel_sender, state, gateway, route_to_listeners_mapping).await {
+            let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);
+            debug!("Attached route counts {:?}", per_listener_calculated_attached_routes);
+            let (resolved_linked_routes, unresolved_linked_routes): (Vec<_>, Vec<_>) =
+                Iterator::partition(utils::resolve_route_backends(self.client.clone(), linked_routes, log_context.to_string()).await.into_iter(), |f| {
+                    *f.resolution_status() == ResolutionStatus::Resolved
+                });
+            debug!("Resolved linked routes {}", resolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
+            debug!("Unresolved linked routes {}", unresolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
+
+            let filtered_route_to_listeners_mapping = route_to_listeners_mapping.clone().into_iter().filter(|f| resolved_linked_routes.contains(&f.route)).collect();
+            debug!("Filtered linked routes {:?}", filtered_route_to_listeners_mapping);
+
+            if let Ok(updated_gateway) = self
+                .deploy_route(
+                    gateway_channel_sender,
+                    state,
+                    gateway,
+                    filtered_route_to_listeners_mapping,
+                    unresolved_linked_routes,
+                    per_listener_calculated_attached_routes,
+                )
+                .await
+            {
                 debug!("{log_context} Deploying gateway {updated_gateway:?}");
                 state.save_gateway(gateway_id.clone(), &Arc::new(updated_gateway.clone()));
                 let (sender, receiver) = oneshot::channel();
@@ -299,9 +326,32 @@ impl HTTPRouteHandler<HTTPRoute> {
         for gateway in matching_gateways {
             let gateway_id = ResourceKey::from(&*gateway);
             let linked_routes = utils::find_linked_routes(state, &gateway_id);
-            debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name() + ","));
+
+            debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
             let route_to_listeners_mapping = common::RouteListenerMatcher::filter_matching_routes(&gateway, &linked_routes);
-            if let Ok(updated_gateway) = self.deploy_route(gateway_channel_sender, state, gateway, route_to_listeners_mapping).await {
+            let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);
+            debug!("Attached route counts {:?}", per_listener_calculated_attached_routes);
+            let (resolved_linked_routes, unresolved_linked_routes): (Vec<_>, Vec<_>) =
+                Iterator::partition(utils::resolve_route_backends(self.client.clone(), linked_routes, log_context.to_string()).await.into_iter(), |f| {
+                    *f.resolution_status() == ResolutionStatus::Resolved
+                });
+            debug!("Resolved linked routes {}", resolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
+            debug!("Unresolved linked routes {}", unresolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
+
+            let filtered_route_to_listeners_mapping = route_to_listeners_mapping.clone().into_iter().filter(|f| resolved_linked_routes.contains(&f.route)).collect();
+            debug!("Filtered linked routes {:?}", filtered_route_to_listeners_mapping);
+
+            if let Ok(updated_gateway) = self
+                .deploy_route(
+                    gateway_channel_sender,
+                    state,
+                    gateway,
+                    filtered_route_to_listeners_mapping,
+                    unresolved_linked_routes,
+                    per_listener_calculated_attached_routes,
+                )
+                .await
+            {
                 debug!("{log_context} Deploying gateway {updated_gateway:?}");
                 state.save_gateway(gateway_id.clone(), &Arc::new(updated_gateway.clone()));
                 let (sender, receiver) = oneshot::channel();
@@ -362,7 +412,15 @@ impl HTTPRouteHandler<HTTPRoute> {
             .collect()
     }
 
-    async fn deploy_route(&self, sender: &Sender<GatewayEvent>, state: &mut State, gateway: Arc<Gateway>, route_to_listeners_mapping: Vec<RouteToListenersMapping>) -> Result<Gateway> {
+    async fn deploy_route(
+        &self,
+        sender: &Sender<GatewayEvent>,
+        state: &mut State,
+        gateway: Arc<Gateway>,
+        route_to_listeners_mapping: Vec<RouteToListenersMapping>,
+        mut unresolved_linked_routes: Vec<Route>,
+        per_listener_calculated_attached_routes: HashMap<String, u32>,
+    ) -> Result<Gateway> {
         let log_context = self.log_context();
 
         let maybe_gateway = common::Gateway::try_from(&*gateway);
@@ -380,7 +438,8 @@ impl HTTPRouteHandler<HTTPRoute> {
         let _ = sender.send(route_event).await;
         let response = response_receiver.await;
 
-        if let Ok(GatewayResponse::GatewayProcessed(gateway_processed)) = response {
+        if let Ok(GatewayResponse::GatewayProcessed(mut gateway_processed)) = response {
+            gateway_processed.ignored_routes.append(&mut unresolved_linked_routes);
             let gateway_event_handler = GatewayProcessedHandler {
                 gateway_processed_payload: gateway_processed,
                 gateway: (*gateway).clone(),
@@ -389,6 +448,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                 resource_key,
                 route_patcher: self.http_route_patcher.clone(),
                 controller_name: self.controller_name.clone(),
+                per_listener_calculated_attached_routes,
             };
             gateway_event_handler.deploy_gateway().await
         } else {
