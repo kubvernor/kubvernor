@@ -121,37 +121,36 @@ impl<'a> GatewayDeployer<'a> {
 
             let listener_conditions = &mut listener_status.conditions;
 
+            warn!("Listener conditions {:#?}", l.conditions().collect::<Vec<_>>());
             for condition in l.conditions() {
                 let (status, type_, reason) = condition.resolved_type();
                 let status = status.to_owned();
                 let type_ = type_.to_string();
                 let reason = reason.to_string();
-                match condition {
-                    common::ListenerCondition::ResolvedRefs(
-                        ResolvedRefs::Resolved(allowed_routes) | ResolvedRefs::ResolvedWithNotAllowedRoutes(allowed_routes) | ResolvedRefs::InvalidCertificates(allowed_routes),
-                    ) => {
-                        listener_conditions.push(Condition {
-                            last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
-                            observed_generation: generation,
-                            reason,
-                            status,
-                            type_,
-                        });
-                        listener_status.supported_kinds = allowed_routes.iter().map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() }).collect();
-                    }
-
-                    _ => {
-                        listener_conditions.push(Condition {
-                            last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
-                            observed_generation: generation,
-                            reason,
-                            status,
-                            type_,
-                        });
-                        listener_status.supported_kinds = vec![];
-                    }
+                listener_conditions.retain(|c| c.type_ != type_);
+                if let common::ListenerCondition::ResolvedRefs(
+                    ResolvedRefs::Resolved(allowed_routes) | ResolvedRefs::ResolvedWithNotAllowedRoutes(allowed_routes) | ResolvedRefs::InvalidCertificates(allowed_routes),
+                ) = condition
+                {
+                    listener_conditions.push(Condition {
+                        last_transition_time: Time(Utc::now()),
+                        message: "Updated by controller".to_owned(),
+                        observed_generation: generation,
+                        reason,
+                        status,
+                        type_,
+                    });
+                    listener_status.supported_kinds = allowed_routes.iter().map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() }).collect();
+                } else {
+                    listener_conditions.push(Condition {
+                        last_transition_time: Time(Utc::now()),
+                        message: "Updated by controller".to_owned(),
+                        observed_generation: generation,
+                        reason,
+                        status,
+                        type_,
+                    });
+                    listener_status.supported_kinds = vec![];
                 }
             }
             listeners_statuses.push(listener_status);

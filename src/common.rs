@@ -199,6 +199,9 @@ impl Listener {
     pub fn update_routes(&mut self, resolved_routes: BTreeSet<Route>, unresolved_routes: BTreeSet<Route>) {
         match self {
             Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
+                if !unresolved_routes.is_empty() {
+                    listener_data.conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::UnresolvedRoutes));
+                }
                 listener_data.attached_routes = unresolved_routes.len() + resolved_routes.len();
                 listener_data.resolved_routes = resolved_routes;
                 listener_data.unresolved_routes = unresolved_routes;
@@ -936,7 +939,7 @@ impl VerifiyItems {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 #[repr(u8)]
 pub enum ResolvedRefs {
     Resolved(Vec<String>),
@@ -958,6 +961,14 @@ impl PartialOrd for ResolvedRefs {
     }
 }
 
+impl PartialEq for ResolvedRefs {
+    fn eq(&self, other: &Self) -> bool {
+        let self_disc = self.discriminant();
+        let other_disc = other.discriminant();
+        self_disc == other_disc
+    }
+}
+
 impl Ord for ResolvedRefs {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let self_disc = self.discriminant();
@@ -968,7 +979,7 @@ impl Ord for ResolvedRefs {
 
 impl Eq for ResolvedRefs {}
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum ListenerCondition {
     // Resolved(Vec<String>),
     // ResolvedWithNotAllowedRoutes(Vec<String>),
@@ -1003,6 +1014,12 @@ impl Ord for ListenerCondition {
 }
 
 impl Eq for ListenerCondition {}
+
+impl PartialEq for ListenerCondition {
+    fn eq(&self, other: &Self) -> bool {
+        core::mem::discriminant(self) == core::mem::discriminant(other)
+    }
+}
 
 // impl Ord for ListenerCondition {
 //     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -1042,7 +1059,7 @@ impl ListenerCondition {
             ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes) => (
                 "True",
                 gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
-                gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
+                gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds,
             ),
             ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(_)) => (
                 "True",
@@ -1167,4 +1184,33 @@ pub fn calculate_attached_routes(mapped_routes: &[RouteToListenersMapping]) -> H
     }
 
     attached_routes
+}
+mod test {
+    use std::collections::BTreeSet;
+
+    use crate::common::ResolvedRefs;
+
+    use super::ListenerCondition;
+
+    #[test]
+    pub fn test_enums() {
+        let r1 = super::ResolvedRefs::Resolved(vec!["blah".to_string()]);
+        let r2 = super::ResolvedRefs::Resolved(vec!["blah2".to_string()]);
+        let d1 = r1.discriminant();
+        let d2 = r2.discriminant();
+        println!("{d1} {d2} {:?}", d1.cmp(&d2));
+        assert_eq!(d1, d2);
+        let e1 = ListenerCondition::ResolvedRefs(super::ResolvedRefs::Resolved(vec!["blah".to_string()]));
+        let e2 = ListenerCondition::ResolvedRefs(super::ResolvedRefs::Resolved(vec!["blah2".to_string()]));
+        let e3 = ListenerCondition::ResolvedRefs(super::ResolvedRefs::UnresolvedRoutes);
+        let e4 = ListenerCondition::Accepted;
+        assert_eq!(e1, e2);
+        assert_eq!(e1, e3);
+        assert_ne!(e1, e4);
+
+        let mut set = BTreeSet::new();
+        set.replace(e1);
+        set.replace(e2);
+        assert_eq!(set.len(), 1);
+    }
 }
