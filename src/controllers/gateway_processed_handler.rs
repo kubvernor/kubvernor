@@ -25,9 +25,9 @@ type Result<T, E = ControllerError> = std::result::Result<T, E>;
 pub struct GatewayProcessedHandler<'a> {
     pub gateway_processed_payload: GatewayProcessedPayload,
     pub gateway: Gateway,
-    pub state: &'a mut State,
-    pub log_context: String,
-    pub resource_key: ResourceKey,
+    pub state: &'a State,
+    pub log_context: &'a str,
+    pub resource_key: &'a ResourceKey,
     pub route_patcher: Sender<Operation<HTTPRoute>>,
     pub controller_name: String,
     pub per_listener_calculated_attached_routes: HashMap<String, u32>,
@@ -52,7 +52,8 @@ impl<'a> GatewayProcessedHandler<'a> {
         let gateway = &self.gateway;
         debug!("{log_context} listener statuses {:?}", &deployed_gateway_status.listeners);
 
-        let listener_statuses = Self::generate_processed_listeners_conditions(gateway.metadata.generation, deployed_gateway_status);
+        //let listener_statuses = Self::generate_processed_listeners_conditions(gateway.metadata.generation, deployed_gateway_status);
+        let listener_statuses = vec![];
         Self::update_gateway_status_conditions(&mut self.gateway, listener_statuses);
         Self::update_gateway_status_addresses(&mut self.gateway, &deployed_gateway_status.attached_addresses);
     }

@@ -27,9 +27,9 @@ spec:
         from: All
       kinds:
         - kind: InvalidRoute
-  - name: invalid-9901
+  - name: invalid-9904
     protocol: HTTPS
-    port: 9901
+    port: 9904
     tls:
       certificateRefs:
         - group: ""

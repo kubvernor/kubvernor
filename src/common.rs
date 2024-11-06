@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{btree_map, BTreeMap, BTreeSet, HashMap},
     fmt::Display,
     sync::Arc,
 };
@@ -187,6 +187,32 @@ impl Listener {
             Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => listener_data,
         }
     }
+
+    pub fn routes(&self) -> (Vec<&Route>, Vec<&Route>) {
+        match self {
+            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
+                (Vec::from_iter(&listener_data.resolved_routes), Vec::from_iter(&listener_data.unresolved_routes))
+            }
+        }
+    }
+
+    pub fn update_routes(&mut self, resolved_routes: BTreeSet<Route>, unresolved_routes: BTreeSet<Route>) {
+        match self {
+            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
+                listener_data.attached_routes = unresolved_routes.len() + resolved_routes.len();
+                listener_data.resolved_routes = resolved_routes;
+                listener_data.unresolved_routes = unresolved_routes;
+            }
+        }
+    }
+
+    pub fn attached_routes(&self) -> usize {
+        match self {
+            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
+                listener_data.attached_routes
+            }
+        }
+    }
 }
 
 pub type ListenerConditions = BTreeSet<ListenerCondition>;
@@ -195,6 +221,9 @@ pub type ListenerConditions = BTreeSet<ListenerCondition>;
 pub struct ListenerData {
     pub config: ListenerConfig,
     pub conditions: ListenerConditions,
+    pub resolved_routes: BTreeSet<Route>,
+    pub unresolved_routes: BTreeSet<Route>,
+    pub attached_routes: usize,
 }
 
 impl TryFrom<&GatewayListeners> for Listener {
@@ -223,6 +252,9 @@ impl TryFrom<&GatewayListeners> for Listener {
         let listener_data = ListenerData {
             config,
             conditions: listener_conditions,
+            resolved_routes: BTreeSet::new(),
+            unresolved_routes: BTreeSet::new(),
+            attached_routes: 0,
         };
 
         match gateway_listener.protocol.as_str() {
@@ -285,19 +317,23 @@ pub struct RouteConfig {
 
 impl PartialEq for RouteConfig {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.namespace == other.namespace
+        self.resource_key == other.resource_key
     }
 }
 
 impl PartialOrd for RouteConfig {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match self.name.partial_cmp(&other.name) {
-            Some(core::cmp::Ordering::Equal) => {}
-            ord => return ord,
-        }
-        self.namespace.partial_cmp(&other.namespace)
+        Some(self.resource_key.cmp(&other.resource_key))
     }
 }
+
+impl Ord for RouteConfig {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.resource_key.cmp(&other.resource_key)
+    }
+}
+
+impl Eq for RouteConfig {}
 
 impl RouteConfig {
     pub fn new(resource_key: ResourceKey, parents: Option<Vec<HTTPRouteParentRefs>>) -> Self {
@@ -308,12 +344,12 @@ impl RouteConfig {
             parents,
             routing_rules: vec![],
             hostnames: vec![],
-            resolution_status: ResolutionStatus::Resolved,
+            resolution_status: ResolutionStatus::NotResolved,
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
 pub enum Route {
     Http(RouteConfig),
     Grpc(RouteConfig),
@@ -415,10 +451,40 @@ impl TryFrom<&HTTPRoute> for Route {
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct Gateway {
-    pub id: Uuid,
-    pub name: String,
-    pub namespace: String,
-    pub listeners: Vec<Listener>,
+    id: Uuid,
+    resource_key: ResourceKey,
+    listeners: BTreeMap<String, Listener>,
+}
+
+impl Gateway {
+    pub fn name(&self) -> &str {
+        &self.resource_key.name
+    }
+    pub fn namespace(&self) -> &str {
+        &self.resource_key.namespace
+    }
+    pub fn key(&self) -> &ResourceKey {
+        &self.resource_key
+    }
+
+    pub fn id(&self) -> &Uuid {
+        &self.id
+    }
+    pub fn listeners(&self) -> btree_map::Values<'_, String, Listener> {
+        self.listeners.values()
+    }
+
+    pub fn listeners_mut(&mut self) -> btree_map::ValuesMut<'_, String, Listener> {
+        self.listeners.values_mut()
+    }
+
+    pub fn get_listener(&self, name: &str) -> Option<&Listener> {
+        self.listeners.get(name)
+    }
+
+    pub fn get_listener_mut(&mut self, name: &str) -> Option<&mut Listener> {
+        self.listeners.get_mut(name)
+    }
 }
 
 impl TryFrom<&KubeGateway> for Gateway {
@@ -426,18 +492,18 @@ impl TryFrom<&KubeGateway> for Gateway {
 
     fn try_from(gateway: &KubeGateway) -> std::result::Result<Self, Self::Error> {
         let id = Uuid::parse_str(&gateway.metadata.uid.clone().unwrap_or_default()).map_err(|_| GatewayError::ConversionProblem("Can't parse uuid".to_owned()))?;
-        let name = gateway.metadata.name.clone().unwrap_or_default();
-        if name.is_empty() {
-            return Err(GatewayError::ConversionProblem("Name can't be empty".to_owned()));
-        }
-        let namespace = gateway.metadata.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+        let resource_key = ResourceKey::from(gateway);
 
         let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) = VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
         if !listener_validation_errrors.is_empty() {
             return Err(GatewayError::ConversionProblem("Misconfigured listeners".to_owned()));
         }
 
-        Ok(Self { id, name, namespace, listeners })
+        Ok(Self {
+            id,
+            resource_key,
+            listeners: listeners.into_iter().map(|l| (l.name().to_owned(), l)).collect::<BTreeMap<String, Listener>>(),
+        })
     }
 }
 
@@ -551,8 +617,8 @@ impl Display for ChangedContext {
         write!(
             f,
             "Gateway {}.{} listeners = {} Routes {:?}",
-            self.gateway.name,
-            self.gateway.namespace,
+            self.gateway.name(),
+            self.gateway.namespace(),
             self.gateway.listeners.len(),
             self.route_to_listeners_mapping.iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
         )
@@ -871,27 +937,98 @@ impl VerifiyItems {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum ListenerCondition {
+#[repr(u8)]
+pub enum ResolvedRefs {
     Resolved(Vec<String>),
     ResolvedWithNotAllowedRoutes(Vec<String>),
     InvalidAllowedRoutes,
     InvalidCertificates(Vec<String>),
+    UnresolvedRoutes,
 }
 
-impl Ord for ListenerCondition {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let (_, self_type, _) = self.resolved_type();
-        let (_, other_type, _) = other.resolved_type();
-        self_type.to_string().cmp(&other_type.to_string())
+impl ResolvedRefs {
+    fn discriminant(&self) -> u8 {
+        unsafe { *<*const _>::from(self).cast::<u8>() }
     }
 }
+
+impl PartialOrd for ResolvedRefs {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ResolvedRefs {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let self_disc = self.discriminant();
+        let other_disc = other.discriminant();
+        self_disc.cmp(&other_disc)
+    }
+}
+
+impl Eq for ResolvedRefs {}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ListenerCondition {
+    // Resolved(Vec<String>),
+    // ResolvedWithNotAllowedRoutes(Vec<String>),
+    // InvalidAllowedRoutes,
+    // InvalidCertificates(Vec<String>),
+    // UnresolvedRoutes,
+    ResolvedRefs(ResolvedRefs),
+    Accepted,
+    NotAccepted,
+    Programmed,
+    NotProgrammed,
+}
+
+impl ListenerCondition {
+    fn discriminant(&self) -> u8 {
+        unsafe { *<*const _>::from(self).cast::<u8>() }
+    }
+}
+
 impl PartialOrd for ListenerCondition {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
+impl Ord for ListenerCondition {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let self_disc = self.discriminant();
+        let other_disc = other.discriminant();
+        self_disc.cmp(&other_disc)
+    }
+}
+
 impl Eq for ListenerCondition {}
+
+// impl Ord for ListenerCondition {
+//     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+//         let (_, self_type, _self_reason) = self.resolved_type();
+//         let (_, other_type, _other_reason) = other.resolved_type();
+//         self_type.to_string().cmp(&other_type.to_string())
+//         // let self_disc = self.discriminant();
+//         // let other_disc = other.discriminant();
+
+//         // self_disc.cmp(&other_disc)
+//         // let (_, self_type, self_reason) = self.resolved_type();
+//         // let (_, other_type, other_reason) = other.resolved_type();
+//         // match self_type.to_string().cmp(&other_type.to_string()) {
+//         //     std::cmp::Ordering::Less => std::cmp::Ordering::Less,
+//         //     std::cmp::Ordering::Equal => self_reason.to_string().cmp(&other_reason.to_string()),
+//         //     std::cmp::Ordering::Greater => std::cmp::Ordering::Greater,
+//         // }
+//     }
+// }
+// impl PartialOrd for ListenerCondition {
+//     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+//         Some(self.cmp(other))
+//     }
+// }
+
+// impl Eq for ListenerCondition {}
 
 impl ListenerCondition {
     pub fn resolved_type(
@@ -902,29 +1039,84 @@ impl ListenerCondition {
         gateway_api::apis::standard::constants::ListenerConditionReason,
     ) {
         match self {
-            ListenerCondition::Resolved(_) => (
+            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes) => (
                 "True",
                 gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
                 gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
             ),
-            ListenerCondition::ResolvedWithNotAllowedRoutes(_) | ListenerCondition::InvalidAllowedRoutes => (
+            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(_)) => (
+                "True",
+                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
+                gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
+            ),
+
+            ListenerCondition::ResolvedRefs(ResolvedRefs::ResolvedWithNotAllowedRoutes(_)) => (
                 "False",
                 gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
                 gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds,
             ),
-            ListenerCondition::InvalidCertificates(_) => (
+
+            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(_)) => (
                 "False",
                 gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
                 gateway_api::apis::standard::constants::ListenerConditionReason::InvalidCertificateRef,
+            ),
+
+            ListenerCondition::ResolvedRefs(ResolvedRefs::UnresolvedRoutes) => (
+                "False",
+                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
+                gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
+            ),
+
+            // ListenerCondition::Resolved(_) => (
+            //     "True",
+            //     gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
+            //     gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
+            // ),
+            // ListenerCondition::ResolvedWithNotAllowedRoutes(_) | ListenerCondition::InvalidAllowedRoutes => (
+            //     "False",
+            //     gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
+            //     gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds,
+            // ),
+            // ListenerCondition::InvalidCertificates(_) => (
+            //     "False",
+            //     gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
+            //     gateway_api::apis::standard::constants::ListenerConditionReason::InvalidCertificateRef,
+            // ),
+            // ListenerCondition::UnresolvedRoutes => (
+            //     "False",
+            //     gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
+            //     gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
+            // ),
+            ListenerCondition::Accepted => (
+                "True",
+                gateway_api::apis::standard::constants::ListenerConditionType::Accepted,
+                gateway_api::apis::standard::constants::ListenerConditionReason::Accepted,
+            ),
+            ListenerCondition::NotAccepted => (
+                "False",
+                gateway_api::apis::standard::constants::ListenerConditionType::Accepted,
+                gateway_api::apis::standard::constants::ListenerConditionReason::Accepted,
+            ),
+            ListenerCondition::Programmed => (
+                "True",
+                gateway_api::apis::standard::constants::ListenerConditionType::Programmed,
+                gateway_api::apis::standard::constants::ListenerConditionReason::Programmed,
+            ),
+
+            ListenerCondition::NotProgrammed => (
+                "False",
+                gateway_api::apis::standard::constants::ListenerConditionType::Programmed,
+                gateway_api::apis::standard::constants::ListenerConditionReason::Programmed,
             ),
         }
     }
     pub fn supported_routes(&self) -> Vec<String> {
         match self {
-            ListenerCondition::Resolved(supported_routes) | ListenerCondition::ResolvedWithNotAllowedRoutes(supported_routes) | ListenerCondition::InvalidCertificates(supported_routes) => {
-                supported_routes.clone()
-            }
-            ListenerCondition::InvalidAllowedRoutes => vec![],
+            ListenerCondition::ResolvedRefs(
+                ResolvedRefs::Resolved(supported_routes) | ResolvedRefs::ResolvedWithNotAllowedRoutes(supported_routes) | ResolvedRefs::InvalidCertificates(supported_routes),
+            ) => supported_routes.clone(),
+            _ => vec![],
         }
     }
 }
@@ -938,35 +1130,38 @@ fn validate_allowed_routes(gateway_listeners: &GatewayListeners) -> ListenerCond
             let (supported, invalid): (Vec<_>, Vec<_>) = cloned_kinds.partition(|f| APPROVED_ROUTES.contains(&f.as_str()));
 
             if invalid.is_empty() {
-                ListenerCondition::Resolved(supported)
+                ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(supported))
             } else if !supported.is_empty() {
-                ListenerCondition::ResolvedWithNotAllowedRoutes(supported)
+                ListenerCondition::ResolvedRefs(ResolvedRefs::ResolvedWithNotAllowedRoutes(supported))
             } else {
-                ListenerCondition::InvalidAllowedRoutes
+                ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes)
             }
         } else if gateway_listeners.protocol == "HTTP" || gateway_listeners.protocol == "HTTPS" {
-            ListenerCondition::Resolved(vec!["HTTPRoute".to_owned()])
+            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec!["HTTPRoute".to_owned()]))
         } else {
-            ListenerCondition::Resolved(vec![])
+            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec![]))
         }
     } else if gateway_listeners.protocol == "HTTP" || gateway_listeners.protocol == "HTTPS" {
-        ListenerCondition::Resolved(vec!["HTTPRoute".to_owned()])
+        ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec!["HTTPRoute".to_owned()]))
     } else {
-        ListenerCondition::Resolved(vec![])
+        ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec![]))
     }
 }
 
-pub fn calculate_attached_routes(mapped_routes: &[RouteToListenersMapping]) -> HashMap<String, u32> {
-    let mut attached_routes = HashMap::new();
+pub fn calculate_attached_routes(mapped_routes: &[RouteToListenersMapping]) -> HashMap<String, BTreeSet<&Route>> {
+    let mut attached_routes: HashMap<String, BTreeSet<&Route>> = HashMap::new();
 
     for mapping in mapped_routes {
         debug!("Route  {}", mapping);
+
         mapping.listeners.iter().for_each(|l| {
             debug!("Listener {}", l.name);
-            if let Some(counter) = attached_routes.get_mut(&l.name) {
-                *counter += 1;
+            if let Some(routes) = attached_routes.get_mut(&l.name) {
+                routes.insert(&mapping.route);
             } else {
-                attached_routes.insert(l.name.clone(), 1);
+                let mut routes = BTreeSet::new();
+                routes.insert(&mapping.route);
+                attached_routes.insert(l.name.clone(), routes);
             }
         });
     }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
@@ -15,20 +15,20 @@ use kube::{
     Api, Client, Resource,
 };
 use tokio::sync::{
-    mpsc::{self, Sender},
+    mpsc::{self},
     oneshot, Mutex,
 };
 use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::{
-    gateway_processed_handler::GatewayProcessedHandler,
     resource_handler::ResourceHandler,
-    utils::{self, LogContext, ResourceCheckerArgs, ResourceState},
+    utils::{LogContext, ResourceCheckerArgs, ResourceState},
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, calculate_attached_routes, ChangedContext, GatewayEvent, GatewayResponse, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping, VerifiyItems},
+    common::{self, GatewayEvent, ResourceKey, Route, VerifiyItems},
+    controllers::gateway_deployer::GatewayDeployer,
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
 };
@@ -216,7 +216,7 @@ impl HTTPRouteHandler<HTTPRoute> {
     /// * we should update gatway's if the route count has changed for a listener
     /// * we shoudl update the route's status
     async fn on_new_or_changed(&self, route_id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        let log_context = self.log_context();
+        let log_context = self.log_context().to_string();
         let gateway_channel_sender = &self.gateway_channel_sender;
 
         let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
@@ -242,33 +242,18 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         for gateway in matching_gateways {
             let gateway_id = ResourceKey::from(&*gateway);
-            let linked_routes = utils::find_linked_routes(state, &gateway_id);
 
-            debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
-            let route_to_listeners_mapping = common::RouteListenerMatcher::filter_matching_routes(&gateway, &linked_routes);
-            let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);
-            debug!("Attached route counts {:?}", per_listener_calculated_attached_routes);
-            let (resolved_linked_routes, unresolved_linked_routes): (Vec<_>, Vec<_>) =
-                Iterator::partition(utils::resolve_route_backends(self.client.clone(), linked_routes, log_context.to_string()).await.into_iter(), |f| {
-                    *f.resolution_status() == ResolutionStatus::Resolved
-                });
-            debug!("Resolved linked routes {}", resolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
-            debug!("Unresolved linked routes {}", unresolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
+            let mut deployer = GatewayDeployer {
+                client: self.client.clone(),
+                log_context: &log_context,
+                sender: gateway_channel_sender.clone(),
+                gateway: &gateway,
+                state,
+                http_route_patcher: self.http_route_patcher.clone(),
+                controller_name: &self.controller_name,
+            };
 
-            let filtered_route_to_listeners_mapping = route_to_listeners_mapping.clone().into_iter().filter(|f| resolved_linked_routes.contains(&f.route)).collect();
-            debug!("Filtered linked routes {:?}", filtered_route_to_listeners_mapping);
-
-            if let Ok(updated_gateway) = self
-                .deploy_route(
-                    gateway_channel_sender,
-                    state,
-                    gateway,
-                    filtered_route_to_listeners_mapping,
-                    unresolved_linked_routes,
-                    per_listener_calculated_attached_routes,
-                )
-                .await
-            {
+            if let Ok(updated_gateway) = deployer.deploy_gateway().await {
                 debug!("{log_context} Deploying gateway {updated_gateway:?}");
                 state.save_gateway(gateway_id.clone(), &Arc::new(updated_gateway.clone()));
                 let (sender, receiver) = oneshot::channel();
@@ -301,7 +286,7 @@ impl HTTPRouteHandler<HTTPRoute> {
     }
 
     async fn on_deleted(&self, route_id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        let log_context = self.log_context();
+        let log_context = self.log_context().to_string();
         let gateway_channel_sender = &self.gateway_channel_sender;
         let _route = Route::try_from(&**resource)?;
 
@@ -325,33 +310,18 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         for gateway in matching_gateways {
             let gateway_id = ResourceKey::from(&*gateway);
-            let linked_routes = utils::find_linked_routes(state, &gateway_id);
 
-            debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
-            let route_to_listeners_mapping = common::RouteListenerMatcher::filter_matching_routes(&gateway, &linked_routes);
-            let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);
-            debug!("Attached route counts {:?}", per_listener_calculated_attached_routes);
-            let (resolved_linked_routes, unresolved_linked_routes): (Vec<_>, Vec<_>) =
-                Iterator::partition(utils::resolve_route_backends(self.client.clone(), linked_routes, log_context.to_string()).await.into_iter(), |f| {
-                    *f.resolution_status() == ResolutionStatus::Resolved
-                });
-            debug!("Resolved linked routes {}", resolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
-            debug!("Unresolved linked routes {}", unresolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
+            let mut deployer = GatewayDeployer {
+                client: self.client.clone(),
+                log_context: &log_context,
+                sender: gateway_channel_sender.clone(),
+                gateway: &gateway,
+                state,
+                http_route_patcher: self.http_route_patcher.clone(),
+                controller_name: &self.controller_name,
+            };
 
-            let filtered_route_to_listeners_mapping = route_to_listeners_mapping.clone().into_iter().filter(|f| resolved_linked_routes.contains(&f.route)).collect();
-            debug!("Filtered linked routes {:?}", filtered_route_to_listeners_mapping);
-
-            if let Ok(updated_gateway) = self
-                .deploy_route(
-                    gateway_channel_sender,
-                    state,
-                    gateway,
-                    filtered_route_to_listeners_mapping,
-                    unresolved_linked_routes,
-                    per_listener_calculated_attached_routes,
-                )
-                .await
-            {
+            if let Ok(updated_gateway) = deployer.deploy_gateway().await {
                 debug!("{log_context} Deploying gateway {updated_gateway:?}");
                 state.save_gateway(gateway_id.clone(), &Arc::new(updated_gateway.clone()));
                 let (sender, receiver) = oneshot::channel();
@@ -370,8 +340,9 @@ impl HTTPRouteHandler<HTTPRoute> {
                 let patched_gateway = receiver.await;
                 if let Ok(maybe_patched) = patched_gateway {
                     match maybe_patched {
-                        Ok(patched_gateway) => state.save_gateway(gateway_id.clone(), &Arc::new(patched_gateway)),
-
+                        Ok(patched_gateway) => {
+                            state.save_gateway(gateway_id.clone(), &Arc::new(patched_gateway));
+                        }
                         Err(e) => {
                             warn!("{} Error while patching {e}", self.log_context());
                         }
@@ -412,50 +383,50 @@ impl HTTPRouteHandler<HTTPRoute> {
             .collect()
     }
 
-    async fn deploy_route(
-        &self,
-        sender: &Sender<GatewayEvent>,
-        state: &mut State,
-        gateway: Arc<Gateway>,
-        route_to_listeners_mapping: Vec<RouteToListenersMapping>,
-        mut unresolved_linked_routes: Vec<Route>,
-        per_listener_calculated_attached_routes: HashMap<String, u32>,
-    ) -> Result<Gateway> {
-        let log_context = self.log_context();
+    // async fn deploy_route(
+    //     &self,
+    //     sender: &Sender<GatewayEvent>,
+    //     state: &mut State,
+    //     gateway: Arc<Gateway>,
+    //     route_to_listeners_mapping: Vec<RouteToListenersMapping>,
+    //     mut unresolved_linked_routes: Vec<Route>,
+    //     per_listener_calculated_attached_routes: HashMap<String, u32>,
+    // ) -> Result<Gateway> {
+    //     let log_context = self.log_context();
 
-        let maybe_gateway = common::Gateway::try_from(&*gateway);
-        let Ok(backend_gateway) = maybe_gateway else {
-            warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
-            return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
-        };
+    //     let maybe_gateway = common::Gateway::try_from(&*gateway);
+    //     let Ok(backend_gateway) = maybe_gateway else {
+    //         warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
+    //         return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
+    //     };
 
-        let resource_key = ResourceKey::from(&*gateway);
+    //     let resource_key = ResourceKey::from(&*gateway);
 
-        let (response_sender, response_receiver) = oneshot::channel();
+    //     let (response_sender, response_receiver) = oneshot::channel();
 
-        let route_event = GatewayEvent::RouteChanged(ChangedContext::new(response_sender, backend_gateway, (*gateway).clone(), route_to_listeners_mapping));
+    //     let route_event = GatewayEvent::RouteChanged(ChangedContext::new(response_sender, backend_gateway, (*gateway).clone(), route_to_listeners_mapping));
 
-        let _ = sender.send(route_event).await;
-        let response = response_receiver.await;
+    //     let _ = sender.send(route_event).await;
+    //     let response = response_receiver.await;
 
-        if let Ok(GatewayResponse::GatewayProcessed(mut gateway_processed)) = response {
-            gateway_processed.ignored_routes.append(&mut unresolved_linked_routes);
-            let gateway_event_handler = GatewayProcessedHandler {
-                gateway_processed_payload: gateway_processed,
-                gateway: (*gateway).clone(),
-                state,
-                log_context: log_context.to_string(),
-                resource_key,
-                route_patcher: self.http_route_patcher.clone(),
-                controller_name: self.controller_name.clone(),
-                per_listener_calculated_attached_routes,
-            };
-            gateway_event_handler.deploy_gateway().await
-        } else {
-            warn!("{log_context} {response:?} ... Problem {response:?}");
-            Err(ControllerError::BackendError)
-        }
-    }
+    //     if let Ok(GatewayResponse::GatewayProcessed(mut gateway_processed)) = response {
+    //         gateway_processed.ignored_routes.append(&mut unresolved_linked_routes);
+    //         let gateway_event_handler = GatewayProcessedHandler {
+    //             gateway_processed_payload: gateway_processed,
+    //             gateway: (*gateway).clone(),
+    //             state,
+    //             log_context: log_context.to_string(),
+    //             resource_key,
+    //             route_patcher: self.http_route_patcher.clone(),
+    //             controller_name: self.controller_name.clone(),
+    //             per_listener_calculated_attached_routes,
+    //         };
+    //         gateway_event_handler.deploy_gateway().await
+    //     } else {
+    //         warn!("{log_context} {response:?} ... Problem {response:?}");
+    //         Err(ControllerError::BackendError)
+    //     }
+    // }
 
     async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
         let controller_name = &self.controller_name;

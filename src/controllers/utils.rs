@@ -19,8 +19,8 @@ use serde::Serialize;
 use tracing::{debug, warn};
 
 use crate::{
-    common::{self, Backend, ListenerCondition, ProtocolType, ResourceKey, Route},
-    controllers::ControllerError,
+    common::{self, calculate_attached_routes, Backend, ListenerCondition, ProtocolType, ResolutionStatus, ResolvedRefs, ResourceKey, Route},
+    controllers::{utils, ControllerError},
     state::State,
 };
 
@@ -132,11 +132,8 @@ pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route>
         .unwrap_or_default()
 }
 
-pub async fn resolve_route_backends(client: Client, routes: Vec<Route>, log_context: String) -> Vec<Route> {
-    let futures: Vec<_> = routes
-        .into_iter()
-        .map(|route| RouteBackendResolver::new(route, client.clone(), log_context.clone()).resolve())
-        .collect();
+pub async fn resolve_route_backends(client: Client, routes: Vec<Route>, log_context: &str) -> Vec<Route> {
+    let futures: Vec<_> = routes.into_iter().map(|route| RouteBackendResolver::new(route, client.clone(), log_context).resolve()).collect();
     let routes = futures::future::join_all(futures);
     routes.await
 }
@@ -225,14 +222,14 @@ impl ListenerStatusesMerger {
     }
 }
 
-pub struct ListenerTlsConfigValidator {
+pub struct ListenerTlsConfigValidator<'a> {
     gateway: common::Gateway,
     client: Client,
-    log_context: String,
+    log_context: &'a str,
 }
 
-impl ListenerTlsConfigValidator {
-    pub fn new(gateway: common::Gateway, client: Client, log_context: String) -> Self {
+impl<'a> ListenerTlsConfigValidator<'a> {
+    pub fn new(gateway: common::Gateway, client: Client, log_context: &'a str) -> Self {
         Self { gateway, client, log_context }
     }
 
@@ -241,11 +238,14 @@ impl ListenerTlsConfigValidator {
         let log_context = self.log_context;
         debug!("{log_context} Validating certs");
 
-        for listener in self.gateway.listeners.iter_mut().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
+        for listener in self.gateway.listeners_mut().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
             let listener_data = listener.data_mut();
             let name = listener_data.config.name.clone();
             let conditions = &mut listener_data.conditions;
-            let supported_routes = conditions.get(&ListenerCondition::Resolved(vec![])).map(ListenerCondition::supported_routes).unwrap_or_default();
+            let supported_routes = conditions
+                .get(&ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec![])))
+                .map(ListenerCondition::supported_routes)
+                .unwrap_or_default();
             debug!("{log_context} Supported routes {name} {supported_routes:?}");
             for certificate_key in &listener_data.config.certificates {
                 let secret_api: Api<Secret> = Api::namespaced(client.clone(), &certificate_key.namespace);
@@ -263,30 +263,30 @@ impl ListenerTlsConfigValidator {
                                         (Ok(_), Ok(_)) => debug!("{log_context} Private key and certificate are valid"),
                                         (Ok(_), Err(e)) => {
                                             debug!("{log_context} Key is invalid {e}");
-                                            _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes));
+                                            _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
                                         }
                                         (Err(e), Ok(_)) => {
                                             debug!("{log_context} Certificate is invalid {e}");
-                                            _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes));
+                                            _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
                                         }
                                         (Err(e_cert), Err(e_key)) => {
                                             debug!("{log_context} Key and cer certificate are invalid {e_cert}{e_key}");
-                                            _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes));
+                                            _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
                                         }
                                     };
                                 }
                                 _ => {
-                                    _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes));
+                                    _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
                                 }
                             }
                         } else {
-                            _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes));
+                            _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
                         }
                     } else {
-                        _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes.clone()));
+                        _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes.clone())));
                     }
                 } else {
-                    _ = conditions.replace(ListenerCondition::InvalidCertificates(supported_routes.clone()));
+                    _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes.clone())));
                 }
             }
         }
@@ -294,14 +294,14 @@ impl ListenerTlsConfigValidator {
     }
 }
 
-pub struct RouteBackendResolver {
+pub struct RouteBackendResolver<'a> {
     route: common::Route,
     client: Client,
-    log_context: String,
+    log_context: &'a str,
 }
 
-impl RouteBackendResolver {
-    pub fn new(route: common::Route, client: Client, log_context: String) -> Self {
+impl<'a> RouteBackendResolver<'a> {
+    pub fn new(route: common::Route, client: Client, log_context: &'a str) -> Self {
         Self { route, client, log_context }
     }
 
@@ -332,5 +332,62 @@ impl RouteBackendResolver {
             _ => common::ResolutionStatus::NotResolved,
         };
         route
+    }
+}
+
+pub struct RoutesValidator<'a> {
+    gateway: common::Gateway,
+    client: Client,
+    log_context: &'a str,
+    state: &'a State,
+    kube_gateway: &'a Arc<Gateway>,
+}
+
+impl<'a> RoutesValidator<'a> {
+    pub fn new(gateway: common::Gateway, client: Client, log_context: &'a str, state: &'a State, kube_gateway: &'a Arc<Gateway>) -> Self {
+        Self {
+            gateway,
+            client,
+            log_context,
+            state,
+            kube_gateway,
+        }
+    }
+
+    pub async fn validate(mut self) -> (common::Gateway, Vec<common::RouteToListenersMapping>, Vec<Route>) {
+        let temp = format!("RoutesValidator {}", self.log_context);
+        let log_context = temp.as_str();
+        debug!("{log_context} Validating certs");
+        let gateway_resource_key = self.gateway.key();
+        let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
+        debug!("{log_context} Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
+
+        let route_to_listeners_mapping = common::RouteListenerMatcher::filter_matching_routes(self.kube_gateway, &linked_routes);
+
+        let (resolved_linked_routes, unresolved_linked_routes): (Vec<_>, Vec<_>) = Iterator::partition(utils::resolve_route_backends(self.client, linked_routes, log_context).await.into_iter(), |f| {
+            *f.resolution_status() == ResolutionStatus::Resolved
+        });
+
+        debug!("{log_context} Resolved linked routes {}", resolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
+        debug!(
+            "{log_context} Unresolved linked routes {}",
+            unresolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name())
+        );
+
+        let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);
+        for (k, routes) in per_listener_calculated_attached_routes {
+            if let Some(listener) = self.gateway.get_listener_mut(&k) {
+                let (resolved, unresolved) = routes.iter().map(|r| (**r).clone()).partition(|f| *f.resolution_status() == ResolutionStatus::Resolved);
+                listener.update_routes(resolved, unresolved);
+                debug!("{log_context} Listener {listener:#?}");
+            } else {
+                warn!("{log_context} No listener for {k}");
+            }
+        }
+
+        debug!("{log_context} Gateway {:?}", self.gateway);
+        let filtered_route_to_listeners_mapping: Vec<common::RouteToListenersMapping> = route_to_listeners_mapping.clone().into_iter().filter(|f| resolved_linked_routes.contains(&f.route)).collect();
+
+        (self.gateway, filtered_route_to_listeners_mapping, unresolved_linked_routes)
     }
 }

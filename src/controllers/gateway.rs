@@ -1,16 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gateway_api::apis::standard::{
-    gatewayclasses::GatewayClass,
-    gateways::{Gateway, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
-    httproutes::HTTPRoute,
-};
-use k8s_openapi::{
-    apimachinery::pkg::apis::meta::v1::{Condition, Time},
-    chrono::Utc,
-};
+use gateway_api::apis::standard::{gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute};
+
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource,
@@ -20,17 +13,17 @@ use tokio::sync::{
     mpsc::{self, Sender},
     oneshot, Mutex,
 };
-use tracing::{debug, warn};
+use tracing::warn;
 use uuid::Uuid;
 
 use super::{
+    gateway_deployer::GatewayDeployer,
     resource_handler::ResourceHandler,
     utils::{self, LogContext, ResourceCheckerArgs, ResourceState},
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, calculate_attached_routes, ChangedContext, DeletedContext, GatewayEvent, GatewayResponse, ResolutionStatus, ResourceKey, RouteToListenersMapping},
-    controllers::{gateway_processed_handler::GatewayProcessedHandler, utils::ListenerTlsConfigValidator},
+    common::{self, DeletedContext, GatewayEvent, ResourceKey},
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
 };
@@ -266,65 +259,6 @@ impl GatewayResourceHandler<Gateway> {
         Ok((**gateway).clone())
     }
 
-    async fn deploy_gateway(&self, sender: &Sender<GatewayEvent>, gateway: &Arc<Gateway>, state: &mut State) -> Result<Gateway> {
-        let log_context = self.log_context();
-        let mut updated_gateway = (**gateway).clone();
-
-        let maybe_gateway = common::Gateway::try_from(&updated_gateway);
-        let Ok(backend_gateway) = maybe_gateway else {
-            warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
-            return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
-        };
-        let resource_key = ResourceKey::from(&updated_gateway);
-
-        let backend_gateway = ListenerTlsConfigValidator::new(backend_gateway, self.client.clone(), log_context.to_string()).validate().await;
-
-        debug!("Gateway {backend_gateway:?}");
-        self.resolve_listeners_statuses(&backend_gateway, &mut updated_gateway);
-
-        let linked_routes = utils::find_linked_routes(state, &resource_key);
-        debug!("Linked routes {}", linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
-        let route_to_listeners_mapping = common::RouteListenerMatcher::filter_matching_routes(&self.resource, &linked_routes);
-        let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);
-        debug!("Attached route counts {:?}", per_listener_calculated_attached_routes);
-        let (resolved_linked_routes, mut unresolved_linked_routes): (Vec<_>, Vec<_>) =
-            Iterator::partition(utils::resolve_route_backends(self.client.clone(), linked_routes, log_context.to_string()).await.into_iter(), |f| {
-                *f.resolution_status() == ResolutionStatus::Resolved
-            });
-        debug!("Resolved linked routes {}", resolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
-        debug!("Unresolved linked routes {}", unresolved_linked_routes.iter().fold(String::new(), |acc, r| acc + r.name()));
-
-        let filtered_route_to_listeners_mapping = route_to_listeners_mapping.clone().into_iter().filter(|f| resolved_linked_routes.contains(&f.route)).collect();
-        debug!("Filtered linked routes {:?}", filtered_route_to_listeners_mapping);
-
-        todo!();
-        // here we should update listener statuses for unresoled routes
-
-        let (response_sender, response_receiver) = oneshot::channel();
-
-        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway, updated_gateway.clone(), filtered_route_to_listeners_mapping));
-        let _ = sender.send(listener_event).await;
-        let response = response_receiver.await;
-
-        if let Ok(GatewayResponse::GatewayProcessed(mut gateway_processed)) = response {
-            gateway_processed.ignored_routes.append(&mut unresolved_linked_routes);
-            let gateway_event_handler = GatewayProcessedHandler {
-                gateway_processed_payload: gateway_processed,
-                gateway: updated_gateway,
-                state,
-                log_context: log_context.to_string(),
-                resource_key,
-                route_patcher: self.http_route_patcher.clone(),
-                controller_name: self.controller_name.clone(),
-                per_listener_calculated_attached_routes,
-            };
-            gateway_event_handler.deploy_gateway().await
-        } else {
-            warn!("{log_context} {response:?} ... Problem {response:?}");
-            Err(ControllerError::BackendError)
-        }
-    }
-
     /// * on new gateway we need to find all the relevant data such as routes that might be referencing this gateway
     /// * send all necessary information to the backend
     /// * backend should return information whether the routes was attached to the gateway or not and to which listener/listeners
@@ -333,7 +267,18 @@ impl GatewayResourceHandler<Gateway> {
     ///
     async fn on_new_or_changed(&self, gateway_id: ResourceKey, gateway: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         let sender = &self.gateway_channel_sender;
-        let updated_gateway = self.deploy_gateway(sender, gateway, state).await?;
+
+        let updated_gateway = GatewayDeployer {
+            client: self.client.clone(),
+            log_context: self.log_context().to_string().as_str(),
+            sender: sender.clone(),
+            gateway,
+            state,
+            http_route_patcher: self.http_route_patcher.clone(),
+            controller_name: &self.controller_name,
+        }
+        .deploy_gateway()
+        .await?;
         state.save_gateway(gateway_id.clone(), gateway);
         let (sender, receiver) = oneshot::channel();
         let _res = self
@@ -434,57 +379,5 @@ impl GatewayResourceHandler<Gateway> {
                 finalizer_name: GATEWAY_CLASS_FINALIZER_NAME.to_owned(),
             }))
             .await;
-    }
-
-    fn resolve_listeners_statuses(&self, gateway: &common::Gateway, kube_gateway: &mut Gateway) {
-        let log_context = self.log_context();
-        let mut status = kube_gateway.status.clone().unwrap_or_default();
-        let mut listeners_statuses = vec![];
-        let generation = kube_gateway.metadata.generation;
-
-        gateway.listeners.iter().for_each(|l| {
-            let name = l.name().to_owned();
-            debug!("{log_context} Processing listener {name}");
-            let mut listener_status = GatewayStatusListeners { name, ..Default::default() };
-
-            let listener_conditions = &mut listener_status.conditions;
-
-            for condition in l.conditions() {
-                let (status, type_, reason) = condition.resolved_type();
-                let status = status.to_owned();
-                let type_ = type_.to_string();
-                let reason = reason.to_string();
-                match condition {
-                    common::ListenerCondition::Resolved(allowed_routes)
-                    | common::ListenerCondition::ResolvedWithNotAllowedRoutes(allowed_routes)
-                    | common::ListenerCondition::InvalidCertificates(allowed_routes) => {
-                        listener_conditions.push(Condition {
-                            last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
-                            observed_generation: generation,
-                            reason,
-                            status,
-                            type_,
-                        });
-                        listener_status.supported_kinds = allowed_routes.iter().map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() }).collect();
-                    }
-
-                    common::ListenerCondition::InvalidAllowedRoutes => {
-                        listener_conditions.push(Condition {
-                            last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
-                            observed_generation: generation,
-                            reason,
-                            status,
-                            type_,
-                        });
-                        listener_status.supported_kinds = vec![];
-                    }
-                }
-            }
-            listeners_statuses.push(listener_status);
-        });
-        status.listeners = Some(listeners_statuses);
-        kube_gateway.status = Some(status);
     }
 }
