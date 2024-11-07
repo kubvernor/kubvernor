@@ -19,7 +19,7 @@ use uuid::Uuid;
 use super::{
     gateway_deployer::GatewayDeployer,
     resource_handler::ResourceHandler,
-    utils::{self, LogContext, ResourceCheckerArgs, ResourceState},
+    utils::{LogContext, ResourceCheckerArgs, ResourceState},
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
@@ -235,28 +235,27 @@ impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
 }
 
 impl GatewayResourceHandler<Gateway> {
-    async fn on_deleted(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &mut State) -> Result<Action> {
+    async fn on_deleted(&self, id: ResourceKey, kube_gateway: &Arc<Gateway>, state: &mut State) -> Result<Action> {
         state.delete_gateway(&id);
         let sender = &self.gateway_channel_sender;
-        let _res = self.delete_gateway(sender, resource, state).await;
-        let _res = self.gateway_patcher.send(Operation::Delete((id.clone(), (**resource).clone(), self.controller_name.clone()))).await;
+        let _res = self.delete_gateway(sender, kube_gateway).await;
+        let _res = self.gateway_patcher.send(Operation::Delete((id.clone(), (**kube_gateway).clone(), self.controller_name.clone()))).await;
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 
-    async fn delete_gateway(&self, sender: &Sender<GatewayEvent>, gateway: &Arc<Gateway>, state: &State) -> Result<Gateway> {
+    async fn delete_gateway(&self, sender: &Sender<GatewayEvent>, kube_gateway: &Arc<Gateway>) -> Result<Gateway> {
         let log_context = self.log_context();
-        let maybe_gateway = common::Gateway::try_from(&**gateway);
+        let maybe_gateway = common::Gateway::try_from(&**kube_gateway);
         let Ok(backend_gateway) = maybe_gateway else {
             warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
-        let resource_key = ResourceKey::from(&**gateway);
-        let linked_routes = utils::find_linked_routes(state, &resource_key);
+
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = GatewayEvent::GatewayDeleted(DeletedContext::new(response_sender, backend_gateway, linked_routes));
+        let listener_event = GatewayEvent::GatewayDeleted(DeletedContext::new(response_sender, backend_gateway));
         let _ = sender.send(listener_event).await;
         let _response = response_receiver.await;
-        Ok((**gateway).clone())
+        Ok((**kube_gateway).clone())
     }
 
     /// * on new gateway we need to find all the relevant data such as routes that might be referencing this gateway

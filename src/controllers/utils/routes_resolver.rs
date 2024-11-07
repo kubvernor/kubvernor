@@ -7,7 +7,7 @@ use kube::{Api, Client};
 use tracing::debug;
 
 use crate::{
-    common::{self, calculate_attached_routes, Backend, ResolutionStatus, Route},
+    common::{self, calculate_attached_routes, Backend, ResolutionStatus},
     controllers::utils,
     state::State,
 };
@@ -72,7 +72,7 @@ impl<'a> RoutesResolver<'a> {
         }
     }
 
-    pub async fn validate(mut self) -> (common::Gateway, Vec<common::RouteToListenersMapping>, Vec<Route>) {
+    pub async fn validate(mut self) -> common::Gateway {
         let log_context = self.log_context;
         debug!("{log_context} Validating routes");
         let gateway_resource_key = self.gateway.key();
@@ -89,9 +89,6 @@ impl<'a> RoutesResolver<'a> {
             }
         }
 
-        let (resolved, unresolved) = self.gateway.routes();
-        let unresolved = unresolved.into_iter().cloned().collect::<Vec<_>>();
-        let filtered_route_to_listeners_mapping: Vec<common::RouteToListenersMapping> = route_to_listeners_mapping.into_iter().filter(|f| resolved.contains(&f.route)).collect();
-        (self.gateway, filtered_route_to_listeners_mapping, unresolved)
+        self.gateway
     }
 }

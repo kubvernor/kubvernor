@@ -22,7 +22,7 @@ use tracing::{debug, info, warn};
 use super::xds_generator::{self, RdsData};
 use crate::{
     backends::xds_generator::XdsData,
-    common::{ChangedContext, DeletedContext, DeployedGatewayStatus, Gateway, GatewayEvent, GatewayProcessedPayload, GatewayResponse, ListenerStatus, Route, RouteToListenersMapping},
+    common::{ChangedContext, DeletedContext, DeployedGatewayStatus, Gateway, GatewayEvent, GatewayProcessedPayload, GatewayResponse},
 };
 
 lazy_static! {
@@ -62,33 +62,30 @@ impl EnvoyDeployerChannelHandler {
                     Some(event) = self.event_receiver.recv() => {
                         info!("Backend got event {event:#}");
                          match event{
-                            GatewayEvent::GatewayChanged(ChangedContext{ response_sender, gateway, route_to_listeners_mapping }) => {
-                                let maybe_service = self.deploy_envoy(&gateway, &route_to_listeners_mapping).await;
+                            GatewayEvent::GatewayChanged(ChangedContext{ response_sender, gateway }) => {
+                                let maybe_service = self.deploy_envoy(&gateway).await;
                                 if let Ok(service) = maybe_service{
                                     let attached_addresses = Self::find_gateway_addresses(&service);
-                                    let attached_routes: Vec<_> = route_to_listeners_mapping.iter().map(|m| m.route.clone()).collect();
-                                    let listener_status = gateway.listeners().map(|l| ListenerStatus::Accepted((l.name().to_owned(), i32::try_from(attached_routes.len()).unwrap_or_default()))).collect();
-                                    let deployed_gateway_status = DeployedGatewayStatus{ id: uuid::Uuid::new_v4(), name: gateway.name().to_owned(), namespace: gateway.namespace().to_owned(), listeners: listener_status, attached_addresses };
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload{deployed_gateway_status, attached_routes, ignored_routes: vec![]}));
+
+                                    let deployed_gateway_status = DeployedGatewayStatus{id:uuid::Uuid::new_v4(),name:gateway.name().to_owned(),attached_addresses, namespace: gateway.namespace().to_owned() };
+                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload{deployed_gateway_status,effective_gateway: gateway}));
                                 }else{
                                     warn!("Problem {maybe_service:?}");
                                     let _res = response_sender.send(GatewayResponse::GatewayProcessingError);
                                 }
                             }
 
-                            GatewayEvent::GatewayDeleted(DeletedContext{ response_sender, gateway, routes }) => {
-                                self.delete_envoy(&gateway, &routes).await;
+                            GatewayEvent::GatewayDeleted(DeletedContext{ response_sender, gateway }) => {
+                                self.delete_envoy(&gateway).await;
                                 let _res = response_sender.send(GatewayResponse::GatewayDeleted(vec![]));
                             }
 
-                            GatewayEvent::RouteChanged(ChangedContext{ response_sender, gateway, route_to_listeners_mapping }) => {
-                                let maybe_service = self.deploy_envoy(&gateway, &route_to_listeners_mapping).await;
+                            GatewayEvent::RouteChanged(ChangedContext{ response_sender, gateway }) => {
+                                let maybe_service = self.deploy_envoy(&gateway).await;
                                 if let Ok(service) = maybe_service{
                                     let attached_addresses = Self::find_gateway_addresses(&service);
-                                    let attached_routes: Vec<_> = route_to_listeners_mapping.iter().map(|m| m.route.clone()).collect();
-                                    let listener_status = gateway.listeners().map(|l| ListenerStatus::Accepted((l.name().to_owned(), i32::try_from(attached_routes.len()).unwrap_or_default()))).collect();
-                                    let deployed_gateway_status = DeployedGatewayStatus{ id: uuid::Uuid::new_v4(), name: gateway.name().to_owned(), namespace: gateway.namespace().to_owned(), listeners: listener_status, attached_addresses };
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload{deployed_gateway_status, attached_routes, ignored_routes: vec![]}));
+                                    let deployed_gateway_status = DeployedGatewayStatus{ id: uuid::Uuid::new_v4(), name: gateway.name().to_owned(), namespace: gateway.namespace().to_owned(),attached_addresses };
+                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload{deployed_gateway_status,effective_gateway: gateway}));
                                 }else{
                                     warn!("Problem {maybe_service:?}");
                                     let _res = response_sender.send(GatewayResponse::GatewayProcessingError);
@@ -104,7 +101,7 @@ impl EnvoyDeployerChannelHandler {
         }
     }
 
-    async fn deploy_envoy(&self, gateway: &Gateway, route_to_listeners_mapping: &[RouteToListenersMapping]) -> std::result::Result<Service, kube::Error> {
+    async fn deploy_envoy(&self, gateway: &Gateway) -> std::result::Result<Service, kube::Error> {
         debug!("Deploying Envoy {gateway:?}");
 
         let service_api: Api<Service> = Api::namespaced(self.client.clone(), gateway.namespace());
@@ -127,7 +124,7 @@ impl EnvoyDeployerChannelHandler {
         let _res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&envoy_boostrap_config_map)).await?;
         debug!("Created bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
 
-        let maybe_templates = xds_generator::EnvoyXDSGenerator::new(gateway, route_to_listeners_mapping).generate_xds();
+        let maybe_templates = xds_generator::EnvoyXDSGenerator::new(gateway).generate_xds();
         //let maybe_templates = Self::create_envoy_xds(gateway, route_to_listeners_mapping);
         if let Ok(XdsData {
             lds_content,
@@ -156,7 +153,7 @@ impl EnvoyDeployerChannelHandler {
         Ok(service)
     }
 
-    async fn delete_envoy(&self, gateway: &Gateway, _routes: &[Route]) {
+    async fn delete_envoy(&self, gateway: &Gateway) {
         debug!("Deleting Envoy {gateway:?}");
         let service_api: Api<Service> = Api::namespaced(self.client.clone(), gateway.namespace());
         let deployment_api: Api<Deployment> = Api::namespaced(self.client.clone(), gateway.namespace());

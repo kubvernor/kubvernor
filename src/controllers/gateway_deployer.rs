@@ -51,26 +51,22 @@ impl<'a> GatewayDeployer<'a> {
         };
 
         let backend_gateway = ListenerTlsConfigValidator::new(backend_gateway, self.client.clone(), log_context).validate().await;
-        let (mut backend_gateway, filtered_mapping, mut unresolved_linked_routes) =
-            RoutesResolver::new(backend_gateway, self.client.clone(), log_context, self.state, self.kube_gateway).validate().await;
+        let mut backend_gateway = RoutesResolver::new(backend_gateway, self.client.clone(), log_context, self.state, self.kube_gateway).validate().await;
         Self::adjust_statuses(&mut backend_gateway);
         self.resolve_listeners_statuses(&backend_gateway, &mut updated_kube_gateway);
         debug!("Effective gateway {:#?}", backend_gateway);
 
         let (response_sender, response_receiver) = oneshot::channel();
-        let resource_key = backend_gateway.key().clone();
-        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway, filtered_mapping));
+        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway));
         let _ = self.sender.send(listener_event).await;
         let response = response_receiver.await;
 
-        if let Ok(GatewayResponse::GatewayProcessed(mut gateway_processed)) = response {
-            gateway_processed.ignored_routes.append(&mut unresolved_linked_routes);
+        if let Ok(GatewayResponse::GatewayProcessed(gateway_processed)) = response {
             let gateway_event_handler = GatewayProcessedHandler {
                 gateway_processed_payload: gateway_processed,
                 gateway: updated_kube_gateway,
                 state: self.state,
                 log_context,
-                resource_key: &resource_key,
                 route_patcher: self.http_route_patcher.clone(),
                 controller_name: self.controller_name.to_owned(),
             };

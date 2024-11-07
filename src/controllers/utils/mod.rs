@@ -4,10 +4,10 @@ mod tls_config_validator;
 pub(crate) use routes_resolver::RoutesResolver;
 pub(crate) use tls_config_validator::ListenerTlsConfigValidator;
 
-use std::{collections::BTreeSet, marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, sync::Arc};
 
-use gateway_api::apis::standard::gateways::{Gateway, GatewayStatusListeners};
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition;
+use gateway_api::apis::standard::gateways::Gateway;
+
 use kube::{
     api::{Patch, PatchParams},
     runtime::{
@@ -168,60 +168,60 @@ impl<'a> LogContext<'a, Gateway> {
     }
 }
 
-pub struct ListenerStatusesMerger {
-    all_listeners_statuses: Vec<GatewayStatusListeners>,
-}
-impl ListenerStatusesMerger {
-    pub fn new(all_listeners_statuses: Vec<GatewayStatusListeners>) -> Self {
-        Self { all_listeners_statuses }
-    }
-    pub fn merge(mut self, mut deployed_listeners_statuses: Vec<GatewayStatusListeners>) -> Vec<GatewayStatusListeners> {
-        #[derive(Debug)]
-        struct ListenerConditionHolder {
-            type_: String,
-            condition: Condition,
-        }
+// pub struct ListenerStatusesMerger {
+//     all_listeners_statuses: Vec<GatewayStatusListeners>,
+// }
+// impl ListenerStatusesMerger {
+//     pub fn new(all_listeners_statuses: Vec<GatewayStatusListeners>) -> Self {
+//         Self { all_listeners_statuses }
+//     }
+//     pub fn merge(mut self, mut deployed_listeners_statuses: Vec<GatewayStatusListeners>) -> Vec<GatewayStatusListeners> {
+//         #[derive(Debug)]
+//         struct ListenerConditionHolder {
+//             type_: String,
+//             condition: Condition,
+//         }
 
-        impl Eq for ListenerConditionHolder {}
+//         impl Eq for ListenerConditionHolder {}
 
-        impl Ord for ListenerConditionHolder {
-            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                self.type_.cmp(&other.type_)
-            }
-        }
-        impl PartialOrd for ListenerConditionHolder {
-            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                Some(self.type_.cmp(&other.type_))
-            }
-        }
-        impl PartialEq for ListenerConditionHolder {
-            fn eq(&self, other: &Self) -> bool {
-                self.type_ == other.type_
-            }
-        }
+//         impl Ord for ListenerConditionHolder {
+//             fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+//                 self.type_.cmp(&other.type_)
+//             }
+//         }
+//         impl PartialOrd for ListenerConditionHolder {
+//             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+//                 Some(self.type_.cmp(&other.type_))
+//             }
+//         }
+//         impl PartialEq for ListenerConditionHolder {
+//             fn eq(&self, other: &Self) -> bool {
+//                 self.type_ == other.type_
+//             }
+//         }
 
-        for listener in &mut self.all_listeners_statuses {
-            if let Some(deployed_listener) = deployed_listeners_statuses.iter_mut().find(|f| f.name == listener.name) {
-                let mut listener_conditions = listener
-                    .conditions
-                    .iter()
-                    .map(|c| ListenerConditionHolder {
-                        type_: c.type_.clone(),
-                        condition: c.clone(),
-                    })
-                    .collect::<BTreeSet<_>>();
-                let deployed_conditions = deployed_listener.conditions.iter().map(|c| ListenerConditionHolder {
-                    type_: c.type_.clone(),
-                    condition: c.clone(),
-                });
-                for c in deployed_conditions {
-                    let _ = listener_conditions.replace(c);
-                }
+//         for listener in &mut self.all_listeners_statuses {
+//             if let Some(deployed_listener) = deployed_listeners_statuses.iter_mut().find(|f| f.name == listener.name) {
+//                 let mut listener_conditions = listener
+//                     .conditions
+//                     .iter()
+//                     .map(|c| ListenerConditionHolder {
+//                         type_: c.type_.clone(),
+//                         condition: c.clone(),
+//                     })
+//                     .collect::<BTreeSet<_>>();
+//                 let deployed_conditions = deployed_listener.conditions.iter().map(|c| ListenerConditionHolder {
+//                     type_: c.type_.clone(),
+//                     condition: c.clone(),
+//                 });
+//                 for c in deployed_conditions {
+//                     let _ = listener_conditions.replace(c);
+//                 }
 
-                listener.conditions = listener_conditions.into_iter().map(|c| c.condition).collect();
-                listener.attached_routes = deployed_listener.attached_routes;
-            }
-        }
-        self.all_listeners_statuses
-    }
-}
+//                 listener.conditions = listener_conditions.into_iter().map(|c| c.condition).collect();
+//                 listener.attached_routes = deployed_listener.attached_routes;
+//             }
+//         }
+//         self.all_listeners_statuses
+//     }
+// }

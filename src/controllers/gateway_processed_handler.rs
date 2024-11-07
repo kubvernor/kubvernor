@@ -1,5 +1,5 @@
 use gateway_api::apis::standard::{
-    gateways::{Gateway, GatewayStatusAddresses, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
+    gateways::{Gateway, GatewayStatusAddresses},
     httproutes::{HTTPRoute, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
 };
 use k8s_openapi::{
@@ -8,16 +8,14 @@ use k8s_openapi::{
 };
 use kube::{Resource, ResourceExt};
 use tokio::sync::{mpsc::Sender, oneshot};
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 use crate::{
-    common::{DeployedGatewayStatus, GatewayProcessedPayload, ListenerStatus, ResourceKey, Route},
+    common::{DeployedGatewayStatus, GatewayProcessedPayload, ResourceKey, Route},
     controllers::ControllerError,
     patchers::{Operation, PatchContext},
     state::State,
 };
-
-use super::utils::ListenerStatusesMerger;
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 pub struct GatewayProcessedHandler<'a> {
@@ -25,7 +23,6 @@ pub struct GatewayProcessedHandler<'a> {
     pub gateway: Gateway,
     pub state: &'a State,
     pub log_context: &'a str,
-    pub resource_key: &'a ResourceKey,
     pub route_patcher: Sender<Operation<HTTPRoute>>,
     pub controller_name: String,
 }
@@ -34,60 +31,57 @@ impl<'a> GatewayProcessedHandler<'a> {
     pub async fn deploy_gateway(mut self) -> Result<Gateway> {
         let GatewayProcessedPayload {
             deployed_gateway_status: gateway_status,
-            attached_routes,
-            ignored_routes,
+            effective_gateway,
         } = &self.gateway_processed_payload.clone();
-
-        debug!("{} Attached routes {attached_routes:?}", &self.log_context);
+        let (attached, ignored) = effective_gateway.routes();
+        debug!("{} Attached routes {attached:?}", &self.log_context);
         self.update_gateway_resource(gateway_status);
-        self.update_routes(attached_routes, ignored_routes).await;
+        self.update_routes(attached.into_iter().collect::<Vec<_>>().as_slice(), ignored.into_iter().collect::<Vec<_>>().as_slice())
+            .await;
         Ok(self.gateway)
     }
 
     fn update_gateway_resource(&mut self, deployed_gateway_status: &DeployedGatewayStatus) {
-        let log_context = &self.log_context;
-
-        debug!("{log_context} listener statuses {:?}", &deployed_gateway_status.listeners);
-
-        //let listener_statuses = Self::generate_processed_listeners_conditions(gateway.metadata.generation, deployed_gateway_status);
-        let listener_statuses = vec![];
-        Self::update_gateway_status_conditions(&mut self.gateway, listener_statuses);
         Self::update_gateway_status_addresses(&mut self.gateway, &deployed_gateway_status.attached_addresses);
+        Self::clear_meta(&mut self.gateway);
     }
 
-    fn update_gateway_status_conditions(gateway: &mut Gateway, listeners_status: Vec<GatewayStatusListeners>) {
-        let observed_generation = gateway.metadata.generation;
-        let mut status = gateway.status.clone().unwrap_or_default();
-        let mut conditions = status.conditions.unwrap_or_default();
-
-        conditions.retain(|f| f.type_ != gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string());
-        for f in &mut conditions {
-            f.last_transition_time = Time(Utc::now());
-            f.observed_generation = observed_generation;
-            f.status = "True".to_owned();
-            f.reason = gateway_api::apis::standard::constants::GatewayConditionReason::Ready.to_string();
-        }
-
-        let new_condition = Condition {
-            last_transition_time: Time(Utc::now()),
-            message: "Updated by controller".to_owned(),
-            observed_generation,
-            reason: gateway_api::apis::standard::constants::GatewayConditionReason::Ready.to_string(),
-            status: "True".to_owned(),
-            type_: gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string(),
-        };
-        conditions.push(new_condition);
-        status.conditions = Some(conditions);
-        if status.listeners.is_none() && !listeners_status.is_empty() {
-            error!("Status listeners should not be empty here");
-        }
-        status.listeners = Some(ListenerStatusesMerger::new(status.listeners.clone().unwrap_or_default()).merge(listeners_status));
-        gateway.status = Some(status);
+    fn clear_meta(gateway: &mut Gateway) {
         gateway.metadata.managed_fields = None;
     }
 
-    async fn update_routes(&self, attached_routes: &[Route], ignored_routes: &[Route]) {
-        let gateway_id = &self.resource_key;
+    // fn update_gateway_status_conditions(gateway: &mut Gateway, listeners_status: Vec<GatewayStatusListeners>) {
+    //     let observed_generation = gateway.metadata.generation;
+    //     let mut status = gateway.status.clone().unwrap_or_default();
+    //     let mut conditions = status.conditions.unwrap_or_default();
+
+    //     conditions.retain(|f| f.type_ != gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string());
+    //     for f in &mut conditions {
+    //         f.last_transition_time = Time(Utc::now());
+    //         f.observed_generation = observed_generation;
+    //         f.status = "True".to_owned();
+    //         f.reason = gateway_api::apis::standard::constants::GatewayConditionReason::Ready.to_string();
+    //     }
+
+    //     let new_condition = Condition {
+    //         last_transition_time: Time(Utc::now()),
+    //         message: "Updated by controller".to_owned(),
+    //         observed_generation,
+    //         reason: gateway_api::apis::standard::constants::GatewayConditionReason::Ready.to_string(),
+    //         status: "True".to_owned(),
+    //         type_: gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string(),
+    //     };
+    //     conditions.push(new_condition);
+    //     status.conditions = Some(conditions);
+    //     if status.listeners.is_none() && !listeners_status.is_empty() {
+    //         error!("Status listeners should not be empty here");
+    //     }
+    //     status.listeners = Some(ListenerStatusesMerger::new(status.listeners.clone().unwrap_or_default()).merge(listeners_status));
+    //     gateway.status = Some(status);
+    // }
+
+    async fn update_routes(&self, attached_routes: &[&Route], ignored_routes: &[&Route]) {
+        let gateway_id = &self.gateway_processed_payload.effective_gateway.key();
         let log_context = &self.log_context;
         for attached_route in attached_routes {
             let updated_route = self.update_accepted_route_parents(attached_route, gateway_id);
@@ -254,54 +248,54 @@ impl<'a> GatewayProcessedHandler<'a> {
         gateway.status = Some(status);
     }
 
-    fn generate_processed_listeners_conditions(generation: Option<i64>, deployed_gateway_status: &DeployedGatewayStatus) -> Vec<GatewayStatusListeners> {
-        deployed_gateway_status
-            .listeners
-            .iter()
-            .map(|status| match status {
-                ListenerStatus::Accepted((name, routes)) => GatewayStatusListeners {
-                    attached_routes: *routes,
-                    conditions: vec![
-                        Condition {
-                            last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
-                            observed_generation: generation,
-                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted.to_string(),
-                            status: "True".to_owned(),
-                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
-                        },
-                        Condition {
-                            last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
-                            observed_generation: generation,
-                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::Programmed.to_string(),
-                            status: "True".to_owned(),
-                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Programmed.to_string(),
-                        },
-                    ],
-                    name: name.clone(),
-                    supported_kinds: vec![GatewayStatusListenersSupportedKinds {
-                        group: None,
-                        kind: "HTTPRoute".to_owned(),
-                    }],
-                },
-                ListenerStatus::Conflicted(name) => GatewayStatusListeners {
-                    attached_routes: 1,
-                    conditions: vec![Condition {
-                        last_transition_time: Time(Utc::now()),
-                        message: "Updated by controller".to_owned(),
-                        observed_generation: generation,
-                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted.to_string(),
-                        status: "False".to_owned(),
-                        type_: gateway_api::apis::standard::constants::ListenerConditionType::Conflicted.to_string(),
-                    }],
-                    name: name.clone(),
-                    supported_kinds: vec![GatewayStatusListenersSupportedKinds {
-                        group: None,
-                        kind: "HTTPRoute".to_owned(),
-                    }],
-                },
-            })
-            .collect()
-    }
+    // fn generate_processed_listeners_conditions(generation: Option<i64>, deployed_gateway_status: &DeployedGatewayStatus) -> Vec<GatewayStatusListeners> {
+    //     deployed_gateway_status
+    //         .listeners
+    //         .iter()
+    //         .map(|status| match status {
+    //             ListenerStatus::Accepted((name, routes)) => GatewayStatusListeners {
+    //                 attached_routes: *routes,
+    //                 conditions: vec![
+    //                     Condition {
+    //                         last_transition_time: Time(Utc::now()),
+    //                         message: "Updated by controller".to_owned(),
+    //                         observed_generation: generation,
+    //                         reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted.to_string(),
+    //                         status: "True".to_owned(),
+    //                         type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+    //                     },
+    //                     Condition {
+    //                         last_transition_time: Time(Utc::now()),
+    //                         message: "Updated by controller".to_owned(),
+    //                         observed_generation: generation,
+    //                         reason: gateway_api::apis::standard::constants::ListenerConditionReason::Programmed.to_string(),
+    //                         status: "True".to_owned(),
+    //                         type_: gateway_api::apis::standard::constants::ListenerConditionType::Programmed.to_string(),
+    //                     },
+    //                 ],
+    //                 name: name.clone(),
+    //                 supported_kinds: vec![GatewayStatusListenersSupportedKinds {
+    //                     group: None,
+    //                     kind: "HTTPRoute".to_owned(),
+    //                 }],
+    //             },
+    //             ListenerStatus::Conflicted(name) => GatewayStatusListeners {
+    //                 attached_routes: 1,
+    //                 conditions: vec![Condition {
+    //                     last_transition_time: Time(Utc::now()),
+    //                     message: "Updated by controller".to_owned(),
+    //                     observed_generation: generation,
+    //                     reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted.to_string(),
+    //                     status: "False".to_owned(),
+    //                     type_: gateway_api::apis::standard::constants::ListenerConditionType::Conflicted.to_string(),
+    //                 }],
+    //                 name: name.clone(),
+    //                 supported_kinds: vec![GatewayStatusListenersSupportedKinds {
+    //                     group: None,
+    //                     kind: "HTTPRoute".to_owned(),
+    //                 }],
+    //             },
+    //         })
+    //         .collect()
+    // }
 }

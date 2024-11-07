@@ -32,21 +32,22 @@ pub enum GatewayError {
     ConversionProblem(String),
 }
 
-#[derive(Clone, Error, Debug, PartialEq, PartialOrd)]
-pub enum ListenerStatus {
-    Accepted((String, i32)),
-    Conflicted(String),
-}
+// #[derive(Clone, Error, Debug, PartialEq, PartialOrd)]
+// pub enum ListenerStatus {
+//     Accepted((String, i32)),
+//     Conflicted(String),
+// }
+
+// impl std::fmt::Display for ListenerStatus {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "{self:?}")
+//     }
+// }
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum RouteStatus {
     Attached,
     Ignored,
-}
-impl std::fmt::Display for ListenerStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
 }
 
 impl std::fmt::Display for RouteStatus {
@@ -538,23 +539,20 @@ pub struct DeployedGatewayStatus {
     pub id: Uuid,
     pub name: String,
     pub namespace: String,
-    pub listeners: Vec<ListenerStatus>,
     pub attached_addresses: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct GatewayProcessedPayload {
     pub deployed_gateway_status: DeployedGatewayStatus,
-    pub attached_routes: Vec<Route>,
-    pub ignored_routes: Vec<Route>,
+    pub effective_gateway: Gateway,
 }
 
 impl GatewayProcessedPayload {
-    pub fn new(gateway_status: DeployedGatewayStatus, attached_routes: Vec<Route>, ignored_routes: Vec<Route>) -> Self {
+    pub fn new(gateway_status: DeployedGatewayStatus, effective_gateway: Gateway) -> Self {
         Self {
             deployed_gateway_status: gateway_status,
-            attached_routes,
-            ignored_routes,
+            effective_gateway,
         }
     }
 }
@@ -612,28 +610,16 @@ impl Display for RouteToListenersMapping {
 pub struct ChangedContext {
     pub response_sender: oneshot::Sender<GatewayResponse>,
     pub gateway: Gateway,
-    pub route_to_listeners_mapping: Vec<RouteToListenersMapping>,
 }
 impl ChangedContext {
-    pub fn new(response_sender: oneshot::Sender<GatewayResponse>, gateway: Gateway, route_to_listeners_mapping: Vec<RouteToListenersMapping>) -> Self {
-        ChangedContext {
-            response_sender,
-            gateway,
-            route_to_listeners_mapping,
-        }
+    pub fn new(response_sender: oneshot::Sender<GatewayResponse>, gateway: Gateway) -> Self {
+        ChangedContext { response_sender, gateway }
     }
 }
 
 impl Display for ChangedContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Gateway {}.{} listeners = {} Routes {:?}",
-            self.gateway.name(),
-            self.gateway.namespace(),
-            self.gateway.listeners.len(),
-            self.route_to_listeners_mapping.iter().map(std::string::ToString::to_string).collect::<Vec<_>>()
-        )
+        write!(f, "Gateway {}.{} listeners = {} ", self.gateway.name(), self.gateway.namespace(), self.gateway.listeners.len(),)
     }
 }
 
@@ -641,12 +627,11 @@ impl Display for ChangedContext {
 pub struct DeletedContext {
     pub response_sender: oneshot::Sender<GatewayResponse>,
     pub gateway: Gateway,
-    pub routes: Vec<Route>,
 }
 
 impl DeletedContext {
-    pub fn new(response_sender: oneshot::Sender<GatewayResponse>, gateway: Gateway, routes: Vec<Route>) -> Self {
-        DeletedContext { response_sender, gateway, routes }
+    pub fn new(response_sender: oneshot::Sender<GatewayResponse>, gateway: Gateway) -> Self {
+        DeletedContext { response_sender, gateway }
     }
 }
 #[derive(Debug)]
@@ -662,17 +647,14 @@ impl Display for GatewayEvent {
             GatewayEvent::GatewayChanged(ctx) => write!(
                 f,
                 "GatewayEvent::GatewayChanged
-                {ctx}" // gateway {:?}
-                       // routes {:?}",
-                       // ctx.gateway, ctx.route_to_listeners_mapping
+                {ctx}"
             ),
             GatewayEvent::GatewayDeleted(ctx) => {
                 write!(
                     f,
-                    "GatewayEvent::GatewayDeleted 
-                gateway {:?} 
-                routes {:?}",
-                    ctx.gateway, ctx.routes
+                    "GatewayEvent::GatewayDeleted
+                gateway {:?}",
+                    ctx.gateway
                 )
             }
 
@@ -680,10 +662,7 @@ impl Display for GatewayEvent {
                 write!(
                     f,
                     "GatewayEvent::RouteChanged                 
-                    {ctx}" // gateway {:?}
-                           // gateway {:?}
-                           // routes {:?}",
-                           // ctx.gateway, ctx.route_to_listeners_mapping
+                    {ctx}"
                 )
             }
         }
@@ -852,10 +831,10 @@ impl RouteListenerMatcher {
                     debug!("Matching listeners {:?}", matching_gateway_listeners);
                     let matching_gateway_listeners = matching_gateway_listeners.into_iter();
                     let mut matched = match (route_parent.port, &route_parent.section_name) {
-                        (Some(port), Some(section_name)) => filter_gateway_listeners_by_name_or_port(matching_gateway_listeners, |gl| gl.port == port && gl.name == *section_name),
-                        (Some(port), None) => filter_gateway_listeners_by_name_or_port(matching_gateway_listeners, |gl| gl.port == port),
-                        (None, Some(section_name)) => filter_gateway_listeners_by_name_or_port(matching_gateway_listeners, |gl| gl.name == *section_name),
-                        (None, None) => filter_gateway_listeners_by_name_or_port(matching_gateway_listeners, |_| true),
+                        (Some(port), Some(section_name)) => filter_listeners_by_name_or_port(matching_gateway_listeners, |gl| gl.port == port && gl.name == *section_name),
+                        (Some(port), None) => filter_listeners_by_name_or_port(matching_gateway_listeners, |gl| gl.port == port),
+                        (None, Some(section_name)) => filter_listeners_by_name_or_port(matching_gateway_listeners, |gl| gl.name == *section_name),
+                        (None, None) => filter_listeners_by_name_or_port(matching_gateway_listeners, |_| true),
                     };
                     debug!("Appending {route_parent:?} {matched:?}");
                     routes_and_listeners.append(&mut matched);
@@ -918,14 +897,7 @@ fn filter_listeners_by_namespace<'a>(gateway: &Arc<gateways::Gateway>, gateway_k
     })
 }
 
-fn filter_listeners_by_name_or_port<F>(gateway: &Arc<gateways::Gateway>, filter: F) -> Vec<GatewayListeners>
-where
-    F: Fn(&GatewayListeners) -> bool,
-{
-    gateway.spec.listeners.iter().filter(|f| filter(f)).cloned().collect()
-}
-
-fn filter_gateway_listeners_by_name_or_port<F>(gateway_listeners: impl Iterator<Item = GatewayListeners>, filter: F) -> Vec<GatewayListeners>
+fn filter_listeners_by_name_or_port<F>(gateway_listeners: impl Iterator<Item = GatewayListeners>, filter: F) -> Vec<GatewayListeners>
 where
     F: Fn(&GatewayListeners) -> bool,
 {
