@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use futures::FutureExt;
-use gateway_api::apis::standard::gateways::Gateway as KubeGateway;
 use itertools::Itertools;
 use k8s_openapi::{
     api::{
@@ -63,8 +62,8 @@ impl EnvoyDeployerChannelHandler {
                     Some(event) = self.event_receiver.recv() => {
                         info!("Backend got event {event:#}");
                          match event{
-                            GatewayEvent::GatewayChanged(ChangedContext{ response_sender, gateway, kube_gateway, route_to_listeners_mapping }) => {
-                                let maybe_service = self.deploy_envoy(&gateway, &kube_gateway, &route_to_listeners_mapping).await;
+                            GatewayEvent::GatewayChanged(ChangedContext{ response_sender, gateway, route_to_listeners_mapping }) => {
+                                let maybe_service = self.deploy_envoy(&gateway, &route_to_listeners_mapping).await;
                                 if let Ok(service) = maybe_service{
                                     let attached_addresses = Self::find_gateway_addresses(&service);
                                     let attached_routes: Vec<_> = route_to_listeners_mapping.iter().map(|m| m.route.clone()).collect();
@@ -82,8 +81,8 @@ impl EnvoyDeployerChannelHandler {
                                 let _res = response_sender.send(GatewayResponse::GatewayDeleted(vec![]));
                             }
 
-                            GatewayEvent::RouteChanged(ChangedContext{ response_sender, gateway, kube_gateway, route_to_listeners_mapping }) => {
-                                let maybe_service = self.deploy_envoy(&gateway, &kube_gateway, &route_to_listeners_mapping).await;
+                            GatewayEvent::RouteChanged(ChangedContext{ response_sender, gateway, route_to_listeners_mapping }) => {
+                                let maybe_service = self.deploy_envoy(&gateway, &route_to_listeners_mapping).await;
                                 if let Ok(service) = maybe_service{
                                     let attached_addresses = Self::find_gateway_addresses(&service);
                                     let attached_routes: Vec<_> = route_to_listeners_mapping.iter().map(|m| m.route.clone()).collect();
@@ -105,7 +104,7 @@ impl EnvoyDeployerChannelHandler {
         }
     }
 
-    async fn deploy_envoy(&self, gateway: &Gateway, kube_gateway: &KubeGateway, route_to_listeners_mapping: &[RouteToListenersMapping]) -> std::result::Result<Service, kube::Error> {
+    async fn deploy_envoy(&self, gateway: &Gateway, route_to_listeners_mapping: &[RouteToListenersMapping]) -> std::result::Result<Service, kube::Error> {
         debug!("Deploying Envoy {gateway:?}");
 
         let service_api: Api<Service> = Api::namespaced(self.client.clone(), gateway.namespace());
@@ -128,7 +127,7 @@ impl EnvoyDeployerChannelHandler {
         let _res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&envoy_boostrap_config_map)).await?;
         debug!("Created bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
 
-        let maybe_templates = xds_generator::EnvoyXDSGenerator::new(kube_gateway, route_to_listeners_mapping).generate_xds();
+        let maybe_templates = xds_generator::EnvoyXDSGenerator::new(gateway, route_to_listeners_mapping).generate_xds();
         //let maybe_templates = Self::create_envoy_xds(gateway, route_to_listeners_mapping);
         if let Ok(XdsData {
             lds_content,

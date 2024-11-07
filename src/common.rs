@@ -200,7 +200,7 @@ impl Listener {
         match self {
             Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
                 if !unresolved_routes.is_empty() {
-                    listener_data.conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::UnresolvedRoutes));
+                    listener_data.conditions.replace(ListenerCondition::UnresolvedRouteRefs);
                 }
                 listener_data.attached_routes = unresolved_routes.len() + resolved_routes.len();
                 listener_data.resolved_routes = resolved_routes;
@@ -481,12 +481,23 @@ impl Gateway {
         self.listeners.values_mut()
     }
 
-    pub fn get_listener(&self, name: &str) -> Option<&Listener> {
+    pub fn listener(&self, name: &str) -> Option<&Listener> {
         self.listeners.get(name)
     }
 
-    pub fn get_listener_mut(&mut self, name: &str) -> Option<&mut Listener> {
+    pub fn listener_mut(&mut self, name: &str) -> Option<&mut Listener> {
         self.listeners.get_mut(name)
+    }
+
+    pub fn routes(&self) -> (BTreeSet<&Route>, BTreeSet<&Route>) {
+        let mut resolved_routes = BTreeSet::new();
+        let mut unresolved_routes = BTreeSet::new();
+        for l in self.listeners.values() {
+            let (resolved, unresolved) = l.routes();
+            resolved_routes.append(&mut BTreeSet::from_iter(resolved));
+            unresolved_routes.append(&mut BTreeSet::from_iter(unresolved));
+        }
+        (resolved_routes, unresolved_routes)
     }
 }
 
@@ -601,15 +612,13 @@ impl Display for RouteToListenersMapping {
 pub struct ChangedContext {
     pub response_sender: oneshot::Sender<GatewayResponse>,
     pub gateway: Gateway,
-    pub kube_gateway: KubeGateway,
     pub route_to_listeners_mapping: Vec<RouteToListenersMapping>,
 }
 impl ChangedContext {
-    pub fn new(response_sender: oneshot::Sender<GatewayResponse>, gateway: Gateway, kube_gateway: KubeGateway, route_to_listeners_mapping: Vec<RouteToListenersMapping>) -> Self {
+    pub fn new(response_sender: oneshot::Sender<GatewayResponse>, gateway: Gateway, route_to_listeners_mapping: Vec<RouteToListenersMapping>) -> Self {
         ChangedContext {
             response_sender,
             gateway,
-            kube_gateway,
             route_to_listeners_mapping,
         }
     }
@@ -817,9 +826,9 @@ impl From<&HTTPRouteRulesBackendRefs> for ResourceKey {
 
 pub struct RouteListenerMatcher {}
 impl RouteListenerMatcher {
-    pub fn filter_matching_routes(gateway: &Arc<gateways::Gateway>, routes: &[Route]) -> Vec<RouteToListenersMapping> {
+    pub fn filter_matching_routes(gateway: &Arc<gateways::Gateway>, routes: Vec<Route>) -> Vec<RouteToListenersMapping> {
         routes
-            .iter()
+            .into_iter()
             .filter_map(|route| {
                 let listeners = Self::filter_matching_route(gateway, route.parents(), route.resource_key());
                 if listeners.is_empty() {
@@ -946,7 +955,6 @@ pub enum ResolvedRefs {
     ResolvedWithNotAllowedRoutes(Vec<String>),
     InvalidAllowedRoutes,
     InvalidCertificates(Vec<String>),
-    UnresolvedRoutes,
 }
 
 impl ResolvedRefs {
@@ -987,6 +995,7 @@ pub enum ListenerCondition {
     // InvalidCertificates(Vec<String>),
     // UnresolvedRoutes,
     ResolvedRefs(ResolvedRefs),
+    UnresolvedRouteRefs,
     Accepted,
     NotAccepted,
     Programmed,
@@ -995,7 +1004,12 @@ pub enum ListenerCondition {
 
 impl ListenerCondition {
     fn discriminant(&self) -> u8 {
-        unsafe { *<*const _>::from(self).cast::<u8>() }
+        match self {
+            ListenerCondition::ResolvedRefs(_) => 0,
+            ListenerCondition::Accepted | ListenerCondition::NotAccepted => 1,
+            ListenerCondition::Programmed | ListenerCondition::NotProgrammed => 2,
+            ListenerCondition::UnresolvedRouteRefs => 3,
+        }
     }
 }
 
@@ -1079,7 +1093,7 @@ impl ListenerCondition {
                 gateway_api::apis::standard::constants::ListenerConditionReason::InvalidCertificateRef,
             ),
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::UnresolvedRoutes) => (
+            ListenerCondition::UnresolvedRouteRefs => (
                 "False",
                 gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
                 gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
@@ -1169,10 +1183,7 @@ pub fn calculate_attached_routes(mapped_routes: &[RouteToListenersMapping]) -> H
     let mut attached_routes: HashMap<String, BTreeSet<&Route>> = HashMap::new();
 
     for mapping in mapped_routes {
-        debug!("Route  {}", mapping);
-
         mapping.listeners.iter().for_each(|l| {
-            debug!("Listener {}", l.name);
             if let Some(routes) = attached_routes.get_mut(&l.name) {
                 routes.insert(&mapping.route);
             } else {
@@ -1182,35 +1193,42 @@ pub fn calculate_attached_routes(mapped_routes: &[RouteToListenersMapping]) -> H
             }
         });
     }
-
     attached_routes
 }
-mod test {
-    use std::collections::BTreeSet;
 
-    use crate::common::ResolvedRefs;
+#[cfg(test)]
+mod test {
 
     use super::ListenerCondition;
+    use std::collections::BTreeSet;
 
     #[test]
     pub fn test_enums() {
-        let r1 = super::ResolvedRefs::Resolved(vec!["blah".to_string()]);
-        let r2 = super::ResolvedRefs::Resolved(vec!["blah2".to_string()]);
+        let r1 = super::ResolvedRefs::Resolved(vec!["blah".to_owned()]);
+        let r2 = super::ResolvedRefs::Resolved(vec!["blah2".to_owned()]);
         let d1 = r1.discriminant();
         let d2 = r2.discriminant();
         println!("{d1} {d2} {:?}", d1.cmp(&d2));
         assert_eq!(d1, d2);
-        let e1 = ListenerCondition::ResolvedRefs(super::ResolvedRefs::Resolved(vec!["blah".to_string()]));
-        let e2 = ListenerCondition::ResolvedRefs(super::ResolvedRefs::Resolved(vec!["blah2".to_string()]));
-        let e3 = ListenerCondition::ResolvedRefs(super::ResolvedRefs::UnresolvedRoutes);
-        let e4 = ListenerCondition::Accepted;
+        let e1 = ListenerCondition::ResolvedRefs(super::ResolvedRefs::Resolved(vec!["blah".to_owned()]));
+        let e2 = ListenerCondition::ResolvedRefs(super::ResolvedRefs::Resolved(vec!["blah2".to_owned()]));
+        let e3 = ListenerCondition::ResolvedRefs(super::ResolvedRefs::ResolvedWithNotAllowedRoutes(vec![]));
+        let e4 = ListenerCondition::ResolvedRefs(super::ResolvedRefs::InvalidAllowedRoutes);
+        let e5 = ListenerCondition::Accepted;
         assert_eq!(e1, e2);
         assert_eq!(e1, e3);
-        assert_ne!(e1, e4);
+        assert_eq!(e1, e4);
+        assert_ne!(e1, e5);
+        let d1 = e1.discriminant();
+        let d2 = e3.discriminant();
+
+        println!("{d1:?} {d2:?} {:?}", d1.cmp(&d2));
 
         let mut set = BTreeSet::new();
         set.replace(e1);
+        set.replace(e3);
         set.replace(e2);
+        set.replace(e4);
         assert_eq!(set.len(), 1);
     }
 }

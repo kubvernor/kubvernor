@@ -272,7 +272,7 @@ impl GatewayResourceHandler<Gateway> {
             client: self.client.clone(),
             log_context: self.log_context().to_string().as_str(),
             sender: sender.clone(),
-            gateway,
+            kube_gateway: gateway,
             state,
             http_route_patcher: self.http_route_patcher.clone(),
             controller_name: &self.controller_name,

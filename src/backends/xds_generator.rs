@@ -1,12 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use gateway_api::apis::standard::gateways::Gateway;
-use kube::ResourceExt;
 use serde::Serialize;
 use tracing::warn;
 
 use super::envoy_deployer::TEMPLATES;
-use crate::common::{Backend, ProtocolType, Route, RouteToListenersMapping};
+use crate::common::{self, Backend, ProtocolType, Route, RouteToListenersMapping};
 #[derive(Debug)]
 pub struct RdsData {
     pub route_name: String,
@@ -76,13 +74,13 @@ pub struct EnvoyListener {
 type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 pub struct EnvoyXDSGenerator<'a> {
-    gateway: &'a Gateway,
+    effective_gateway: &'a common::Gateway,
     route_mapping: &'a [RouteToListenersMapping],
 }
 
 impl<'a> EnvoyXDSGenerator<'a> {
-    pub fn new(gateway: &'a Gateway, route_mapping: &'a [RouteToListenersMapping]) -> Self {
-        Self { gateway, route_mapping }
+    pub fn new(effective_gateway: &'a common::Gateway, route_mapping: &'a [RouteToListenersMapping]) -> Self {
+        Self { effective_gateway, route_mapping }
     }
     pub fn generate_xds(&self) -> Result<XdsData, Error> {
         let collapsed_listeners = self.collapse_listeners_and_routes();
@@ -104,12 +102,14 @@ impl<'a> EnvoyXDSGenerator<'a> {
         Ok(XdsData::new(lds, rds, cds))
     }
     fn collapse_listeners_and_routes(&self) -> BTreeMap<i32, EnvoyListener> {
-        let gateway = self.gateway;
+        let gateway = self.effective_gateway;
         let route_to_listeners_mapping = self.route_mapping;
-        let envoy_listeners = gateway.spec.listeners.iter().fold(BTreeMap::<i32, EnvoyListener>::new(), |mut acc, listener| {
-            let port = listener.port;
-            let name = gateway.name_any();
-            let protocol_type = ProtocolType::try_from(&listener.protocol).unwrap_or(ProtocolType::Http);
+        let envoy_listeners = gateway.listeners().fold(BTreeMap::<i32, EnvoyListener>::new(), |mut acc, listener| {
+            let port = listener.port();
+            let listener_name = listener.name().to_owned();
+            let listener_hostname = listener.hostname().cloned();
+            let gateway_name = gateway.name().to_owned();
+            let protocol_type = listener.protocol();
             let maybe_added = acc.get_mut(&port);
 
             if let Some(added) = maybe_added {
@@ -117,10 +117,10 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     ProtocolType::Http => {
                         for RouteToListenersMapping { route, listeners } in route_to_listeners_mapping {
                             for route_listener in listeners {
-                                if route_listener.name == listener.name {
+                                if route_listener.name == listener_name {
                                     added.http_listener_map.insert(EnvoyVirutalHost {
-                                        name: listener.name.clone(),
-                                        hostname: listener.hostname.clone(),
+                                        name: listener_name.clone(),
+                                        hostname: listener_hostname.clone(),
                                         route: route.clone(),
                                     });
                                 }
@@ -128,7 +128,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         }
                     }
                     ProtocolType::Tcp => {
-                        added.tcp_listener_map.insert((listener.name.clone(), listener.hostname.clone()));
+                        added.tcp_listener_map.insert((listener_name, listener_hostname));
                     }
                     _ => (),
                 }
@@ -138,10 +138,10 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         let mut listener_map = BTreeSet::new();
                         for RouteToListenersMapping { route, listeners } in route_to_listeners_mapping {
                             for route_listener in listeners {
-                                if route_listener.name == listener.name {
+                                if route_listener.name == listener_name {
                                     listener_map.insert(EnvoyVirutalHost {
-                                        name: listener.name.clone(),
-                                        hostname: listener.hostname.clone(),
+                                        name: listener_name.clone(),
+                                        hostname: listener_hostname.clone(),
                                         route: route.clone(),
                                     });
                                 }
@@ -150,7 +150,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         acc.insert(
                             port,
                             EnvoyListener {
-                                name,
+                                name: gateway_name,
                                 port,
                                 http_listener_map: listener_map,
                                 tcp_listener_map: BTreeSet::new(),
@@ -159,11 +159,11 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     }
                     ProtocolType::Tcp => {
                         let mut listener_map = BTreeSet::new();
-                        listener_map.insert((listener.name.clone(), listener.hostname.clone()));
+                        listener_map.insert((listener_name, listener_hostname));
                         acc.insert(
                             port,
                             EnvoyListener {
-                                name,
+                                name: gateway_name,
                                 port,
                                 http_listener_map: BTreeSet::new(),
                                 tcp_listener_map: listener_map,
@@ -319,7 +319,7 @@ mod tests {
 
     use crate::{
         backends::xds_generator::{EnvoyXDSGenerator, RdsData, XdsData},
-        common::{Route, RouteToListenersMapping},
+        common::{self, Route, RouteToListenersMapping},
     };
 
     // https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/refs/heads/main/conformance/tests/gateway-http-listener-isolation.yaml
@@ -368,8 +368,10 @@ mod tests {
                 listeners: vec![listener4],
             },
         ];
+
+        let effective_gateway = common::Gateway::try_from(&gateway).unwrap();
         let generator = EnvoyXDSGenerator {
-            gateway: &gateway,
+            effective_gateway: &effective_gateway,
             route_mapping: &route_mapping,
         };
 

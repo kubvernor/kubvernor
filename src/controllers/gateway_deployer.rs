@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use gateway_api::apis::standard::{
     gateways::{Gateway, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
@@ -14,13 +14,13 @@ use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
 };
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
     common::{self, ChangedContext, GatewayEvent, GatewayResponse, ResolvedRefs},
     controllers::{
         gateway_processed_handler::GatewayProcessedHandler,
-        utils::{ListenerTlsConfigValidator, RoutesValidator},
+        utils::{ListenerTlsConfigValidator, RoutesResolver},
         ControllerError,
     },
     patchers::Operation,
@@ -33,7 +33,7 @@ pub struct GatewayDeployer<'a> {
     pub client: Client,
     pub log_context: &'a str,
     pub sender: Sender<GatewayEvent>,
-    pub gateway: &'a Arc<Gateway>,
+    pub kube_gateway: &'a Arc<Gateway>,
     pub state: &'a State,
 
     pub http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
@@ -42,23 +42,24 @@ pub struct GatewayDeployer<'a> {
 impl<'a> GatewayDeployer<'a> {
     pub async fn deploy_gateway(&mut self) -> Result<Gateway> {
         let log_context = self.log_context;
-        let mut updated_gateway = (**self.gateway).clone();
+        let mut updated_kube_gateway = (**self.kube_gateway).clone();
 
-        let maybe_gateway = common::Gateway::try_from(&updated_gateway);
+        let maybe_gateway = common::Gateway::try_from(&updated_kube_gateway);
         let Ok(backend_gateway) = maybe_gateway else {
             warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
 
         let backend_gateway = ListenerTlsConfigValidator::new(backend_gateway, self.client.clone(), log_context).validate().await;
-        let (mut backend_gateway, filtered_mapping, mut unresolved_linked_routes) = RoutesValidator::new(backend_gateway, self.client.clone(), log_context, self.state, self.gateway).validate().await;
-        self.adjust_statuses(&mut backend_gateway);
-        self.resolve_listeners_statuses(&backend_gateway, &mut updated_gateway);
+        let (mut backend_gateway, filtered_mapping, mut unresolved_linked_routes) =
+            RoutesResolver::new(backend_gateway, self.client.clone(), log_context, self.state, self.kube_gateway).validate().await;
+        Self::adjust_statuses(&mut backend_gateway);
+        self.resolve_listeners_statuses(&backend_gateway, &mut updated_kube_gateway);
         debug!("Effective gateway {:#?}", backend_gateway);
 
         let (response_sender, response_receiver) = oneshot::channel();
         let resource_key = backend_gateway.key().clone();
-        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway, updated_gateway.clone(), filtered_mapping));
+        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway, filtered_mapping));
         let _ = self.sender.send(listener_event).await;
         let response = response_receiver.await;
 
@@ -66,13 +67,12 @@ impl<'a> GatewayDeployer<'a> {
             gateway_processed.ignored_routes.append(&mut unresolved_linked_routes);
             let gateway_event_handler = GatewayProcessedHandler {
                 gateway_processed_payload: gateway_processed,
-                gateway: updated_gateway,
+                gateway: updated_kube_gateway,
                 state: self.state,
                 log_context,
                 resource_key: &resource_key,
                 route_patcher: self.http_route_patcher.clone(),
                 controller_name: self.controller_name.to_owned(),
-                per_listener_calculated_attached_routes: HashMap::new(),
             };
             gateway_event_handler.deploy_gateway().await
         } else {
@@ -81,29 +81,43 @@ impl<'a> GatewayDeployer<'a> {
         }
     }
 
-    fn adjust_statuses(&self, gateway: &mut common::Gateway) {
+    fn adjust_statuses(gateway: &mut common::Gateway) {
         gateway.listeners_mut().for_each(|l| {
+            let name = l.name().to_owned();
+            let (resolved, unresolved) = l.routes();
+            let resolved_count = resolved.len();
+            let unresolved_count = unresolved.len();
+            if l.attached_routes() != resolved_count + unresolved_count {
+                error!("We have a problem here... the route accounting is off ");
+            }
             let conditions = l.conditions_mut();
-            debug!("Adjusting conditions {conditions:#?}");
 
-            if conditions.contains(&common::ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec![]))) {
-                conditions.replace(common::ListenerCondition::Accepted);
-                conditions.replace(common::ListenerCondition::Programmed);
+            debug!("Adjusting conditions {} conditions {:#?}", name, conditions);
+            if let Some(common::ListenerCondition::ResolvedRefs(resolved_refs)) = conditions.get(&common::ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes)) {
+                match resolved_refs {
+                    ResolvedRefs::Resolved(_) | ResolvedRefs::ResolvedWithNotAllowedRoutes(_) => {
+                        conditions.replace(common::ListenerCondition::Accepted);
+                        conditions.replace(common::ListenerCondition::Programmed);
+                    }
+
+                    ResolvedRefs::InvalidAllowedRoutes => {
+                        conditions.insert(common::ListenerCondition::NotProgrammed);
+                        conditions.replace(common::ListenerCondition::NotAccepted);
+                    }
+                    ResolvedRefs::InvalidCertificates(_) => {
+                        conditions.replace(common::ListenerCondition::NotAccepted);
+                    }
+                }
             };
 
-            if conditions.contains(&common::ListenerCondition::ResolvedRefs(ResolvedRefs::ResolvedWithNotAllowedRoutes(vec![]))) {
-                conditions.replace(common::ListenerCondition::Accepted);
-                conditions.replace(common::ListenerCondition::Programmed);
+            if conditions.contains(&common::ListenerCondition::UnresolvedRouteRefs) {
+                if resolved_count == 0 {
+                    conditions.replace(common::ListenerCondition::NotProgrammed);
+                    conditions.replace(common::ListenerCondition::NotAccepted);
+                }
+                conditions.remove(&common::ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes));
             };
 
-            if conditions.contains(&common::ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(vec![]))) {
-                conditions.replace(common::ListenerCondition::Accepted);
-            };
-
-            if conditions.contains(&common::ListenerCondition::ResolvedRefs(ResolvedRefs::UnresolvedRoutes)) {
-                conditions.replace(common::ListenerCondition::NotAccepted);
-                conditions.replace(common::ListenerCondition::NotProgrammed);
-            };
             debug!("Adjusted  conditions {conditions:#?}");
         });
     }
@@ -115,13 +129,13 @@ impl<'a> GatewayDeployer<'a> {
 
         gateway.listeners().for_each(|l| {
             let name = l.name().to_owned();
-            debug!("{log_context} Processing listener {name}");
+            debug!("{log_context} Processing listener {name} {} {:#?}", l.attached_routes(), l.conditions().collect::<Vec<_>>());
 
             let mut listener_status = GatewayStatusListeners { name, ..Default::default() };
 
             let listener_conditions = &mut listener_status.conditions;
+            listener_status.attached_routes = i32::try_from(l.attached_routes()).unwrap_or_default();
 
-            warn!("Listener conditions {:#?}", l.conditions().collect::<Vec<_>>());
             for condition in l.conditions() {
                 let (status, type_, reason) = condition.resolved_type();
                 let status = status.to_owned();
@@ -155,6 +169,7 @@ impl<'a> GatewayDeployer<'a> {
             }
             listeners_statuses.push(listener_status);
         });
+
         status.listeners = Some(listeners_statuses);
         kube_gateway.status = Some(status);
     }

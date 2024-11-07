@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use gateway_api::apis::standard::{
     gateways::{Gateway, GatewayStatusAddresses, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
     httproutes::{HTTPRoute, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
@@ -30,7 +28,6 @@ pub struct GatewayProcessedHandler<'a> {
     pub resource_key: &'a ResourceKey,
     pub route_patcher: Sender<Operation<HTTPRoute>>,
     pub controller_name: String,
-    pub per_listener_calculated_attached_routes: HashMap<String, u32>,
 }
 
 impl<'a> GatewayProcessedHandler<'a> {
@@ -49,7 +46,7 @@ impl<'a> GatewayProcessedHandler<'a> {
 
     fn update_gateway_resource(&mut self, deployed_gateway_status: &DeployedGatewayStatus) {
         let log_context = &self.log_context;
-        let gateway = &self.gateway;
+
         debug!("{log_context} listener statuses {:?}", &deployed_gateway_status.listeners);
 
         //let listener_statuses = Self::generate_processed_listeners_conditions(gateway.metadata.generation, deployed_gateway_status);
