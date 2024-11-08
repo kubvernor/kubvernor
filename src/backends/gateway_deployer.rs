@@ -1,7 +1,7 @@
 use tokio::sync::mpsc::{self, Receiver};
 use tracing::{info, warn};
 
-use crate::common::{ChangedContext, DeletedContext, DeployedGatewayStatus, Gateway, GatewayEvent, GatewayProcessedPayload, GatewayResponse, RouteProcessedPayload, RouteStatus};
+use crate::common::{ChangedContext, DeletedContext, DeployedGatewayStatus, Gateway, GatewayEvent, GatewayResponse, RouteProcessedPayload, RouteStatus};
 
 pub struct GatewayDeployerChannelHandler {
     event_receiver: Receiver<GatewayEvent>,
@@ -20,10 +20,8 @@ impl GatewayDeployerChannelHandler {
                         info!("Backend got gateway {event:#}");
                          match event{
                             GatewayEvent::GatewayChanged(ChangedContext{ response_sender, gateway }) => {
-
                                 deploy_gateway(&gateway);
-                                let gateway_status = DeployedGatewayStatus{ id: *gateway.id(), name: gateway.name().to_owned(), namespace: gateway.namespace().to_owned(), attached_addresses: vec![]};
-                                let sent = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload::new(gateway_status, gateway)));
+                                let sent = response_sender.send(GatewayResponse::GatewayProcessed(gateway));
                                 if let Err(e) = sent{
                                     warn!("Gateway handler closed {e:?}");
                                     return;

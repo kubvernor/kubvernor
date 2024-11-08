@@ -20,17 +20,19 @@ impl<'a> ListenerTlsConfigValidator<'a> {
     pub async fn validate(mut self) -> common::Gateway {
         let client = self.client.clone();
         let log_context = self.log_context;
-        debug!("{log_context} Validating certs");
+        let gateway_name = self.gateway.name().to_owned();
+        debug!("{log_context} Validating TLS certs {gateway_name}");
 
         for listener in self.gateway.listeners_mut().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
             let listener_data = listener.data_mut();
+
             let name = listener_data.config.name.clone();
             let conditions = &mut listener_data.conditions;
             let supported_routes = conditions
                 .get(&ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec![])))
                 .map(ListenerCondition::supported_routes)
                 .unwrap_or_default();
-            debug!("{log_context} Supported routes {name} {supported_routes:?}");
+            debug!("{log_context} Supported routes {} {name} {supported_routes:?}", gateway_name);
             for certificate_key in &listener_data.config.certificates {
                 let secret_api: Api<Secret> = Api::namespaced(client.clone(), &certificate_key.namespace);
                 if let Ok(secret) = secret_api.get(&certificate_key.name).await {

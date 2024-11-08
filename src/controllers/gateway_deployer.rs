@@ -61,9 +61,9 @@ impl<'a> GatewayDeployer<'a> {
         let _ = self.sender.send(listener_event).await;
         let response = response_receiver.await;
 
-        if let Ok(GatewayResponse::GatewayProcessed(gateway_processed)) = response {
+        if let Ok(GatewayResponse::GatewayProcessed(effective_gateway)) = response {
             let gateway_event_handler = GatewayProcessedHandler {
-                gateway_processed_payload: gateway_processed,
+                effective_gateway,
                 gateway: updated_kube_gateway,
                 state: self.state,
                 log_context,
@@ -138,29 +138,45 @@ impl<'a> GatewayDeployer<'a> {
                 let type_ = type_.to_string();
                 let reason = reason.to_string();
                 listener_conditions.retain(|c| c.type_ != type_);
-                if let common::ListenerCondition::ResolvedRefs(
-                    ResolvedRefs::Resolved(allowed_routes) | ResolvedRefs::ResolvedWithNotAllowedRoutes(allowed_routes) | ResolvedRefs::InvalidCertificates(allowed_routes),
-                ) = condition
-                {
-                    listener_conditions.push(Condition {
-                        last_transition_time: Time(Utc::now()),
-                        message: "Updated by controller".to_owned(),
-                        observed_generation: generation,
-                        reason,
-                        status,
-                        type_,
-                    });
-                    listener_status.supported_kinds = allowed_routes.iter().map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() }).collect();
-                } else {
-                    listener_conditions.push(Condition {
-                        last_transition_time: Time(Utc::now()),
-                        message: "Updated by controller".to_owned(),
-                        observed_generation: generation,
-                        reason,
-                        status,
-                        type_,
-                    });
-                    listener_status.supported_kinds = vec![];
+                match condition {
+                    common::ListenerCondition::ResolvedRefs(
+                        ResolvedRefs::Resolved(allowed_routes) | ResolvedRefs::ResolvedWithNotAllowedRoutes(allowed_routes) | ResolvedRefs::InvalidCertificates(allowed_routes),
+                    ) => {
+                        listener_conditions.push(Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: "Updated by controller".to_owned(),
+                            observed_generation: generation,
+                            reason,
+                            status,
+                            type_,
+                        });
+                        listener_status.supported_kinds = allowed_routes.iter().map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() }).collect();
+                    }
+                    common::ListenerCondition::UnresolvedRouteRefs => {
+                        listener_conditions.push(Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: "Updated by controller".to_owned(),
+                            observed_generation: generation,
+                            reason,
+                            status,
+                            type_,
+                        });
+                        listener_status.supported_kinds = condition
+                            .supported_routes()
+                            .iter()
+                            .map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() })
+                            .collect();
+                    }
+                    _ => {
+                        listener_conditions.push(Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: "Updated by controller".to_owned(),
+                            observed_generation: generation,
+                            reason,
+                            status,
+                            type_,
+                        });
+                    }
                 }
             }
             listeners_statuses.push(listener_status);

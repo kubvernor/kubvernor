@@ -1,6 +1,7 @@
 use std::{
     collections::{btree_map, BTreeMap, BTreeSet, HashMap},
     fmt::Display,
+    net::IpAddr,
     sync::Arc,
 };
 
@@ -415,7 +416,9 @@ impl Route {
 impl TryFrom<&HTTPRoute> for Route {
     type Error = ControllerError;
     fn try_from(value: &HTTPRoute) -> Result<Self, Self::Error> {
-        let mut rc = RouteConfig::new(ResourceKey::from(value), value.spec.parent_refs.clone());
+        let key = ResourceKey::from(value);
+        let local_namespace = key.namespace.clone();
+        let mut rc = RouteConfig::new(key, value.spec.parent_refs.clone());
         let empty_rules: Vec<HTTPRouteRules> = vec![];
         let routing_rules = value.spec.rules.as_ref().unwrap_or(&empty_rules);
         let routing_rules = routing_rules
@@ -432,9 +435,13 @@ impl TryFrom<&HTTPRoute> for Route {
                         .iter()
                         .map(|br| {
                             Backend::Maybe(BackendServiceConfig {
-                                resource_key: ResourceKey::from(br),
+                                resource_key: ResourceKey::from((br, local_namespace.clone())),
                                 endpoint: if let Some(namespace) = br.namespace.as_ref() {
-                                    format!("{}.{namespace}", br.name)
+                                    if *namespace == local_namespace {
+                                        br.name.clone()
+                                    } else {
+                                        format!("{}.{namespace}", br.name)
+                                    }
                                 } else {
                                     br.name.clone()
                                 },
@@ -453,11 +460,31 @@ impl TryFrom<&HTTPRoute> for Route {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub enum GatewayAddress {
+    Hostname(String),
+    IPAddress(IpAddr),
+    NamedAddress(String),
+}
+
+#[derive(Clone, Debug)]
 pub struct Gateway {
     id: Uuid,
     resource_key: ResourceKey,
+    addresses: BTreeSet<GatewayAddress>,
     listeners: BTreeMap<String, Listener>,
+}
+
+impl PartialEq for Gateway {
+    fn eq(&self, other: &Self) -> bool {
+        self.resource_key == other.resource_key
+    }
+}
+
+impl PartialOrd for Gateway {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.resource_key.partial_cmp(&other.resource_key)
+    }
 }
 
 impl Gateway {
@@ -490,6 +517,14 @@ impl Gateway {
         self.listeners.get_mut(name)
     }
 
+    pub fn addresses_mut(&mut self) -> &mut BTreeSet<GatewayAddress> {
+        &mut self.addresses
+    }
+
+    pub fn addresses(&self) -> &BTreeSet<GatewayAddress> {
+        &self.addresses
+    }
+
     pub fn routes(&self) -> (BTreeSet<&Route>, BTreeSet<&Route>) {
         let mut resolved_routes = BTreeSet::new();
         let mut unresolved_routes = BTreeSet::new();
@@ -517,6 +552,7 @@ impl TryFrom<&KubeGateway> for Gateway {
         Ok(Self {
             id,
             resource_key,
+            addresses: BTreeSet::new(),
             listeners: listeners.into_iter().map(|l| (l.name().to_owned(), l)).collect::<BTreeMap<String, Listener>>(),
         })
     }
@@ -542,21 +578,6 @@ pub struct DeployedGatewayStatus {
     pub attached_addresses: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct GatewayProcessedPayload {
-    pub deployed_gateway_status: DeployedGatewayStatus,
-    pub effective_gateway: Gateway,
-}
-
-impl GatewayProcessedPayload {
-    pub fn new(gateway_status: DeployedGatewayStatus, effective_gateway: Gateway) -> Self {
-        Self {
-            deployed_gateway_status: gateway_status,
-            effective_gateway,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct RouteProcessedPayload {
     pub route_status: RouteStatus,
@@ -574,7 +595,7 @@ impl RouteProcessedPayload {
 
 #[derive(Debug)]
 pub enum GatewayResponse {
-    GatewayProcessed(GatewayProcessedPayload),
+    GatewayProcessed(Gateway),
     GatewayDeleted(Vec<RouteStatus>),
     RouteProcessed(RouteProcessedPayload),
     GatewayProcessingError,
@@ -736,7 +757,7 @@ impl From<(Option<String>, Option<String>, String, Option<String>)> for Resource
         Self {
             group: group.unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
             namespace,
-            name: name.to_owned(),
+            name: name.clone(),
             kind: kind.unwrap_or(DEFAULT_KIND_NAME.to_owned()),
         }
     }
@@ -790,9 +811,9 @@ impl From<&HTTPRoute> for ResourceKey {
     }
 }
 
-impl From<&HTTPRouteRulesBackendRefs> for ResourceKey {
-    fn from(value: &HTTPRouteRulesBackendRefs) -> Self {
-        let namespace = value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+impl From<(&HTTPRouteRulesBackendRefs, String)> for ResourceKey {
+    fn from((value, gateway_namespace): (&HTTPRouteRulesBackendRefs, String)) -> Self {
+        let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
 
         Self {
             group: DEFAULT_GROUP_NAME.to_owned(),
@@ -880,9 +901,16 @@ fn filter_listeners_by_namespace<'a>(gateway: &Arc<gateways::Gateway>, gateway_k
                 match selector_type {
                     GatewayListenersAllowedRoutesNamespacesFrom::All => {}
                     GatewayListenersAllowedRoutesNamespacesFrom::Selector => {
+                        warn!("Selector {selector:?}");
+                        is_allowed = false;
                         if let Some(selector) = selector {
-                            warn!("Selector {selector:?}");
-                            todo!();
+                            if let Some(match_labels) = &selector.match_labels {
+                                if let Some(label) = match_labels.get("kubernetes.io/metadata.name") {
+                                    if *label == gateway_key.namespace {
+                                        is_allowed = true;
+                                    }
+                                }
+                            }
                         }
                     }
                     GatewayListenersAllowedRoutesNamespacesFrom::Same => {
@@ -1007,32 +1035,6 @@ impl PartialEq for ListenerCondition {
     }
 }
 
-// impl Ord for ListenerCondition {
-//     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-//         let (_, self_type, _self_reason) = self.resolved_type();
-//         let (_, other_type, _other_reason) = other.resolved_type();
-//         self_type.to_string().cmp(&other_type.to_string())
-//         // let self_disc = self.discriminant();
-//         // let other_disc = other.discriminant();
-
-//         // self_disc.cmp(&other_disc)
-//         // let (_, self_type, self_reason) = self.resolved_type();
-//         // let (_, other_type, other_reason) = other.resolved_type();
-//         // match self_type.to_string().cmp(&other_type.to_string()) {
-//         //     std::cmp::Ordering::Less => std::cmp::Ordering::Less,
-//         //     std::cmp::Ordering::Equal => self_reason.to_string().cmp(&other_reason.to_string()),
-//         //     std::cmp::Ordering::Greater => std::cmp::Ordering::Greater,
-//         // }
-//     }
-// }
-// impl PartialOrd for ListenerCondition {
-//     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-//         Some(self.cmp(other))
-//     }
-// }
-
-// impl Eq for ListenerCondition {}
-
 impl ListenerCondition {
     pub fn resolved_type(
         &self,
@@ -1042,8 +1044,8 @@ impl ListenerCondition {
         gateway_api::apis::standard::constants::ListenerConditionReason,
     ) {
         match self {
-            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes) => (
-                "True",
+            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes | ResolvedRefs::ResolvedWithNotAllowedRoutes(_)) => (
+                "False",
                 gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
                 gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds,
             ),
@@ -1051,12 +1053,6 @@ impl ListenerCondition {
                 "True",
                 gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
                 gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
-            ),
-
-            ListenerCondition::ResolvedRefs(ResolvedRefs::ResolvedWithNotAllowedRoutes(_)) => (
-                "False",
-                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
-                gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds,
             ),
 
             ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(_)) => (
@@ -1071,26 +1067,6 @@ impl ListenerCondition {
                 gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
             ),
 
-            // ListenerCondition::Resolved(_) => (
-            //     "True",
-            //     gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
-            //     gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
-            // ),
-            // ListenerCondition::ResolvedWithNotAllowedRoutes(_) | ListenerCondition::InvalidAllowedRoutes => (
-            //     "False",
-            //     gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
-            //     gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds,
-            // ),
-            // ListenerCondition::InvalidCertificates(_) => (
-            //     "False",
-            //     gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
-            //     gateway_api::apis::standard::constants::ListenerConditionReason::InvalidCertificateRef,
-            // ),
-            // ListenerCondition::UnresolvedRoutes => (
-            //     "False",
-            //     gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
-            //     gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
-            // ),
             ListenerCondition::Accepted => (
                 "True",
                 gateway_api::apis::standard::constants::ListenerConditionType::Accepted,
@@ -1119,7 +1095,7 @@ impl ListenerCondition {
             ListenerCondition::ResolvedRefs(
                 ResolvedRefs::Resolved(supported_routes) | ResolvedRefs::ResolvedWithNotAllowedRoutes(supported_routes) | ResolvedRefs::InvalidCertificates(supported_routes),
             ) => supported_routes.clone(),
-            _ => vec![],
+            _ => APPROVED_ROUTES.iter().map(|r| (*r).to_owned()).collect(),
         }
     }
 }

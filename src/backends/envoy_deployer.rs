@@ -15,6 +15,7 @@ use kube::{
 };
 use kube_core::ObjectMeta;
 use lazy_static::lazy_static;
+
 use tera::Tera;
 use tokio::sync::mpsc::{self, Receiver};
 use tracing::{debug, info, warn};
@@ -22,7 +23,7 @@ use tracing::{debug, info, warn};
 use super::xds_generator::{self, RdsData};
 use crate::{
     backends::xds_generator::XdsData,
-    common::{ChangedContext, DeletedContext, DeployedGatewayStatus, Gateway, GatewayEvent, GatewayProcessedPayload, GatewayResponse},
+    common::{ChangedContext, DeletedContext, Gateway, GatewayAddress, GatewayEvent, GatewayResponse},
 };
 
 lazy_static! {
@@ -62,13 +63,11 @@ impl EnvoyDeployerChannelHandler {
                     Some(event) = self.event_receiver.recv() => {
                         info!("Backend got event {event:#}");
                          match event{
-                            GatewayEvent::GatewayChanged(ChangedContext{ response_sender, gateway }) => {
+                            GatewayEvent::GatewayChanged(ChangedContext{ response_sender, mut gateway }) => {
                                 let maybe_service = self.deploy_envoy(&gateway).await;
                                 if let Ok(service) = maybe_service{
-                                    let attached_addresses = Self::find_gateway_addresses(&service);
-
-                                    let deployed_gateway_status = DeployedGatewayStatus{id:uuid::Uuid::new_v4(),name:gateway.name().to_owned(),attached_addresses, namespace: gateway.namespace().to_owned() };
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload{deployed_gateway_status,effective_gateway: gateway}));
+                                    Self::update_addresses(&mut gateway, &service);
+                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(gateway));
                                 }else{
                                     warn!("Problem {maybe_service:?}");
                                     let _res = response_sender.send(GatewayResponse::GatewayProcessingError);
@@ -80,12 +79,11 @@ impl EnvoyDeployerChannelHandler {
                                 let _res = response_sender.send(GatewayResponse::GatewayDeleted(vec![]));
                             }
 
-                            GatewayEvent::RouteChanged(ChangedContext{ response_sender, gateway }) => {
+                            GatewayEvent::RouteChanged(ChangedContext{ response_sender, mut gateway }) => {
                                 let maybe_service = self.deploy_envoy(&gateway).await;
                                 if let Ok(service) = maybe_service{
-                                    let attached_addresses = Self::find_gateway_addresses(&service);
-                                    let deployed_gateway_status = DeployedGatewayStatus{ id: uuid::Uuid::new_v4(), name: gateway.name().to_owned(), namespace: gateway.namespace().to_owned(),attached_addresses };
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(GatewayProcessedPayload{deployed_gateway_status,effective_gateway: gateway}));
+                                    Self::update_addresses(&mut gateway, &service);
+                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(gateway));
                                 }else{
                                     warn!("Problem {maybe_service:?}");
                                     let _res = response_sender.send(GatewayResponse::GatewayProcessingError);
@@ -377,6 +375,16 @@ impl EnvoyDeployerChannelHandler {
             }),
             status: None,
         }
+    }
+
+    fn update_addresses(gateway: &mut Gateway, service: &Service) {
+        let attached_addresses = Self::find_gateway_addresses(service);
+        gateway.addresses_mut().append(
+            &mut attached_addresses
+                .into_iter()
+                .filter_map(|a| if let Ok(addr) = a.parse() { Some(GatewayAddress::IPAddress(addr)) } else { None })
+                .collect(),
+        );
     }
 }
 
