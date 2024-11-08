@@ -1,13 +1,15 @@
 use std::time::Duration;
 pub mod gateway;
 pub mod gateway_class;
+mod gateway_deployer;
+mod gateway_processed_handler;
 pub mod http_route;
 mod resource_handler;
 mod utils;
 pub use utils::{FinalizerPatcher, LogContext, ResourceFinalizer};
 
 #[allow(dead_code)]
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]
 pub enum ControllerError {
     PatchFailed,
     AlreadyAdded,

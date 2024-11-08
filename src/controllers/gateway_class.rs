@@ -12,7 +12,7 @@ use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
     Client, Resource,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -164,19 +164,32 @@ impl GatewayClassResourceHandler<GatewayClass> {
         new_gateway_class
     }
 
-    async fn on_new_or_changed(&self, id: ResourceKey, resource: &Arc<GatewayClass>, state: &mut State) -> Result<Action> {
+    async fn on_new_or_changed(&self, gateway_class_id: ResourceKey, resource: &Arc<GatewayClass>, state: &mut State) -> Result<Action> {
         let updated_gateway_class = Self::update_status_conditions((**resource).clone());
-        state.save_gateway_class(id.clone(), resource);
-
+        state.save_gateway_class(gateway_class_id.clone(), resource);
+        let (sender, receiver) = oneshot::channel();
         let _res = self
             .gateway_class_patcher
             .send(Operation::PatchStatus(PatchContext {
-                resource_key: id,
+                resource_key: gateway_class_id.clone(),
                 resource: updated_gateway_class,
                 controller_name: self.controller_name.clone(),
                 version: self.version.clone(),
+                response_sender: sender,
             }))
             .await;
+        let patched_gateway_class = receiver.await;
+        if let Ok(maybe_patched) = patched_gateway_class {
+            match maybe_patched {
+                Ok(patched_gateway_class) => {
+                    state.save_gateway_class(gateway_class_id, &Arc::new(patched_gateway_class));
+                }
+                Err(e) => {
+                    warn!("{} Error while patching {e}", self.log_context());
+                }
+            }
+        }
+
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 }

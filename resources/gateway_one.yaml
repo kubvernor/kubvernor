@@ -10,9 +10,36 @@ spec:
   - name: http-2080
     protocol: HTTP
     port: 2080
+    allowedRoutes:
+      namespaces:
+        from: All
+      kinds:
+        - kind: InvalidRoute
+        - kind: HTTPRoute
   - name: http-2081
     protocol: HTTP
     port: 2081
   - name: prometheus-9901
     protocol: HTTP
     port: 9901
+    allowedRoutes:
+      namespaces:
+        from: All
+      kinds:
+        - kind: InvalidRoute
+  - name: invalid-9904
+    protocol: HTTPS
+    port: 9904
+    tls:
+      certificateRefs:
+        - group: ""
+          kind: JDKJKDSecret
+          name: malformed-certificate                    
+  - name: invalid-990122
+    protocol: HTTPS
+    port: 9902
+    tls:
+      certificateRefs:
+        - group: ""
+          kind: Secret
+          name: malformed-certificate          
