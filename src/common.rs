@@ -424,34 +424,27 @@ impl TryFrom<&HTTPRoute> for Route {
         let routing_rules = routing_rules
             .iter()
             .enumerate()
-            .map(|(i, rr)| {
-                RoutingRule {
-                    name: format!("{}-{i}", value.name_any()),
-                    matching_rules: rr.matches.clone().unwrap_or_default(),
-                    backends: rr
-                        .backend_refs
-                        .as_ref()
-                        .unwrap_or(&vec![])
-                        .iter()
-                        .map(|br| {
-                            Backend::Maybe(BackendServiceConfig {
-                                resource_key: ResourceKey::from((br, local_namespace.clone())),
-                                endpoint: if let Some(namespace) = br.namespace.as_ref() {
-                                    if *namespace == local_namespace {
-                                        br.name.clone()
-                                    } else {
-                                        format!("{}.{namespace}", br.name)
-                                    }
-                                } else {
-                                    br.name.clone()
-                                },
-                                //endpoint: "10.110.238.122".to_owned(),
-                                port: br.port.unwrap_or(0),
-                                weight: br.weight.unwrap_or(1),
-                            })
+            .map(|(i, rr)| RoutingRule {
+                name: format!("{}-{i}", value.name_any()),
+                matching_rules: rr.matches.clone().unwrap_or_default(),
+                backends: rr
+                    .backend_refs
+                    .as_ref()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .map(|br| {
+                        Backend::Maybe(BackendServiceConfig {
+                            resource_key: ResourceKey::from((br, local_namespace.clone())),
+                            endpoint: if let Some(namespace) = br.namespace.as_ref() {
+                                format!("{}.{namespace}", br.name)
+                            } else {
+                                format!("{}.{local_namespace}", br.name)
+                            },
+                            port: br.port.unwrap_or(0),
+                            weight: br.weight.unwrap_or(1),
                         })
-                        .collect(),
-                }
+                    })
+                    .collect(),
             })
             .collect();
         rc.routing_rules = routing_rules;
@@ -824,13 +817,22 @@ impl From<(&HTTPRouteRulesBackendRefs, String)> for ResourceKey {
     }
 }
 
-pub struct RouteListenerMatcher {}
-impl RouteListenerMatcher {
-    pub fn filter_matching_routes(gateway: &Arc<gateways::Gateway>, routes: Vec<Route>) -> Vec<RouteToListenersMapping> {
-        routes
-            .into_iter()
+pub struct RouteListenerMatcher<'a> {
+    gateway: &'a Arc<gateways::Gateway>,
+    routes: Vec<Route>,
+    resolved_namespaces: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl<'a> RouteListenerMatcher<'a> {
+    pub fn new(gateway: &'a Arc<gateways::Gateway>, routes: Vec<Route>, resolved_namespaces: BTreeMap<String, BTreeMap<String, String>>) -> Self {
+        Self { gateway, routes, resolved_namespaces }
+    }
+
+    pub fn filter_matching_routes(self) -> Vec<RouteToListenersMapping> {
+        self.routes
+            .iter()
             .filter_map(|route| {
-                let listeners = Self::filter_matching_route(gateway, route.parents(), route.resource_key());
+                let listeners = self.filter_matching_route(route.parents(), route.resource_key());
                 if listeners.is_empty() {
                     None
                 } else {
@@ -840,14 +842,14 @@ impl RouteListenerMatcher {
             .collect()
     }
 
-    fn filter_matching_route(gateway: &Arc<gateways::Gateway>, route_parents: &Option<Vec<HTTPRouteParentRefs>>, route_key: &ResourceKey) -> Vec<GatewayListeners> {
+    fn filter_matching_route(&self, route_parents: &Option<Vec<HTTPRouteParentRefs>>, route_key: &ResourceKey) -> Vec<GatewayListeners> {
         let mut routes_and_listeners: Vec<GatewayListeners> = vec![];
         if let Some(route_parents) = route_parents {
             for route_parent in route_parents {
                 let route_parent_key = ResourceKey::from(route_parent);
-                let gateway_key = ResourceKey::from(&**gateway);
+                let gateway_key = ResourceKey::from(&**self.gateway);
                 if route_parent_key.name == gateway_key.name && route_parent_key.namespace == gateway_key.namespace {
-                    let matching_gateway_listeners = filter_listeners_by_namespace(gateway, &gateway_key, route_key);
+                    let matching_gateway_listeners = self.filter_listeners_by_namespace(&gateway_key, route_key);
                     let matching_gateway_listeners = matching_gateway_listeners.collect::<Vec<_>>();
                     debug!("Matching listeners {:?}", matching_gateway_listeners);
                     let matching_gateway_listeners = matching_gateway_listeners.into_iter();
@@ -884,45 +886,50 @@ impl RouteListenerMatcher {
             })
             .collect()
     }
-}
 
-fn filter_listeners_by_namespace<'a>(gateway: &Arc<gateways::Gateway>, gateway_key: &'a ResourceKey, route_key: &'a ResourceKey) -> impl Iterator<Item = GatewayListeners> + 'a {
-    let listeners = gateway.spec.listeners.clone();
-    listeners.into_iter().filter(|l| {
-        let mut is_allowed = true;
-        if let Some(allowed_routes) = &l.allowed_routes {
-            if let Some(allowed_kinds) = &allowed_routes.kinds {
-                if !allowed_kinds.is_empty() {
-                    is_allowed = allowed_kinds.iter().map(|k| &k.kind).any(|f| f == "HTTPRoute");
+    fn filter_listeners_by_namespace(&'a self, gateway_key: &'a ResourceKey, route_key: &'a ResourceKey) -> impl Iterator<Item = GatewayListeners> + 'a {
+        let listeners = self.gateway.spec.listeners.clone();
+        listeners.into_iter().filter(|l| {
+            let mut is_allowed = true;
+            if let Some(allowed_routes) = &l.allowed_routes {
+                if let Some(allowed_kinds) = &allowed_routes.kinds {
+                    if !allowed_kinds.is_empty() {
+                        is_allowed = allowed_kinds.iter().map(|k| &k.kind).any(|f| f == "HTTPRoute");
+                    }
                 }
-            }
 
-            if let Some(GatewayListenersAllowedRoutesNamespaces { from: Some(selector_type), selector }) = &allowed_routes.namespaces {
-                match selector_type {
-                    GatewayListenersAllowedRoutesNamespacesFrom::All => {}
-                    GatewayListenersAllowedRoutesNamespacesFrom::Selector => {
-                        warn!("Selector {selector:?}");
-                        is_allowed = false;
-                        if let Some(selector) = selector {
-                            if let Some(match_labels) = &selector.match_labels {
-                                if let Some(label) = match_labels.get("kubernetes.io/metadata.name") {
-                                    if *label == gateway_key.namespace {
-                                        is_allowed = true;
+                if let Some(GatewayListenersAllowedRoutesNamespaces { from: Some(selector_type), selector }) = &allowed_routes.namespaces {
+                    match selector_type {
+                        GatewayListenersAllowedRoutesNamespacesFrom::All => {}
+                        GatewayListenersAllowedRoutesNamespacesFrom::Selector => {
+                            // namespace selector
+                            warn!("Selector {selector:?}");
+                            is_allowed = false;
+                            if let Some(selector) = selector {
+                                if let Some(selector_labels) = &selector.match_labels {
+                                    let resolved_namespaces = self.resolved_namespaces.get(&route_key.namespace);
+                                    warn!("Selector labales {resolved_namespaces:#?}");
+                                    if let Some(labels) = resolved_namespaces {
+                                        for (selector_k, selector_v) in selector_labels {
+                                            if labels.get(selector_k) == Some(selector_v) {
+                                                is_allowed = true;
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                    GatewayListenersAllowedRoutesNamespacesFrom::Same => {
-                        if route_key.namespace != gateway_key.namespace {
-                            is_allowed = false;
+                        GatewayListenersAllowedRoutesNamespacesFrom::Same => {
+                            if route_key.namespace != gateway_key.namespace {
+                                is_allowed = false;
+                            }
                         }
                     }
                 }
             }
-        }
-        is_allowed
-    })
+            is_allowed
+        })
+    }
 }
 
 fn filter_listeners_by_name_or_port<F>(gateway_listeners: impl Iterator<Item = GatewayListeners>, filter: F) -> Vec<GatewayListeners>

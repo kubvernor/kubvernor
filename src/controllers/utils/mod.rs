@@ -1,15 +1,16 @@
 mod routes_resolver;
 mod tls_config_validator;
 
+use k8s_openapi::api::core::v1::Namespace;
 pub(crate) use routes_resolver::RoutesResolver;
 pub(crate) use tls_config_validator::ListenerTlsConfigValidator;
 
-use std::{marker::PhantomData, sync::Arc};
+use std::{collections::BTreeMap, marker::PhantomData, sync::Arc};
 
 use gateway_api::apis::standard::gateways::Gateway;
 
 use kube::{
-    api::{Patch, PatchParams},
+    api::{ListParams, Patch, PatchParams},
     runtime::{
         controller::Action,
         finalizer::{self, Error},
@@ -140,6 +141,23 @@ pub async fn resolve_route_backends(client: Client, routes: Vec<Route>, log_cont
     let futures: Vec<_> = routes.into_iter().map(|route| RouteResolver::new(route, client.clone(), log_context).resolve()).collect();
     let routes = futures::future::join_all(futures);
     routes.await
+}
+
+pub async fn resolve_namespaces(client: Client) -> BTreeMap<String, BTreeMap<String, String>> {
+    let api = Api::<Namespace>::all(client);
+    let lp = ListParams::default();
+    let maybe_namespaces = api.list(&lp).await;
+    let mut namespace_map = BTreeMap::new();
+    if let Ok(namespaces) = maybe_namespaces {
+        for namespace in namespaces.items {
+            if let Some(labels) = namespace.metadata.labels {
+                if let Some(namesapce_name) = labels.get("kubernetes.io/metadata.name") {
+                    namespace_map.insert(namesapce_name.clone(), labels);
+                }
+            };
+        }
+    };
+    namespace_map
 }
 
 pub struct LogContext<'a, T> {

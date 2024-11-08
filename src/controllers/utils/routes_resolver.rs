@@ -77,9 +77,10 @@ impl<'a> RoutesResolver<'a> {
         debug!("{log_context} Validating routes");
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
-        let linked_routes = utils::resolve_route_backends(self.client, linked_routes, log_context).await;
+        let linked_routes = utils::resolve_route_backends(self.client.clone(), linked_routes, log_context).await;
+        let resolved_namespaces = utils::resolve_namespaces(self.client).await;
 
-        let route_to_listeners_mapping = common::RouteListenerMatcher::filter_matching_routes(self.kube_gateway, linked_routes);
+        let route_to_listeners_mapping = common::RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();
         let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);
 
         for (k, routes) in per_listener_calculated_attached_routes {
