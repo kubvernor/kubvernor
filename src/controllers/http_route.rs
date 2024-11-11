@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use super::{
     resource_handler::ResourceHandler,
-    utils::{LogContext, ResourceCheckerArgs, ResourceState},
+    utils::{LogContext, ResourceCheckerArgs, ResourceState, RouteListenerMatcher},
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
@@ -234,7 +234,7 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         parent_gateway_refs_keys.for_each(|(_ref, key)| state.attach_http_route_to_gateway(key, route_id.clone()));
 
-        let matching_gateways = common::RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
+        let matching_gateways = RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
         let unknown_gateway_status = self.generate_status_for_unknown_gateways(&unknown_gateways, resource.metadata.generation);
         let mut http_route = (**resource).clone();
         http_route.status = Some(HTTPRouteStatus { parents: unknown_gateway_status });
@@ -306,7 +306,7 @@ impl HTTPRouteHandler<HTTPRoute> {
         parent_gateway_refs_keys.for_each(|(_ref, gateway_key)| state.detach_http_route_from_gateway(&gateway_key, &route_id));
         state.delete_http_route(&route_id);
 
-        let matching_gateways = common::RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
+        let matching_gateways = RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
 
         for gateway in matching_gateways {
             let gateway_id = ResourceKey::from(&*gateway);

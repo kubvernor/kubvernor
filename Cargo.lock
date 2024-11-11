@@ -510,6 +510,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d6ef0072f8a535281e4876be788938b528e9a1d43900b82c2569af7da799125"
 
 [[package]]
+name = "eater_domainmatcher"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "866aa752ef259d654b22c856795d1fe157f803d9ff65b45ace7bb905795dec59"
+
+[[package]]
 name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1219,6 +1225,7 @@ dependencies = [
  "async-trait",
  "clap",
  "clap_derive",
+ "eater_domainmatcher",
  "env_logger",
  "futures",
  "gateway-api",

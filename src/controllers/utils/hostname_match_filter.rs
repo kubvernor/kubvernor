@@ -1,0 +1,88 @@
+use eater_domainmatcher::DomainPattern;
+use tracing::{debug, warn};
+
+pub struct HostnameMatchFilter<'a> {
+    listener_hostname: &'a str,
+    route_hostnames: &'a [String],
+}
+
+impl<'a> HostnameMatchFilter<'a> {
+    pub fn new(listener_hostname: &'a str, route_hostnames: &'a [String]) -> Self {
+        Self { listener_hostname, route_hostnames }
+    }
+
+    pub fn filter(&self) -> bool {
+        let pattern = if self.listener_hostname.starts_with("*.") {
+            format! {"**+.{}",&self.listener_hostname[2..]}
+        } else {
+            self.listener_hostname.to_owned()
+        };
+        let mut wildcard_route_hostnames = vec![];
+        if let Ok(pattern) = DomainPattern::<'_, '.'>::try_from(pattern.as_str()) {
+            let maybe_filtered = self
+                .route_hostnames
+                .iter()
+                .filter(|r| {
+                    let res = pattern.matches(r);
+                    debug!("Comparing hostnames {} {} {}", self.listener_hostname, r, res);
+                    if r.starts_with("*.") {
+                        wildcard_route_hostnames.push(*r);
+                    }
+                    res
+                })
+                .nth(0)
+                .is_some();
+            if maybe_filtered {
+                true
+            } else if wildcard_route_hostnames.is_empty() {
+                false
+            } else {
+                for wildcarded_route in wildcard_route_hostnames {
+                    if let Ok(pattern) = DomainPattern::<'_, '.'>::try_from(wildcarded_route.as_str()) {
+                        let res = pattern.matches(self.listener_hostname);
+                        if res {
+                            debug!("Comparing wildcarded hostnames {} {} {}", self.listener_hostname, wildcarded_route, res);
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+        } else {
+            warn!("Hostname is not a valid domain {}", &self.listener_hostname);
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn domain_testing() {
+        let listener_hostname = "test.com";
+        let route_hostnames = vec!["test.com".to_owned(), "no-test.com".to_owned()];
+        assert!(HostnameMatchFilter::new(listener_hostname, &route_hostnames).filter());
+        let route_hostnames = vec!["diff-test.com".to_owned(), "no-test.com".to_owned()];
+        assert!(!HostnameMatchFilter::new(listener_hostname, &route_hostnames).filter());
+        let listener_hostname = "*.test.com";
+        let route_hostnames = vec!["blah.test.com".to_owned(), "no-test.com".to_owned()];
+        assert!(HostnameMatchFilter::new(listener_hostname, &route_hostnames).filter());
+
+        let listener_hostname = "*.test.com";
+        let route_hostnames = vec!["test.com".to_owned(), "no-test.com".to_owned()];
+        assert!(!HostnameMatchFilter::new(listener_hostname, &route_hostnames).filter());
+        let listener_hostname = "*.test.com";
+        let route_hostnames = vec!["*.test.com".to_owned(), "no-test.com".to_owned()];
+        assert!(HostnameMatchFilter::new(listener_hostname, &route_hostnames).filter());
+
+        let listener_hostname = "*.test.com";
+        let route_hostnames = vec!["even.more.test.com".to_owned(), "no-test.com".to_owned()];
+        assert!(HostnameMatchFilter::new(listener_hostname, &route_hostnames).filter());
+
+        let listener_hostname = "more.test.com";
+        let route_hostnames = vec!["*.test.com".to_owned()];
+        assert!(HostnameMatchFilter::new(listener_hostname, &route_hostnames).filter());
+    }
+}

@@ -80,9 +80,10 @@ impl<'a> GatewayDeployer<'a> {
     fn adjust_statuses(gateway: &mut common::Gateway) {
         gateway.listeners_mut().for_each(|l| {
             let name = l.name().to_owned();
-            let (resolved, unresolved) = l.routes();
+            let (resolved, unresolved, _with_no_hostnames) = l.routes();
             let resolved_count = resolved.len();
             let unresolved_count = unresolved.len();
+
             if l.attached_routes() != resolved_count + unresolved_count {
                 error!("We have a problem here... the route accounting is off ");
             }

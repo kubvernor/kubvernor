@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use gateway_api::apis::standard::gateways::Gateway;
 use k8s_openapi::api::core::v1::Service;
@@ -8,7 +8,7 @@ use tracing::debug;
 
 use crate::{
     common::{self, calculate_attached_routes, Backend, ResolutionStatus},
-    controllers::utils,
+    controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };
 
@@ -80,13 +80,13 @@ impl<'a> RoutesResolver<'a> {
         let linked_routes = utils::resolve_route_backends(self.client.clone(), linked_routes, log_context).await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
 
-        let route_to_listeners_mapping = common::RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();
+        let (route_to_listeners_mapping, routes_with_no_listeners) = RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();
         let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);
-
+        let routes_with_no_listeners = BTreeSet::from_iter(routes_with_no_listeners);
         for (k, routes) in per_listener_calculated_attached_routes {
             if let Some(listener) = self.gateway.listener_mut(&k) {
-                let (resolved, unresolved) = routes.iter().map(|r| (**r).clone()).partition(|f| *f.resolution_status() == ResolutionStatus::Resolved);
-                listener.update_routes(resolved, unresolved);
+                let (resolved, unresolved): (BTreeSet<_>, BTreeSet<_>) = routes.iter().map(|r| (**r).clone()).partition(|f| *f.resolution_status() == ResolutionStatus::Resolved);
+                listener.update_routes(resolved, unresolved, routes_with_no_listeners.clone());
             }
         }
 

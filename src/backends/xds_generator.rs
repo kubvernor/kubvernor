@@ -115,7 +115,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
             if let Some(added) = maybe_added {
                 match protocol_type {
                     ProtocolType::Http => {
-                        let (resolved, _) = listener.routes();
+                        let (resolved, _, _) = listener.routes();
                         let resolved: Vec<_> = resolved
                             .iter()
                             .filter(|r| match r {
@@ -142,7 +142,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
             } else {
                 match protocol_type {
                     ProtocolType::Http => {
-                        let (resolved, _) = listener.routes();
+                        let (resolved, _, _) = listener.routes();
                         let resolved: Vec<_> = resolved
                             .iter()
                             .filter(|r| match r {

@@ -1,10 +1,14 @@
+mod hostname_match_filter;
+mod route_listener_matcher;
 mod routes_resolver;
 mod tls_config_validator;
 
-use k8s_openapi::api::core::v1::Namespace;
+pub(crate) use hostname_match_filter::HostnameMatchFilter;
+pub(crate) use route_listener_matcher::RouteListenerMatcher;
 pub(crate) use routes_resolver::RoutesResolver;
 pub(crate) use tls_config_validator::ListenerTlsConfigValidator;
 
+use k8s_openapi::api::core::v1::Namespace;
 use std::{collections::BTreeMap, marker::PhantomData, sync::Arc};
 
 use gateway_api::apis::standard::gateways::Gateway;

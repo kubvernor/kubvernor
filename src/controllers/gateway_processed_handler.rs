@@ -71,7 +71,7 @@ impl<'a> GatewayProcessedHandler<'a> {
     }
 
     async fn update_routes(&self) {
-        let (attached_routes, ignored_routes) = self.effective_gateway.routes();
+        let (attached_routes, ignored_routes, routes_with_no_hostnames) = self.effective_gateway.routes();
         debug!("{} Attached routes {attached_routes:?}", &self.log_context);
         let gateway_id = &self.effective_gateway.key();
         let log_context = &self.log_context;
@@ -105,6 +105,38 @@ impl<'a> GatewayProcessedHandler<'a> {
         debug!("{log_context} Ignored routes  {ignored_routes:?}");
         for ignored_route in ignored_routes {
             let updated_route = self.update_rejected_route_parents(ignored_route, gateway_id);
+            if let Some(route) = updated_route {
+                let route_resource_key = ResourceKey::from(route.meta());
+                let version = route.resource_version().clone();
+                let (sender, receiver) = oneshot::channel();
+                let _res = self
+                    .route_patcher
+                    .send(Operation::PatchStatus(PatchContext {
+                        resource_key: route_resource_key.clone(),
+                        resource: route,
+                        controller_name: self.controller_name.clone(),
+                        version,
+                        response_sender: sender,
+                    }))
+                    .await;
+
+                let patched_route = receiver.await;
+                if let Ok(maybe_patched) = patched_route {
+                    match maybe_patched {
+                        Ok(_patched_route) => {
+                            //patched_route.metadata.resource_version = None;
+                            //self.state.save_http_route(route_resource_key, &Arc::new(patched_route));
+                        }
+                        Err(e) => {
+                            warn!("{log_context} Error while patching {e}");
+                        }
+                    }
+                }
+            }
+        }
+        debug!("{log_context} Routes with no hostnames  {routes_with_no_hostnames:?}");
+        for route_with_no_hostname in routes_with_no_hostnames {
+            let updated_route = self.update_non_attached_route_parents(route_with_no_hostname, gateway_id);
             if let Some(route) = updated_route {
                 let route_resource_key = ResourceKey::from(route.meta());
                 let version = route.resource_version().clone();
@@ -197,6 +229,41 @@ impl<'a> GatewayProcessedHandler<'a> {
             }
         };
         self.update_route_parents(rejected_route, gateway_id, ("Rejected", conditions))
+    }
+
+    fn update_non_attached_route_parents(&self, non_attached_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
+        let conditions = match non_attached_route.resolution_status() {
+            crate::common::ResolutionStatus::Resolved => vec![Condition {
+                last_transition_time: Time(Utc::now()),
+                message: "Updated by controller".to_owned(),
+                observed_generation: None,
+                reason: "NoMatchingListenerHostname".to_owned(),
+                status: "False".to_owned(),
+                type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+            }],
+
+            crate::common::ResolutionStatus::PartiallyResolved | crate::common::ResolutionStatus::NotResolved => {
+                vec![
+                    Condition {
+                        last_transition_time: Time(Utc::now()),
+                        message: "Updated by controller".to_owned(),
+                        observed_generation: None,
+                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs.to_string(),
+                        status: "False".to_owned(),
+                        type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                    },
+                    Condition {
+                        last_transition_time: Time(Utc::now()),
+                        message: "Updated by controller".to_owned(),
+                        observed_generation: None,
+                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::Programmed.to_string(),
+                        status: "False".to_owned(),
+                        type_: gateway_api::apis::standard::constants::ListenerConditionType::Programmed.to_string(),
+                    },
+                ]
+            }
+        };
+        self.update_route_parents(non_attached_route, gateway_id, ("Rejected", conditions))
     }
 
     fn update_route_parents(&self, route: &Route, gateway_id: &ResourceKey, (new_condition_name, mut new_conditions): (&'static str, Vec<Condition>)) -> Option<HTTPRoute> {
