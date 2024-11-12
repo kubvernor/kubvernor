@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
-use tracing::warn;
+use tracing::{error, warn};
 
 use super::envoy_deployer::TEMPLATES;
 use crate::common::{self, Backend, ProtocolType, Route};
@@ -40,7 +40,7 @@ type ListenerNameToHostname = (String, Option<String>);
 struct EnvoyVirutalHost {
     name: String,
     hostname: Option<String>,
-    route: Route,
+    routes: Vec<Route>,
 }
 
 impl Ord for EnvoyVirutalHost {
@@ -59,7 +59,7 @@ impl PartialOrd for EnvoyVirutalHost {
 
 impl PartialEq for EnvoyVirutalHost {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.hostname == other.hostname && self.route == other.route
+        self.name == other.name
     }
 }
 
@@ -117,22 +117,27 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     ProtocolType::Http => {
                         let (resolved, _, _) = listener.routes();
                         let resolved: Vec<_> = resolved
-                            .iter()
+                            .into_iter()
                             .filter(|r| match r {
                                 Route::Http(_) => true,
                                 Route::Grpc(_) => false,
                             })
                             .collect();
-                        added.http_listener_map.append(
-                            &mut resolved
-                                .into_iter()
-                                .map(|r| EnvoyVirutalHost {
-                                    name: listener_name.clone(),
-                                    hostname: listener_hostname.clone(),
-                                    route: (*r).clone(),
-                                })
-                                .collect(),
-                        );
+                        added.http_listener_map.insert(EnvoyVirutalHost {
+                            name: listener_name.clone(),
+                            hostname: listener_hostname.clone(),
+                            routes: resolved.into_iter().cloned().collect(),
+                        });
+                        // added.http_listener_map.append(
+                        //     &mut resolved
+                        //         .into_iter()
+                        //         .map(|r| EnvoyVirutalHost {
+                        //             name: listener_name.clone(),
+                        //             hostname: listener_hostname.clone(),
+                        //             routes: vec![(*r).clone()],
+                        //         })
+                        //         .collect(),
+                        // );
                     }
                     ProtocolType::Tcp => {
                         added.tcp_listener_map.insert((listener_name, listener_hostname));
@@ -144,20 +149,26 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     ProtocolType::Http => {
                         let (resolved, _, _) = listener.routes();
                         let resolved: Vec<_> = resolved
-                            .iter()
+                            .into_iter()
                             .filter(|r| match r {
                                 Route::Http(_) => true,
                                 Route::Grpc(_) => false,
                             })
                             .collect();
-                        let listener_map = resolved
-                            .into_iter()
-                            .map(|r| EnvoyVirutalHost {
-                                name: listener_name.clone(),
-                                hostname: listener_hostname.clone(),
-                                route: (*r).clone(),
-                            })
-                            .collect();
+                        let mut listener_map = BTreeSet::new();
+                        listener_map.insert(EnvoyVirutalHost {
+                            name: listener_name.clone(),
+                            hostname: listener_hostname.clone(),
+                            routes: resolved.into_iter().cloned().collect(),
+                        });
+                        // let listener_map = resolved
+                        //     .into_iter()
+                        //     .map(|r| EnvoyVirutalHost {
+                        //         name: listener_name.clone(),
+                        //         hostname: listener_hostname.clone(),
+                        //         routes: vec![(*r).clone()],
+                        //     })
+                        //     .collect();
 
                         acc.insert(
                             port,
@@ -201,6 +212,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
         #[derive(Serialize)]
         struct TeraVirtualHost {
             pub hostname: String,
+            pub hostnames: Vec<String>,
             pub route_configs: Vec<VeraRouteConfigs>,
         }
 
@@ -227,22 +239,24 @@ impl<'a> EnvoyXDSGenerator<'a> {
         let tvh: Vec<TeraVirtualHost> = http_listener_map
             .iter()
             .map(|evc| TeraVirtualHost {
-                hostname: evc.hostname.clone().unwrap_or("*".to_owned()),
+                hostname: evc.hostname.clone().map_or("*".to_owned(), |hostname| hostname.clone()),
+                hostnames: evc.hostname.clone().map_or(vec!["*".to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
                 route_configs: evc
-                    .route
-                    .routing_rules()
+                    .routes
                     .iter()
-                    .flat_map(|rr| {
-                        rr.matching_rules.iter().map(|mr| VeraRouteConfigs {
-                            path: mr.path.clone().map(|matcher| TeraPath {
-                                path: matcher.value.unwrap_or_default(),
-                                match_type: matcher.r#type.map_or(String::new(), |f| match f {
-                                    gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
-                                    gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => "prefix".to_owned(),
-                                    gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
+                    .flat_map(|r| {
+                        r.routing_rules().iter().flat_map(|rr| {
+                            rr.matching_rules.iter().map(|mr| VeraRouteConfigs {
+                                path: mr.path.clone().map(|matcher| TeraPath {
+                                    path: matcher.value.unwrap_or_default(),
+                                    match_type: matcher.r#type.map_or(String::new(), |f| match f {
+                                        gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
+                                        gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => "prefix".to_owned(),
+                                        gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
+                                    }),
                                 }),
-                            }),
-                            cluster_name: rr.name.clone(),
+                                cluster_name: rr.name.clone(),
+                            })
                         })
                     })
                     .collect(),
@@ -277,18 +291,20 @@ impl<'a> EnvoyXDSGenerator<'a> {
             .iter()
             .flat_map(|listener| {
                 listener.http_listener_map.iter().flat_map(|evc| {
-                    evc.route.routing_rules().iter().map(|rr| {
-                        let endpoints = rr
-                            .backends
-                            .iter()
-                            .map(Backend::config)
-                            .map(|r| TeraEndpoint {
-                                service: r.endpoint.clone(),
-                                port: r.port,
-                                weight: r.weight,
-                            })
-                            .collect();
-                        TeraCluster { name: rr.name.clone(), endpoints }
+                    evc.routes.iter().flat_map(|r| {
+                        r.routing_rules().iter().map(|rr| {
+                            let endpoints = rr
+                                .backends
+                                .iter()
+                                .map(Backend::config)
+                                .map(|r| TeraEndpoint {
+                                    service: r.endpoint.clone(),
+                                    port: r.port,
+                                    weight: r.weight,
+                                })
+                                .collect();
+                            TeraCluster { name: rr.name.clone(), endpoints }
+                        })
                     })
                 })
             })

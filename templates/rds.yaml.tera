@@ -4,8 +4,8 @@ resources:
   name: {{route.name}}
   virtual_hosts:{% for vc in route.virtual_hosts %}
   - name: backend-{{vc.hostname}}
-    domains:
-    - "{{vc.hostname}}"
+    domains:{% for hostname in vc.hostnames %}
+    - "{{hostname}}"{% endfor %}
     routes:{% for route_conf in vc.route_configs %}            
       - route:
           cluster: {{route_conf.cluster_name}}

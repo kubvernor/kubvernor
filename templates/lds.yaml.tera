@@ -12,6 +12,7 @@ resources:{% for listener in listeners %}
         - name: http_gateway
           typed_config:
             "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager                                        
+#            strip_any_host_port: true
             httpFilters:
               - name: envoy.filters.http.router
                 typedConfig:
