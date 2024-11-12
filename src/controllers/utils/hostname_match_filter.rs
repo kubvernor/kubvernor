@@ -12,19 +12,30 @@ impl<'a> HostnameMatchFilter<'a> {
     }
 
     pub fn filter(&self) -> bool {
-        let pattern = if self.listener_hostname.starts_with("*.") {
-            format! {"**+.{}",&self.listener_hostname[2..]}
+        if !self.route_hostnames.is_empty() && self.listener_hostname.is_empty() {
+            return true;
+        }
+
+        if self.route_hostnames.is_empty() {
+            return true;
+        }
+
+        let listener_hostname = self.listener_hostname.to_owned();
+
+        let pattern = if let Some(stripped) = listener_hostname.strip_prefix("*.") {
+            format! {"**+.{stripped}"}
         } else {
-            self.listener_hostname.to_owned()
+            listener_hostname.clone()
         };
+
         let mut wildcard_route_hostnames = vec![];
         if let Ok(pattern) = DomainPattern::<'_, '.'>::try_from(pattern.as_str()) {
             let maybe_filtered = self
                 .route_hostnames
                 .iter()
-                .filter(|r| {
+                .filter(|r: &&String| {
                     let res = pattern.matches(r);
-                    debug!("Comparing hostnames {} {} {}", self.listener_hostname, r, res);
+                    debug!("Comparing hostnames {} {} {}", listener_hostname, r, res);
                     if r.starts_with("*.") {
                         wildcard_route_hostnames.push(*r);
                     }
@@ -39,9 +50,9 @@ impl<'a> HostnameMatchFilter<'a> {
             } else {
                 for wildcarded_route in wildcard_route_hostnames {
                     if let Ok(pattern) = DomainPattern::<'_, '.'>::try_from(wildcarded_route.as_str()) {
-                        let res = pattern.matches(self.listener_hostname);
+                        let res = pattern.matches(&listener_hostname);
                         if res {
-                            debug!("Comparing wildcarded hostnames {} {} {}", self.listener_hostname, wildcarded_route, res);
+                            debug!("Comparing wildcarded hostnames {} {} {}", listener_hostname, wildcarded_route, res);
                             return true;
                         }
                     }
@@ -49,7 +60,7 @@ impl<'a> HostnameMatchFilter<'a> {
                 false
             }
         } else {
-            warn!("Hostname is not a valid domain {}", &self.listener_hostname);
+            warn!("Hostname is not a valid domain {}", &listener_hostname);
             false
         }
     }

@@ -13,7 +13,7 @@ use kube::{Resource, ResourceExt};
 use kube_core::ObjectMeta;
 use thiserror::Error;
 use tokio::sync::oneshot;
-use tracing::{debug, warn};
+
 use uuid::Uuid;
 
 use crate::controllers::ControllerError;

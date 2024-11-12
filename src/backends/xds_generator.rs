@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
-use tracing::{error, warn};
+use tracing::warn;
 
 use super::envoy_deployer::TEMPLATES;
 use crate::common::{self, Backend, ProtocolType, Route};
@@ -40,6 +40,7 @@ type ListenerNameToHostname = (String, Option<String>);
 struct EnvoyVirutalHost {
     name: String,
     hostname: Option<String>,
+    effective_hostnames: Vec<String>,
     routes: Vec<Route>,
 }
 
@@ -123,21 +124,15 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                 Route::Grpc(_) => false,
                             })
                             .collect();
+
+                        let effective_hostnames = Self::calculate_effective_hostnames(&resolved, listener.hostname().cloned());
+
                         added.http_listener_map.insert(EnvoyVirutalHost {
                             name: listener_name.clone(),
                             hostname: listener_hostname.clone(),
-                            routes: resolved.into_iter().cloned().collect(),
+                            effective_hostnames,
+                            routes: resolved.iter().map(|r| (**r).clone()).collect(),
                         });
-                        // added.http_listener_map.append(
-                        //     &mut resolved
-                        //         .into_iter()
-                        //         .map(|r| EnvoyVirutalHost {
-                        //             name: listener_name.clone(),
-                        //             hostname: listener_hostname.clone(),
-                        //             routes: vec![(*r).clone()],
-                        //         })
-                        //         .collect(),
-                        // );
                     }
                     ProtocolType::Tcp => {
                         added.tcp_listener_map.insert((listener_name, listener_hostname));
@@ -155,20 +150,16 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                 Route::Grpc(_) => false,
                             })
                             .collect();
+
+                        let effective_hostnames = Self::calculate_effective_hostnames(&resolved, listener.hostname().cloned());
+
                         let mut listener_map = BTreeSet::new();
                         listener_map.insert(EnvoyVirutalHost {
                             name: listener_name.clone(),
                             hostname: listener_hostname.clone(),
-                            routes: resolved.into_iter().cloned().collect(),
+                            effective_hostnames,
+                            routes: resolved.iter().map(|r| (**r).clone()).collect(),
                         });
-                        // let listener_map = resolved
-                        //     .into_iter()
-                        //     .map(|r| EnvoyVirutalHost {
-                        //         name: listener_name.clone(),
-                        //         hostname: listener_hostname.clone(),
-                        //         routes: vec![(*r).clone()],
-                        //     })
-                        //     .collect();
 
                         acc.insert(
                             port,
@@ -200,6 +191,18 @@ impl<'a> EnvoyXDSGenerator<'a> {
             acc
         });
         envoy_listeners
+    }
+
+    fn calculate_effective_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
+        let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {
+            acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
+            acc
+        });
+
+        match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
+            (true, false) => Vec::from_iter(routes_hostnames),
+            (_, _) => listener_hostname.map_or(vec!["*".to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
+        }
     }
 
     fn genereate_rds(listener: &EnvoyListener) -> Result<RdsData, Error> {
@@ -239,8 +242,9 @@ impl<'a> EnvoyXDSGenerator<'a> {
         let tvh: Vec<TeraVirtualHost> = http_listener_map
             .iter()
             .map(|evc| TeraVirtualHost {
-                hostname: evc.hostname.clone().map_or("*".to_owned(), |hostname| hostname.clone()),
-                hostnames: evc.hostname.clone().map_or(vec!["*".to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
+                hostname: evc.hostname.clone().map_or("default-accept-all".to_owned(), |hostname| hostname.clone()),
+                //hostnames: evc.hostname.clone().map_or(vec!["*".to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
+                hostnames: evc.effective_hostnames.clone(),
                 route_configs: evc
                     .routes
                     .iter()

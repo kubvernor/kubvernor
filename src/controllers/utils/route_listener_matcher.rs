@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
-    common::{self, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping},
+    common::{ResourceKey, Route, RouteToListenersMapping},
     state::State,
 };
 use gateway_api::apis::standard::{
