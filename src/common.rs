@@ -191,7 +191,15 @@ impl Listener {
         match self {
             Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
                 if !unresolved_routes.is_empty() {
-                    listener_data.conditions.replace(ListenerCondition::UnresolvedRouteRefs);
+                    if let Some(route) = unresolved_routes.first() {
+                        if route.has_invalid_backends() {
+                            listener_data
+                                .conditions
+                                .replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidBackend(APPROVED_ROUTES.iter().map(|s| (*s).to_owned()).collect())));
+                        }
+                    } else {
+                        listener_data.conditions.replace(ListenerCondition::UnresolvedRouteRefs);
+                    }
                 }
                 listener_data.routes_with_no_listeners = routes_with_no_listeners;
                 listener_data.attached_routes = unresolved_routes.len() + resolved_routes.len();
@@ -273,6 +281,15 @@ pub struct BackendServiceConfig {
     pub weight: i32,
 }
 
+impl BackendServiceConfig {
+    pub fn cluster_name(&self) -> String {
+        self.resource_key.name.clone() + "." + &self.resource_key.namespace
+    }
+    pub fn weight(&self) -> i32 {
+        self.weight
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RoutingRule {
     pub name: String,
@@ -292,12 +309,21 @@ pub enum Backend {
     Resolved(BackendServiceConfig),
     Unresolved(BackendServiceConfig),
     Maybe(BackendServiceConfig),
+    Invalid(BackendServiceConfig),
 }
+
 impl Backend {
     pub fn config(&self) -> &BackendServiceConfig {
         match self {
-            Backend::Resolved(backend_service_config) | Backend::Unresolved(backend_service_config) | Backend::Maybe(backend_service_config) => backend_service_config,
+            Backend::Resolved(s) | Backend::Unresolved(s) | Backend::Maybe(s) | Backend::Invalid(s) => s,
         }
+    }
+    pub fn cluster_name(&self) -> String {
+        self.config().cluster_name()
+    }
+
+    pub fn weight(&self) -> i32 {
+        self.config().weight()
     }
 }
 
@@ -307,6 +333,7 @@ pub struct RouteConfig {
     parents: Option<Vec<HTTPRouteParentRefs>>,
     pub routing_rules: Vec<RoutingRule>,
     hostnames: Vec<String>,
+    has_invalid_backends: bool,
     pub resolution_status: ResolutionStatus,
 }
 
@@ -387,6 +414,12 @@ impl Route {
             Route::Http(config) | Route::Grpc(config) => config,
         }
     }
+
+    pub fn has_invalid_backends(&self) -> bool {
+        match self {
+            Route::Http(config) | Route::Grpc(config) => config.has_invalid_backends,
+        }
+    }
 }
 
 impl TryFrom<&HTTPRoute> for Route {
@@ -397,6 +430,7 @@ impl TryFrom<&HTTPRoute> for Route {
         let local_namespace = key.namespace.clone();
 
         let empty_rules: Vec<HTTPRouteRules> = vec![];
+        let mut has_invalid_backends = false;
         let routing_rules = value.spec.rules.as_ref().unwrap_or(&empty_rules);
         let routing_rules = routing_rules
             .iter()
@@ -409,8 +443,8 @@ impl TryFrom<&HTTPRoute> for Route {
                     .as_ref()
                     .unwrap_or(&vec![])
                     .iter()
-                    .map(|br| {
-                        Backend::Maybe(BackendServiceConfig {
+                    .filter_map(|br| {
+                        let config = BackendServiceConfig {
                             resource_key: ResourceKey::from((br, local_namespace.clone())),
                             endpoint: if let Some(namespace) = br.namespace.as_ref() {
                                 format!("{}.{namespace}", br.name)
@@ -419,7 +453,17 @@ impl TryFrom<&HTTPRoute> for Route {
                             },
                             port: br.port.unwrap_or(0),
                             weight: br.weight.unwrap_or(1),
-                        })
+                        };
+                        if config.weight < 1 {
+                            None
+                        } else {
+                            Some(if br.kind.is_none() || br.kind == Some("Service".to_owned()) {
+                                Backend::Maybe(config)
+                            } else {
+                                has_invalid_backends = true;
+                                Backend::Invalid(config)
+                            })
+                        }
                     })
                     .collect(),
             })
@@ -439,6 +483,7 @@ impl TryFrom<&HTTPRoute> for Route {
             parents,
             routing_rules,
             hostnames,
+            has_invalid_backends,
             resolution_status: ResolutionStatus::NotResolved,
         };
 
@@ -751,11 +796,11 @@ impl From<(Option<String>, Option<String>, String, Option<String>)> for Resource
     }
 }
 
-impl From<&HTTPRouteParentRefs> for ResourceKey {
-    fn from(route_parent: &HTTPRouteParentRefs) -> Self {
+impl From<(&HTTPRouteParentRefs, String)> for ResourceKey {
+    fn from((route_parent, route_namespace): (&HTTPRouteParentRefs, String)) -> Self {
         Self {
             group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
-            namespace: route_parent.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
+            namespace: route_parent.namespace.clone().unwrap_or(route_namespace),
             name: route_parent.name.clone(),
             kind: route_parent.kind.clone().unwrap_or(DEFAULT_KIND_NAME.to_owned()),
         }
@@ -835,6 +880,7 @@ pub enum ResolvedRefs {
     ResolvedWithNotAllowedRoutes(Vec<String>),
     InvalidAllowedRoutes,
     InvalidCertificates(Vec<String>),
+    InvalidBackend(Vec<String>),
 }
 
 impl ResolvedRefs {
@@ -921,6 +967,12 @@ impl ListenerCondition {
         match self {
             ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes | ResolvedRefs::ResolvedWithNotAllowedRoutes(_)) => (
                 "False",
+                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
+                gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds,
+            ),
+
+            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidBackend(_)) => (
+                "True",
                 gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
                 gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds,
             ),

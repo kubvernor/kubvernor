@@ -47,7 +47,7 @@ impl<'a> RouteListenerMatcher<'a> {
         let mut routes_and_listeners: Vec<GatewayListeners> = vec![];
         if let Some(route_parents) = route_parents {
             for route_parent in route_parents {
-                let route_parent_key = ResourceKey::from(route_parent);
+                let route_parent_key = ResourceKey::from((route_parent, route_key.namespace.clone()));
                 let gateway_key = ResourceKey::from(&**self.gateway);
                 if route_parent_key.name == gateway_key.name && route_parent_key.namespace == gateway_key.namespace {
                     let matching_gateway_listeners = self.filter_listeners_by_namespace(self.gateway.spec.listeners.clone().into_iter(), gateway_key, route_key);
@@ -75,8 +75,9 @@ impl<'a> RouteListenerMatcher<'a> {
             .iter()
             .filter_map(|(parent_ref, maybe_gateway)| {
                 if let Some(gateway) = maybe_gateway {
-                    let parent_ref_key = ResourceKey::from(&**parent_ref);
                     let gateway_key = ResourceKey::from(&**gateway);
+                    let parent_ref_key = ResourceKey::from((&**parent_ref, gateway_key.namespace.clone()));
+
                     if parent_ref_key == gateway_key {
                         state.get_gateway(&gateway_key).cloned()
                     } else {

@@ -6,8 +6,13 @@ resources:
   - name: backend-{{vc.hostname}}
     domains:{% for hostname in vc.hostnames %}
     - "{{hostname}}"{% endfor %}
-    routes:{% for route_conf in vc.route_configs %}            
+    routes:{% for route_conf in vc.route_configs %}
       - route:
-          cluster: {{route_conf.cluster_name}}
+          cluster_not_found_response_code: INTERNAL_SERVER_ERROR
+          weighted_clusters:
+            clusters:{% for cluster_desc in route_conf.cluster_names %}
+              - name: {{cluster_desc.name}}
+                weight: {{cluster_desc.weight}}{% endfor %}
+              
         match:
           {{route_conf.path.match_type}}: {{route_conf.path.path}}{% endfor %}{% endfor %}          

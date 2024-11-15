@@ -29,18 +29,30 @@ impl<'a> RouteResolver<'a> {
         let mut unresolved_count = 0;
         for rule in &mut route_config.routing_rules {
             let mut new_backends = vec![];
-            for backend in &rule.backends {
+            for backend in rule.backends.clone() {
                 let client = self.client.clone();
-                let backend_config = backend.config().clone();
-                let backend_namespace = backend_config.resource_key.namespace.clone();
-                let backend_name = backend_config.resource_key.name.clone();
-                let service_api: Api<Service> = Api::namespaced(client, &backend_namespace);
-                if (service_api.get(&backend_name).await).is_ok() {
-                    new_backends.push(Backend::Resolved(backend_config));
-                } else {
-                    debug!("{} can't resolve {:?}", self.log_context, &backend_config.resource_key);
-                    new_backends.push(Backend::Unresolved(backend_config));
-                    unresolved_count += 1;
+                match backend {
+                    Backend::Maybe(backend_service_config) => {
+                        let backend_namespace = backend_service_config.resource_key.namespace.clone();
+                        let backend_name = backend_service_config.resource_key.name.clone();
+                        let service_api: Api<Service> = Api::namespaced(client, &backend_namespace);
+                        if (service_api.get(&backend_name).await).is_ok() {
+                            new_backends.push(Backend::Resolved(backend_service_config));
+                        } else {
+                            debug!("{} can't resolve {:?}", self.log_context, &backend_service_config.resource_key);
+                            new_backends.push(Backend::Unresolved(backend_service_config));
+                            unresolved_count += 1;
+                        }
+                    }
+                    Backend::Unresolved(_) | Backend::Invalid(_) => {
+                        unresolved_count += 1;
+                        debug!("Skipping unresolved backend {:?}", backend);
+                        new_backends.push(backend);
+                    }
+                    _ => {
+                        debug!("Skipping resolved/unupported backend {:?}", backend);
+                        new_backends.push(backend);
+                    }
                 }
             }
             rule.backends = new_backends;

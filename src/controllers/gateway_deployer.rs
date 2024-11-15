@@ -29,6 +29,8 @@ use crate::{
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
+const CONDITION_MESSAGE: &str = "Gateway updated by controller";
+
 pub struct GatewayDeployer<'a> {
     pub client: Client,
     pub log_context: &'a str,
@@ -92,7 +94,7 @@ impl<'a> GatewayDeployer<'a> {
             debug!("Adjusting conditions {} conditions {:#?}", name, conditions);
             if let Some(common::ListenerCondition::ResolvedRefs(resolved_refs)) = conditions.get(&common::ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes)) {
                 match resolved_refs {
-                    ResolvedRefs::Resolved(_) | ResolvedRefs::ResolvedWithNotAllowedRoutes(_) => {
+                    ResolvedRefs::Resolved(_) | ResolvedRefs::ResolvedWithNotAllowedRoutes(_) | ResolvedRefs::InvalidBackend(_) => {
                         conditions.replace(common::ListenerCondition::Accepted);
                         conditions.replace(common::ListenerCondition::Programmed);
                     }
@@ -102,7 +104,8 @@ impl<'a> GatewayDeployer<'a> {
                         conditions.replace(common::ListenerCondition::NotAccepted);
                     }
                     ResolvedRefs::InvalidCertificates(_) => {
-                        conditions.replace(common::ListenerCondition::NotAccepted);
+                        conditions.remove(&common::ListenerCondition::Accepted);
+                        conditions.replace(common::ListenerCondition::NotProgrammed);
                     }
                 }
             };
@@ -141,22 +144,26 @@ impl<'a> GatewayDeployer<'a> {
                 listener_conditions.retain(|c| c.type_ != type_);
                 match condition {
                     common::ListenerCondition::ResolvedRefs(
-                        ResolvedRefs::Resolved(allowed_routes) | ResolvedRefs::ResolvedWithNotAllowedRoutes(allowed_routes) | ResolvedRefs::InvalidCertificates(allowed_routes),
+                        ResolvedRefs::Resolved(_) | ResolvedRefs::InvalidBackend(_) | ResolvedRefs::ResolvedWithNotAllowedRoutes(_) | ResolvedRefs::InvalidCertificates(_),
                     ) => {
                         listener_conditions.push(Condition {
                             last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
+                            message: CONDITION_MESSAGE.to_owned(),
                             observed_generation: generation,
                             reason,
                             status,
                             type_,
                         });
-                        listener_status.supported_kinds = allowed_routes.iter().map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() }).collect();
+                        listener_status.supported_kinds = condition
+                            .supported_routes()
+                            .iter()
+                            .map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() })
+                            .collect();
                     }
                     common::ListenerCondition::UnresolvedRouteRefs => {
                         listener_conditions.push(Condition {
                             last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
+                            message: CONDITION_MESSAGE.to_owned(),
                             observed_generation: generation,
                             reason,
                             status,
@@ -171,7 +178,7 @@ impl<'a> GatewayDeployer<'a> {
                     _ => {
                         listener_conditions.push(Condition {
                             last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
+                            message: CONDITION_MESSAGE.to_owned(),
                             observed_generation: generation,
                             reason,
                             status,

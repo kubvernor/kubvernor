@@ -41,7 +41,8 @@ struct EnvoyVirutalHost {
     name: String,
     hostname: Option<String>,
     effective_hostnames: Vec<String>,
-    routes: Vec<Route>,
+    resolved_routes: Vec<Route>,
+    unresolved_routes: Vec<Route>,
 }
 
 impl Ord for EnvoyVirutalHost {
@@ -91,10 +92,11 @@ impl<'a> EnvoyXDSGenerator<'a> {
         let rds = listeners
             .iter()
             .filter_map(|listener| {
-                if let Ok(rds_content) = Self::genereate_rds(listener) {
+                let maybe_content = Self::genereate_rds(listener);
+                if let Ok(rds_content) = maybe_content {
                     Some(rds_content)
                 } else {
-                    warn!("Can't generate RDS data for {}-{}", listener.name, listener.port);
+                    warn!("Can't generate RDS data for {}-{}  {:?}", listener.name, listener.port, maybe_content);
                     None
                 }
             })
@@ -116,7 +118,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
             if let Some(added) = maybe_added {
                 match protocol_type {
                     ProtocolType::Http => {
-                        let (resolved, _, _) = listener.routes();
+                        let (resolved, unresolved, _) = listener.routes();
                         let resolved: Vec<_> = resolved
                             .into_iter()
                             .filter(|r| match r {
@@ -131,7 +133,8 @@ impl<'a> EnvoyXDSGenerator<'a> {
                             name: listener_name.clone(),
                             hostname: listener_hostname.clone(),
                             effective_hostnames,
-                            routes: resolved.iter().map(|r| (**r).clone()).collect(),
+                            resolved_routes: resolved.iter().map(|r| (**r).clone()).collect(),
+                            unresolved_routes: unresolved.iter().map(|r| (**r).clone()).collect(),
                         });
                     }
                     ProtocolType::Tcp => {
@@ -142,7 +145,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
             } else {
                 match protocol_type {
                     ProtocolType::Http => {
-                        let (resolved, _, _) = listener.routes();
+                        let (resolved, unresolved, _) = listener.routes();
                         let resolved: Vec<_> = resolved
                             .into_iter()
                             .filter(|r| match r {
@@ -158,7 +161,8 @@ impl<'a> EnvoyXDSGenerator<'a> {
                             name: listener_name.clone(),
                             hostname: listener_hostname.clone(),
                             effective_hostnames,
-                            routes: resolved.iter().map(|r| (**r).clone()).collect(),
+                            resolved_routes: resolved.iter().map(|r| (**r).clone()).collect(),
+                            unresolved_routes: unresolved.iter().map(|r| (**r).clone()).collect(),
                         });
 
                         acc.insert(
@@ -207,9 +211,16 @@ impl<'a> EnvoyXDSGenerator<'a> {
 
     fn genereate_rds(listener: &EnvoyListener) -> Result<RdsData, Error> {
         #[derive(Serialize)]
+        struct TeraClusterName {
+            pub name: String,
+            pub weight: i32,
+        }
+
+        #[derive(Serialize)]
         struct VeraRouteConfigs {
             pub path: Option<TeraPath>,
             pub cluster_name: String,
+            pub cluster_names: Vec<TeraClusterName>,
         }
 
         #[derive(Serialize)]
@@ -246,8 +257,9 @@ impl<'a> EnvoyXDSGenerator<'a> {
                 //hostnames: evc.hostname.clone().map_or(vec!["*".to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
                 hostnames: evc.effective_hostnames.clone(),
                 route_configs: evc
-                    .routes
+                    .resolved_routes
                     .iter()
+                    .chain(evc.unresolved_routes.iter())
                     .flat_map(|r| {
                         r.routing_rules().iter().flat_map(|rr| {
                             rr.matching_rules.iter().map(|mr| VeraRouteConfigs {
@@ -260,6 +272,14 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                     }),
                                 }),
                                 cluster_name: rr.name.clone(),
+                                cluster_names: rr
+                                    .backends
+                                    .iter()
+                                    .map(|b| TeraClusterName {
+                                        name: b.cluster_name(),
+                                        weight: b.weight(),
+                                    })
+                                    .collect(),
                             })
                         })
                     })
@@ -295,19 +315,22 @@ impl<'a> EnvoyXDSGenerator<'a> {
             .iter()
             .flat_map(|listener| {
                 listener.http_listener_map.iter().flat_map(|evc| {
-                    evc.routes.iter().flat_map(|r| {
-                        r.routing_rules().iter().map(|rr| {
-                            let endpoints = rr
-                                .backends
+                    evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
+                        r.routing_rules().iter().flat_map(|rr| {
+                            rr.backends
                                 .iter()
-                                .map(Backend::config)
-                                .map(|r| TeraEndpoint {
-                                    service: r.endpoint.clone(),
-                                    port: r.port,
-                                    weight: r.weight,
+                                .filter_map(|b| match b {
+                                    Backend::Resolved(backend_service_config) => Some(backend_service_config),
+                                    _ => None,
                                 })
-                                .collect();
-                            TeraCluster { name: rr.name.clone(), endpoints }
+                                .map(|r| TeraCluster {
+                                    name: r.cluster_name(),
+                                    endpoints: vec![TeraEndpoint {
+                                        service: r.endpoint.clone(),
+                                        port: r.port,
+                                        weight: r.weight,
+                                    }],
+                                })
                         })
                     })
                 })
