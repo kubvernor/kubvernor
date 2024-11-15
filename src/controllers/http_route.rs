@@ -384,51 +384,6 @@ impl HTTPRouteHandler<HTTPRoute> {
             .collect()
     }
 
-    // async fn deploy_route(
-    //     &self,
-    //     sender: &Sender<GatewayEvent>,
-    //     state: &mut State,
-    //     gateway: Arc<Gateway>,
-    //     route_to_listeners_mapping: Vec<RouteToListenersMapping>,
-    //     mut unresolved_linked_routes: Vec<Route>,
-    //     per_listener_calculated_attached_routes: HashMap<String, u32>,
-    // ) -> Result<Gateway> {
-    //     let log_context = self.log_context();
-
-    //     let maybe_gateway = common::Gateway::try_from(&*gateway);
-    //     let Ok(backend_gateway) = maybe_gateway else {
-    //         warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
-    //         return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
-    //     };
-
-    //     let resource_key = ResourceKey::from(&*gateway);
-
-    //     let (response_sender, response_receiver) = oneshot::channel();
-
-    //     let route_event = GatewayEvent::RouteChanged(ChangedContext::new(response_sender, backend_gateway, (*gateway).clone(), route_to_listeners_mapping));
-
-    //     let _ = sender.send(route_event).await;
-    //     let response = response_receiver.await;
-
-    //     if let Ok(GatewayResponse::GatewayProcessed(mut gateway_processed)) = response {
-    //         gateway_processed.ignored_routes.append(&mut unresolved_linked_routes);
-    //         let gateway_event_handler = GatewayProcessedHandler {
-    //             gateway_processed_payload: gateway_processed,
-    //             gateway: (*gateway).clone(),
-    //             state,
-    //             log_context: log_context.to_string(),
-    //             resource_key,
-    //             route_patcher: self.http_route_patcher.clone(),
-    //             controller_name: self.controller_name.clone(),
-    //             per_listener_calculated_attached_routes,
-    //         };
-    //         gateway_event_handler.deploy_gateway().await
-    //     } else {
-    //         warn!("{log_context} {response:?} ... Problem {response:?}");
-    //         Err(ControllerError::BackendError)
-    //     }
-    // }
-
     async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
         let controller_name = &self.controller_name;
         state.save_http_route(id, resource);

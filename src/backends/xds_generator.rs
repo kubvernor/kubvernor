@@ -217,8 +217,16 @@ impl<'a> EnvoyXDSGenerator<'a> {
         }
 
         #[derive(Serialize)]
+        struct TeraHeader {
+            pub name: String,
+            pub value: String,
+            pub match_type: String,
+        }
+
+        #[derive(Serialize)]
         struct VeraRouteConfigs {
             pub path: Option<TeraPath>,
+            pub headers: Option<Vec<TeraHeader>>,
             pub cluster_name: String,
             pub cluster_names: Vec<TeraClusterName>,
         }
@@ -252,11 +260,8 @@ impl<'a> EnvoyXDSGenerator<'a> {
 
         let tvh: Vec<TeraVirtualHost> = http_listener_map
             .iter()
-            .map(|evc| TeraVirtualHost {
-                hostname: evc.hostname.clone().map_or("default-accept-all".to_owned(), |hostname| hostname.clone()),
-                //hostnames: evc.hostname.clone().map_or(vec!["*".to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
-                hostnames: evc.effective_hostnames.clone(),
-                route_configs: evc
+            .map(|evc| {
+                let mut route_configs: Vec<_> = evc
                     .resolved_routes
                     .iter()
                     .chain(evc.unresolved_routes.iter())
@@ -271,6 +276,16 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                         gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
                                     }),
                                 }),
+                                headers: mr.headers.clone().map(|headers| {
+                                    headers
+                                        .iter()
+                                        .map(|header| TeraHeader {
+                                            name: header.name.clone(),
+                                            value: header.value.clone(),
+                                            match_type: "exact".to_owned(),
+                                        })
+                                        .collect::<Vec<TeraHeader>>()
+                                }),
                                 cluster_name: rr.name.clone(),
                                 cluster_names: rr
                                     .backends
@@ -283,7 +298,20 @@ impl<'a> EnvoyXDSGenerator<'a> {
                             })
                         })
                     })
-                    .collect(),
+                    .collect();
+                route_configs.sort_by(|a, b| match (&a.headers, &b.headers) {
+                    (None, None) => std::cmp::Ordering::Equal,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (Some(v1), Some(v2)) => v2.len().cmp(&v1.len()),
+                });
+
+                TeraVirtualHost {
+                    hostname: evc.hostname.clone().map_or("default-accept-all".to_owned(), |hostname| hostname.clone()),
+                    //hostnames: evc.hostname.clone().map_or(vec!["*".to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
+                    hostnames: evc.effective_hostnames.clone(),
+                    route_configs,
+                }
             })
             .collect();
         let route_name = format!("{}-{}-route", name.clone(), port);

@@ -447,7 +447,13 @@ impl TryFrom<&HTTPRoute> for Route {
                         let config = BackendServiceConfig {
                             resource_key: ResourceKey::from((br, local_namespace.clone())),
                             endpoint: if let Some(namespace) = br.namespace.as_ref() {
-                                format!("{}.{namespace}", br.name)
+                                if *namespace == DEFAULT_NAMESPACE_NAME {
+                                    br.name.clone()
+                                } else {
+                                    format!("{}.{namespace}", br.name)
+                                }
+                            } else if local_namespace == DEFAULT_NAMESPACE_NAME {
+                                br.name.clone()
                             } else {
                                 format!("{}.{local_namespace}", br.name)
                             },
