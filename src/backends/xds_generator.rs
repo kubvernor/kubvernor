@@ -1,10 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use super::envoy_deployer::TEMPLATES;
-use crate::common::{self, Backend, ProtocolType, Route};
+use crate::{
+    common::{self, Backend, EffectiveRoutingRule, Listener, ProtocolType, Route, DEFAULT_ROUTE_HOSTNAME},
+    controllers::HostnameMatchFilter,
+};
 #[derive(Debug)]
 pub struct RdsData {
     pub route_name: String,
@@ -43,6 +46,7 @@ struct EnvoyVirutalHost {
     effective_hostnames: Vec<String>,
     resolved_routes: Vec<Route>,
     unresolved_routes: Vec<Route>,
+    effective_matching_rules: Vec<EffectiveRoutingRule>,
 }
 
 impl Ord for EnvoyVirutalHost {
@@ -84,10 +88,10 @@ impl<'a> EnvoyXDSGenerator<'a> {
         Self { effective_gateway }
     }
     pub fn generate_xds(&self) -> Result<XdsData, Error> {
-        let collapsed_listeners = self.collapse_listeners_and_routes();
+        let envoy_listeners = self.generate_envoy_representation();
 
-        warn!("Collapsed listeners {collapsed_listeners:#?}");
-        let listeners = &collapsed_listeners.values().cloned().collect::<Vec<_>>();
+        warn!("Collapsed envoy listeners {envoy_listeners:#?}");
+        let listeners = &envoy_listeners.values().cloned().collect::<Vec<_>>();
         let lds = Self::generate_lds(listeners)?;
         let rds = listeners
             .iter()
@@ -105,7 +109,8 @@ impl<'a> EnvoyXDSGenerator<'a> {
         let cds = Self::genereate_cds(listeners)?;
         Ok(XdsData::new(lds, rds, cds))
     }
-    fn collapse_listeners_and_routes(&self) -> BTreeMap<i32, EnvoyListener> {
+
+    fn generate_envoy_representation(&self) -> BTreeMap<i32, EnvoyListener> {
         let gateway = self.effective_gateway;
         let envoy_listeners = gateway.listeners().fold(BTreeMap::<i32, EnvoyListener>::new(), |mut acc, listener| {
             let port = listener.port();
@@ -115,65 +120,22 @@ impl<'a> EnvoyXDSGenerator<'a> {
             let protocol_type = listener.protocol();
             let maybe_added = acc.get_mut(&port);
 
-            if let Some(added) = maybe_added {
+            if let Some(envoy_listener) = maybe_added {
                 match protocol_type {
                     ProtocolType::Http => {
-                        let (resolved, unresolved, _) = listener.routes();
-                        let resolved: Vec<_> = resolved
-                            .into_iter()
-                            .filter(|r| match r {
-                                Route::Http(_) => true,
-                                Route::Grpc(_) => false,
-                            })
-                            .collect();
-
-                        let effective_hostnames = Self::calculate_effective_hostnames(&resolved, listener.hostname().cloned());
-
-                        added.http_listener_map.insert(EnvoyVirutalHost {
-                            name: listener_name.clone(),
-                            hostname: listener_hostname.clone(),
-                            effective_hostnames,
-                            resolved_routes: resolved.iter().map(|r| (**r).clone()).collect(),
-                            unresolved_routes: unresolved.iter().map(|r| (**r).clone()).collect(),
-                        });
+                        let mut new_listener = Self::generate_virtual_hosts(gateway_name, listener);
+                        envoy_listener.http_listener_map.append(&mut new_listener.http_listener_map);
                     }
                     ProtocolType::Tcp => {
-                        added.tcp_listener_map.insert((listener_name, listener_hostname));
+                        envoy_listener.tcp_listener_map.insert((listener_name, listener_hostname));
                     }
                     _ => (),
                 }
             } else {
                 match protocol_type {
                     ProtocolType::Http => {
-                        let (resolved, unresolved, _) = listener.routes();
-                        let resolved: Vec<_> = resolved
-                            .into_iter()
-                            .filter(|r| match r {
-                                Route::Http(_) => true,
-                                Route::Grpc(_) => false,
-                            })
-                            .collect();
-
-                        let effective_hostnames = Self::calculate_effective_hostnames(&resolved, listener.hostname().cloned());
-
-                        let mut listener_map = BTreeSet::new();
-                        listener_map.insert(EnvoyVirutalHost {
-                            name: listener_name.clone(),
-                            hostname: listener_hostname.clone(),
-                            effective_hostnames,
-                            resolved_routes: resolved.iter().map(|r| (**r).clone()).collect(),
-                            unresolved_routes: unresolved.iter().map(|r| (**r).clone()).collect(),
-                        });
-
-                        acc.insert(
-                            port,
-                            EnvoyListener {
-                                name: gateway_name,
-                                port,
-                                http_listener_map: listener_map,
-                                tcp_listener_map: BTreeSet::new(),
-                            },
-                        );
+                        let envoy_listener = Self::generate_virtual_hosts(gateway_name, listener);
+                        acc.insert(port, envoy_listener);
                     }
                     ProtocolType::Tcp => {
                         let mut listener_map = BTreeSet::new();
@@ -197,6 +159,61 @@ impl<'a> EnvoyXDSGenerator<'a> {
         envoy_listeners
     }
 
+    fn generate_virtual_hosts(gateway_name: String, listener: &Listener) -> EnvoyListener {
+        let (resolved, unresolved, _) = listener.routes();
+        let resolved: Vec<_> = resolved
+            .into_iter()
+            .filter(|r| match r {
+                Route::Http(_) => true,
+                Route::Grpc(_) => false,
+            })
+            .collect();
+
+        let mut listener_map = BTreeSet::new();
+        let potential_hostnames = Self::calculate_potential_hostnames(&resolved, listener.hostname().cloned());
+        debug!("generate_virtual_hosts Potential hostnames {potential_hostnames:?}");
+        for potential_hostname in potential_hostnames {
+            let effective_matching_rules = listener
+                .effective_matching_rules()
+                .into_iter()
+                .filter(|&em| {
+                    let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
+                    debug!("generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
+                    filtered
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+
+            listener_map.insert(EnvoyVirutalHost {
+                effective_matching_rules,
+                name: listener.name().to_owned() + "-" + &potential_hostname,
+                hostname: listener.hostname().cloned(),
+                effective_hostnames: Self::calculate_effective_hostnames(&resolved, Some(potential_hostname)),
+                resolved_routes: resolved.iter().map(|r| (**r).clone()).collect(),
+                unresolved_routes: unresolved.iter().map(|r| (**r).clone()).collect(),
+            });
+        }
+
+        EnvoyListener {
+            name: gateway_name,
+            port: listener.port(),
+            http_listener_map: listener_map,
+            tcp_listener_map: BTreeSet::new(),
+        }
+    }
+
+    fn calculate_potential_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
+        let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {
+            acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
+            acc
+        });
+
+        match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
+            (true, false) => Vec::from_iter(routes_hostnames),
+            (_, _) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![hostname]),
+        }
+    }
+
     fn calculate_effective_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
         let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {
             acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
@@ -205,7 +222,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
 
         match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
             (true, false) => Vec::from_iter(routes_hostnames),
-            (_, _) => listener_hostname.map_or(vec!["*".to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
+            (_, _) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
         }
     }
 
@@ -261,54 +278,52 @@ impl<'a> EnvoyXDSGenerator<'a> {
         let tvh: Vec<TeraVirtualHost> = http_listener_map
             .iter()
             .map(|evc| {
-                let mut route_configs: Vec<_> = evc
-                    .resolved_routes
+                let route_configs = evc
+                    .effective_matching_rules
                     .iter()
-                    .chain(evc.unresolved_routes.iter())
-                    .flat_map(|r| {
-                        r.routing_rules().iter().flat_map(|rr| {
-                            rr.matching_rules.iter().map(|mr| VeraRouteConfigs {
-                                path: mr.path.clone().map(|matcher| TeraPath {
-                                    path: matcher.value.unwrap_or_default(),
-                                    match_type: matcher.r#type.map_or(String::new(), |f| match f {
-                                        gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
-                                        gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => "prefix".to_owned(),
-                                        gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
-                                    }),
-                                }),
-                                headers: mr.headers.clone().map(|headers| {
-                                    headers
-                                        .iter()
-                                        .map(|header| TeraHeader {
-                                            name: header.name.clone(),
-                                            value: header.value.clone(),
-                                            match_type: "exact".to_owned(),
-                                        })
-                                        .collect::<Vec<TeraHeader>>()
-                                }),
-                                cluster_name: rr.name.clone(),
-                                cluster_names: rr
-                                    .backends
-                                    .iter()
-                                    .map(|b| TeraClusterName {
-                                        name: b.cluster_name(),
-                                        weight: b.weight(),
-                                    })
-                                    .collect(),
+                    .map(|er| VeraRouteConfigs {
+                        path: er.route_matcher.path.clone().map(|matcher| TeraPath {
+                            path: matcher.value.clone().unwrap_or_default(),
+                            match_type: matcher.r#type.map_or(String::new(), |f| match f {
+                                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
+                                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
+                                    if let Some(val) = matcher.value {
+                                        if val == "/" {
+                                            "prefix".to_owned()
+                                        } else {
+                                            "path_separated_prefix".to_owned()
+                                        }
+                                    } else {
+                                        "prefix".to_owned()
+                                    }
+                                }
+                                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
+                            }),
+                        }),
+                        headers: er.route_matcher.headers.clone().map(|headers| {
+                            headers
+                                .iter()
+                                .map(|header| TeraHeader {
+                                    name: header.name.clone(),
+                                    value: header.value.clone(),
+                                    match_type: "exact".to_owned(),
+                                })
+                                .collect::<Vec<TeraHeader>>()
+                        }),
+                        cluster_name: er.name.clone(),
+                        cluster_names: er
+                            .backends
+                            .iter()
+                            .map(|b| TeraClusterName {
+                                name: b.cluster_name(),
+                                weight: b.weight(),
                             })
-                        })
+                            .collect(),
                     })
                     .collect();
-                route_configs.sort_by(|a, b| match (&a.headers, &b.headers) {
-                    (None, None) => std::cmp::Ordering::Equal,
-                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                    (Some(_), None) => std::cmp::Ordering::Less,
-                    (Some(v1), Some(v2)) => v2.len().cmp(&v1.len()),
-                });
 
                 TeraVirtualHost {
                     hostname: evc.hostname.clone().map_or("default-accept-all".to_owned(), |hostname| hostname.clone()),
-                    //hostnames: evc.hostname.clone().map_or(vec!["*".to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
                     hostnames: evc.effective_hostnames.clone(),
                     route_configs,
                 }
@@ -362,6 +377,24 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         })
                     })
                 })
+                // listener.http_listener_map.iter().flat_map(|evc| {
+                //     evc.effective_matching_rules.iter().flat_map(|r| {
+                //         r.backends
+                //             .iter()
+                //             .filter_map(|b| match b {
+                //                 Backend::Resolved(backend_service_config) => Some(backend_service_config),
+                //                 _ => None,
+                //             })
+                //             .map(|r| TeraCluster {
+                //                 name: r.cluster_name(),
+                //                 endpoints: vec![TeraEndpoint {
+                //                     service: r.endpoint.clone(),
+                //                     port: r.port,
+                //                     weight: r.weight,
+                //                 }],
+                //             })
+                //     })
+                // })
             })
             .collect();
 

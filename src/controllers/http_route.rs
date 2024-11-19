@@ -27,7 +27,7 @@ use super::{
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, GatewayEvent, ResourceKey, Route, VerifiyItems},
+    common::{GatewayEvent, ResourceKey, Route, VerifiyItems},
     controllers::gateway_deployer::GatewayDeployer,
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,

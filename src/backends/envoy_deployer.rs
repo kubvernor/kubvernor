@@ -278,7 +278,7 @@ impl EnvoyDeployerChannelHandler {
             Volume {
                 name: "envoy-config".to_owned(),
                 config_map: Some(ConfigMapVolumeSource {
-                    name: Some(boostrap_cm),
+                    name: boostrap_cm,
                     items: Some(vec![KeyToPath {
                         key: "envoy-bootstrap.yaml".to_owned(),
                         path: "envoy-bootstrap.yaml".to_owned(),
@@ -290,16 +290,15 @@ impl EnvoyDeployerChannelHandler {
             },
             Volume {
                 name: "envoy-xds".to_owned(),
-                config_map: Some(ConfigMapVolumeSource {
-                    name: Some(xds_cm),
-                    ..Default::default()
-                }),
+                config_map: Some(ConfigMapVolumeSource { name: xds_cm, ..Default::default() }),
                 ..Default::default()
             },
         ]);
-
+        //let mut annotations = BTreeMap::new();
+        //annotations.insert("gateway-version".to_owned(), Uuid::new_v4().to_string());
         Deployment {
             metadata: ObjectMeta {
+                //annotations: Some(annotations.clone()),
                 name: Some(gateway.name().to_owned()),
                 namespace: Some(gateway.namespace().to_owned()),
                 labels: Some(labels.clone()),
@@ -314,6 +313,7 @@ impl EnvoyDeployerChannelHandler {
                 template: PodTemplateSpec {
                     metadata: Some(ObjectMeta {
                         labels: Some(labels.clone()),
+                        //annotations: Some(annotations),
                         ..Default::default()
                     }),
                     spec: Some(pod_spec),

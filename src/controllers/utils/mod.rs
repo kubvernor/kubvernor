@@ -3,7 +3,7 @@ mod route_listener_matcher;
 mod routes_resolver;
 mod tls_config_validator;
 
-pub(crate) use hostname_match_filter::HostnameMatchFilter;
+pub use hostname_match_filter::HostnameMatchFilter;
 pub(crate) use route_listener_matcher::RouteListenerMatcher;
 pub(crate) use routes_resolver::RoutesResolver;
 pub(crate) use tls_config_validator::ListenerTlsConfigValidator;

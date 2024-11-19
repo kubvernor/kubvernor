@@ -49,7 +49,7 @@ impl<'a> RouteResolver<'a> {
                         debug!("Skipping unresolved backend {:?}", backend);
                         new_backends.push(backend);
                     }
-                    _ => {
+                    Backend::Resolved(_) => {
                         debug!("Skipping resolved/unupported backend {:?}", backend);
                         new_backends.push(backend);
                     }

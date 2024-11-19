@@ -14,7 +14,7 @@ use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     common::{self, ChangedContext, GatewayEvent, GatewayResponse, ResolvedRefs},
@@ -56,7 +56,7 @@ impl<'a> GatewayDeployer<'a> {
         let mut backend_gateway = RoutesResolver::new(backend_gateway, self.client.clone(), log_context, self.state, self.kube_gateway).validate().await;
         Self::adjust_statuses(&mut backend_gateway);
         self.resolve_listeners_statuses(&backend_gateway, &mut updated_kube_gateway);
-        debug!("Effective gateway {}-{} {:#?}", backend_gateway.name(), backend_gateway.namespace(), backend_gateway);
+        info!("Effective gateway {}-{} {:#?}", backend_gateway.name(), backend_gateway.namespace(), backend_gateway);
 
         let (response_sender, response_receiver) = oneshot::channel();
         let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway));

@@ -1,6 +1,8 @@
 use eater_domainmatcher::DomainPattern;
 use tracing::{debug, warn};
 
+use crate::common::DEFAULT_ROUTE_HOSTNAME;
+
 pub struct HostnameMatchFilter<'a> {
     listener_hostname: &'a str,
     route_hostnames: &'a [String],
@@ -18,6 +20,12 @@ impl<'a> HostnameMatchFilter<'a> {
 
         if self.route_hostnames.is_empty() {
             return true;
+        }
+
+        if let Some(hostname) = self.route_hostnames.first() {
+            if hostname == DEFAULT_ROUTE_HOSTNAME {
+                return true;
+            }
         }
 
         let listener_hostname = self.listener_hostname.to_owned();
