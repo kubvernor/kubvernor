@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use k8s_openapi::api::core::v1::HTTPHeader;
 use serde::Serialize;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use super::envoy_deployer::TEMPLATES;
 use crate::{
-    common::{self, Backend, EffectiveRoutingRule, Listener, ProtocolType, Route, DEFAULT_ROUTE_HOSTNAME},
+    common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, DEFAULT_ROUTE_HOSTNAME},
     controllers::HostnameMatchFilter,
 };
 #[derive(Debug)]
@@ -90,7 +91,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
     pub fn generate_xds(&self) -> Result<XdsData, Error> {
         let envoy_listeners = self.generate_envoy_representation();
 
-        warn!("Collapsed envoy listeners {envoy_listeners:#?}");
+        info!("Collapsed envoy listeners {envoy_listeners:#?}");
         let listeners = &envoy_listeners.values().cloned().collect::<Vec<_>>();
         let lds = Self::generate_lds(listeners)?;
         let rds = listeners
@@ -234,7 +235,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
         }
 
         #[derive(Serialize)]
-        struct TeraHeader {
+        struct TeraMatchHeader {
             pub name: String,
             pub value: String,
             pub match_type: String,
@@ -243,9 +244,32 @@ impl<'a> EnvoyXDSGenerator<'a> {
         #[derive(Serialize)]
         struct VeraRouteConfigs {
             pub path: Option<TeraPath>,
-            pub headers: Option<Vec<TeraHeader>>,
+            pub headers: Option<Vec<TeraMatchHeader>>,
             pub cluster_name: String,
             pub cluster_names: Vec<TeraClusterName>,
+        }
+
+        #[derive(Serialize, Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        enum FilterHeaderAction {
+            AppendIfExistsOrAdd,
+            OverwriteIfExistsOrAdd,
+        }
+
+        #[derive(Serialize, Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
+        pub struct TeraFilterHeader {
+            name: String,
+            value: String,
+            action: FilterHeaderAction,
+        }
+        impl From<HttpHeader> for TeraFilterHeader {
+            fn from(header: HttpHeader) -> Self {
+                Self {
+                    name: header.name,
+                    value: header.value,
+                    action: FilterHeaderAction::AppendIfExistsOrAdd,
+                }
+            }
         }
 
         #[derive(Serialize)]
@@ -253,6 +277,8 @@ impl<'a> EnvoyXDSGenerator<'a> {
             pub hostname: String,
             pub hostnames: Vec<String>,
             pub route_configs: Vec<VeraRouteConfigs>,
+            pub headers_to_add_or_set: BTreeSet<TeraFilterHeader>,
+            pub headers_to_remove: BTreeSet<String>,
         }
 
         #[derive(Serialize)]
@@ -303,12 +329,12 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         headers: er.route_matcher.headers.clone().map(|headers| {
                             headers
                                 .iter()
-                                .map(|header| TeraHeader {
+                                .map(|header| TeraMatchHeader {
                                     name: header.name.clone(),
                                     value: header.value.clone(),
                                     match_type: "exact".to_owned(),
                                 })
-                                .collect::<Vec<TeraHeader>>()
+                                .collect::<Vec<TeraMatchHeader>>()
                         }),
                         cluster_name: er.name.clone(),
                         cluster_names: er
@@ -322,10 +348,30 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     })
                     .collect();
 
+                let headers_to_add: BTreeSet<_> = evc
+                    .effective_matching_rules
+                    .iter()
+                    .flat_map(|er| er.headers_to_add.clone().into_iter())
+                    .map(TeraFilterHeader::from)
+                    .collect();
+                let headers_to_set: BTreeSet<_> = evc
+                    .effective_matching_rules
+                    .iter()
+                    .flat_map(|er| er.headers_to_set.clone().into_iter())
+                    .map(TeraFilterHeader::from)
+                    .map(|mut th| {
+                        th.action = FilterHeaderAction::OverwriteIfExistsOrAdd;
+                        th
+                    })
+                    .collect();
+                let headers_to_remove: BTreeSet<String> = evc.effective_matching_rules.iter().flat_map(|er| er.headers_to_remove.clone().into_iter()).collect();
+
                 TeraVirtualHost {
                     hostname: evc.hostname.clone().map_or("default-accept-all".to_owned(), |hostname| hostname.clone()),
                     hostnames: evc.effective_hostnames.clone(),
                     route_configs,
+                    headers_to_add_or_set: headers_to_add.into_iter().chain(headers_to_set).collect(),
+                    headers_to_remove,
                 }
             })
             .collect();
@@ -340,13 +386,13 @@ impl<'a> EnvoyXDSGenerator<'a> {
     }
 
     fn genereate_cds(listeners: &[EnvoyListener]) -> Result<String, Error> {
-        #[derive(Serialize, Debug)]
+        #[derive(Serialize, Debug, PartialEq, PartialOrd, Ord, Eq)]
         pub struct TeraEndpoint {
             pub service: String,
             pub port: i32,
             pub weight: i32,
         }
-        #[derive(Serialize, Debug)]
+        #[derive(Serialize, Debug, PartialEq, PartialOrd, Ord, Eq)]
         pub struct TeraCluster {
             pub name: String,
             pub endpoints: Vec<TeraEndpoint>,
@@ -354,7 +400,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
 
         let mut tera_context = tera::Context::new();
 
-        let tera_clusters: Vec<TeraCluster> = listeners
+        let tera_clusters: BTreeSet<TeraCluster> = listeners
             .iter()
             .flat_map(|listener| {
                 listener.http_listener_map.iter().flat_map(|evc| {
@@ -377,24 +423,6 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         })
                     })
                 })
-                // listener.http_listener_map.iter().flat_map(|evc| {
-                //     evc.effective_matching_rules.iter().flat_map(|r| {
-                //         r.backends
-                //             .iter()
-                //             .filter_map(|b| match b {
-                //                 Backend::Resolved(backend_service_config) => Some(backend_service_config),
-                //                 _ => None,
-                //             })
-                //             .map(|r| TeraCluster {
-                //                 name: r.cluster_name(),
-                //                 endpoints: vec![TeraEndpoint {
-                //                     service: r.endpoint.clone(),
-                //                     port: r.port,
-                //                     weight: r.weight,
-                //                 }],
-                //             })
-                //     })
-                // })
             })
             .collect();
 

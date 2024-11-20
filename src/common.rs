@@ -8,14 +8,18 @@ use std::{
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
     gateways::{self, Gateway as KubeGateway, GatewayListeners},
-    httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesBackendRefs, HTTPRouteRulesMatches},
+    httproutes::{
+        HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesBackendRefs, HTTPRouteRulesFilters, HTTPRouteRulesFiltersRequestHeaderModifierAdd, HTTPRouteRulesFiltersRequestHeaderModifierSet,
+        HTTPRouteRulesFiltersType, HTTPRouteRulesMatches,
+    },
 };
+use k8s_openapi::api::core::v1::HTTPHeader;
 use kube::{Resource, ResourceExt};
 use kube_core::ObjectMeta;
 use thiserror::Error;
 use tokio::sync::oneshot;
 
-use tracing::warn;
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::controllers::ControllerError;
@@ -221,7 +225,7 @@ impl Listener {
 
     pub fn effective_matching_rules(&self) -> Vec<&EffectiveRoutingRule> {
         let (resolved_routes, unresolved, _) = self.routes();
-        let mut matching_rules: Vec<_> = resolved_routes.iter().chain(unresolved.iter()).flat_map(|r| r.effective_matching_rules()).collect();
+        let mut matching_rules: Vec<_> = resolved_routes.iter().chain(unresolved.iter()).flat_map(|r| r.effective_routing_rules()).collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
         //matching_rules.reverse();
         matching_rules
@@ -305,6 +309,7 @@ pub struct RoutingRule {
     pub name: String,
     pub backends: Vec<Backend>,
     pub matching_rules: Vec<HTTPRouteRulesMatches>,
+    pub filters: Vec<HTTPRouteRulesFilters>,
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -343,6 +348,9 @@ pub struct EffectiveRoutingRule {
     pub backends: Vec<Backend>,
     pub name: String,
     pub hostnames: Vec<String>,
+    pub headers_to_add: Vec<HttpHeader>,
+    pub headers_to_remove: Vec<String>,
+    pub headers_to_set: Vec<HttpHeader>,
 }
 impl PartialOrd for EffectiveRoutingRule {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -427,7 +435,7 @@ impl EffectiveRoutingRule {
         } else {
             query_match
         };
-        warn!("Comparing {this:#?} {other:#?} {result:?} {path_match:?} {header_match:?} {query_match:?} {method_match:?}");
+        debug!("Comparing {this:#?} {other:#?} {result:?} {path_match:?} {header_match:?} {query_match:?} {method_match:?}");
         result
     }
 }
@@ -533,9 +541,33 @@ impl Route {
         }
     }
 
-    pub fn effective_matching_rules(&self) -> &[EffectiveRoutingRule] {
+    pub fn effective_routing_rules(&self) -> &[EffectiveRoutingRule] {
         match self {
             Route::Http(c) | Route::Grpc(c) => &c.effective_routing_rules,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HttpHeader {
+    pub name: String,
+    pub value: String,
+}
+
+impl From<&HTTPRouteRulesFiltersRequestHeaderModifierAdd> for HttpHeader {
+    fn from(modifier: &HTTPRouteRulesFiltersRequestHeaderModifierAdd) -> Self {
+        Self {
+            name: modifier.name.clone(),
+            value: modifier.value.clone(),
+        }
+    }
+}
+
+impl From<&HTTPRouteRulesFiltersRequestHeaderModifierSet> for HttpHeader {
+    fn from(modifier: &HTTPRouteRulesFiltersRequestHeaderModifierSet) -> Self {
+        Self {
+            name: modifier.name.clone(),
+            value: modifier.value.clone(),
         }
     }
 }
@@ -556,6 +588,7 @@ impl TryFrom<&HTTPRoute> for Route {
             .map(|(i, rr)| RoutingRule {
                 name: format!("{}-{i}", value.name_any()),
                 matching_rules: rr.matches.clone().unwrap_or_default(),
+                filters: rr.filters.clone().unwrap_or_default(),
                 backends: rr
                     .backend_refs
                     .as_ref()
@@ -610,6 +643,55 @@ impl TryFrom<&HTTPRoute> for Route {
                     backends: rr.backends.clone(),
                     name: rr.name.clone(),
                     hostnames: hostnames.clone(),
+                    headers_to_add: rr
+                        .filters
+                        .iter()
+                        .filter_map(|f| {
+                            if f.r#type == HTTPRouteRulesFiltersType::RequestHeaderModifier {
+                                if let Some(modifier) = &f.request_header_modifier {
+                                    modifier.add.as_ref().map(|to_add| to_add.iter().map(HttpHeader::from))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .flat_map(std::iter::Iterator::collect::<Vec<_>>)
+                        .collect(),
+
+                    headers_to_remove: rr
+                        .filters
+                        .iter()
+                        .filter_map(|f| {
+                            if f.r#type == HTTPRouteRulesFiltersType::RequestHeaderModifier {
+                                if let Some(modifier) = &f.request_header_modifier {
+                                    modifier.remove.as_ref().map(|to_remove| to_remove.clone().into_iter())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .flat_map(std::iter::Iterator::collect::<Vec<_>>)
+                        .collect(),
+                    headers_to_set: rr
+                        .filters
+                        .iter()
+                        .filter_map(|f| {
+                            if f.r#type == HTTPRouteRulesFiltersType::RequestHeaderModifier {
+                                if let Some(modifier) = &f.request_header_modifier {
+                                    modifier.set.as_ref().map(|to_set| to_set.iter().map(HttpHeader::from))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .flat_map(std::iter::Iterator::collect::<Vec<_>>)
+                        .collect(),
                 })
             })
             .collect();
@@ -708,7 +790,7 @@ impl Gateway {
 
     pub fn effective_matching_rules(&self) -> Vec<&EffectiveRoutingRule> {
         let (resolved_routes, unresolved, _) = self.routes();
-        let mut matching_rules: Vec<_> = resolved_routes.iter().chain(unresolved.iter()).flat_map(|r| r.effective_matching_rules()).collect();
+        let mut matching_rules: Vec<_> = resolved_routes.iter().chain(unresolved.iter()).flat_map(|r| r.effective_routing_rules()).collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
         //matching_rules.reverse();
         matching_rules
@@ -1330,6 +1412,19 @@ spec:
         println!("{x:#?}");
     }
 
+    impl Default for EffectiveRoutingRule {
+        fn default() -> Self {
+            Self {
+                route_matcher: Default::default(),
+                backends: Default::default(),
+                name: Default::default(),
+                hostnames: Default::default(),
+                headers_to_add: Default::default(),
+                headers_to_remove: Default::default(),
+                headers_to_set: Default::default(),
+            }
+        }
+    }
     #[test]
     pub fn test_headers_sorting_rules() {
         let mut rules = vec![
@@ -1342,9 +1437,8 @@ spec:
                     }]),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route1".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1355,9 +1449,8 @@ spec:
                     }]),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route2".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1375,9 +1468,9 @@ spec:
                     ]),
                     ..Default::default()
                 },
-                backends: vec![],
+
                 name: "route3".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1388,9 +1481,8 @@ spec:
                     }]),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route4.1".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1401,9 +1493,9 @@ spec:
                     }]),
                     ..Default::default()
                 },
-                backends: vec![],
+
                 name: "route4.2".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1414,9 +1506,9 @@ spec:
                     }]),
                     ..Default::default()
                 },
-                backends: vec![],
+
                 name: "route5.1".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1427,9 +1519,8 @@ spec:
                     }]),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route5.2".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
         ];
         let expected_names = vec!["route3", "route1", "route2", "route4.1", "route4.2", "route5.1", "route5.2"];
@@ -1450,9 +1541,8 @@ spec:
                     }),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route3".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1462,9 +1552,8 @@ spec:
                     }),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route1".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1474,9 +1563,8 @@ spec:
                     }),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route2".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
         ];
         let expected_names = vec!["route1", "route2", "route3"];
@@ -1496,9 +1584,8 @@ spec:
                     }),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route3".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1508,9 +1595,8 @@ spec:
                     }),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route1".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1520,9 +1606,8 @@ spec:
                     }),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route2".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
         ];
         let expected_names = vec!["route1", "route2", "route3"];
@@ -1542,9 +1627,8 @@ spec:
                     }),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route0".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1554,9 +1638,8 @@ spec:
                     }),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route1".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1566,9 +1649,8 @@ spec:
                     }),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route2".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1578,9 +1660,8 @@ spec:
                     }),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route3".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1590,9 +1671,8 @@ spec:
                     }),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route4".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
         ];
         let expected_names = vec!["route4", "route3", "route1", "route2", "route0"];
@@ -1612,9 +1692,8 @@ spec:
                     }),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route1".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
             EffectiveRoutingRule {
                 route_matcher: HTTPRouteRulesMatches {
@@ -1629,9 +1708,8 @@ spec:
                     }]),
                     ..Default::default()
                 },
-                backends: vec![],
                 name: "route2".to_owned(),
-                hostnames: vec![],
+                ..Default::default()
             },
         ];
         let expected_names = vec!["route2", "route1"];
