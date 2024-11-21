@@ -13,13 +13,13 @@ use gateway_api::apis::standard::{
         HTTPRouteRulesFiltersType, HTTPRouteRulesMatches,
     },
 };
-use k8s_openapi::api::core::v1::HTTPHeader;
+
 use kube::{Resource, ResourceExt};
 use kube_core::ObjectMeta;
 use thiserror::Error;
 use tokio::sync::oneshot;
 
-use tracing::{debug, info, warn};
+use tracing::debug;
 use uuid::Uuid;
 
 use crate::controllers::ControllerError;
@@ -342,15 +342,22 @@ impl Backend {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FilterHeaders {
+    pub add: Vec<HttpHeader>,
+    pub remove: Vec<String>,
+    pub set: Vec<HttpHeader>,
+}
+
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct EffectiveRoutingRule {
     pub route_matcher: HTTPRouteRulesMatches,
     pub backends: Vec<Backend>,
     pub name: String,
     pub hostnames: Vec<String>,
-    pub headers_to_add: Vec<HttpHeader>,
-    pub headers_to_remove: Vec<String>,
-    pub headers_to_set: Vec<HttpHeader>,
+
+    pub request_headers: FilterHeaders,
+    pub response_headers: FilterHeaders,
 }
 impl PartialOrd for EffectiveRoutingRule {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -643,55 +650,57 @@ impl TryFrom<&HTTPRoute> for Route {
                     backends: rr.backends.clone(),
                     name: rr.name.clone(),
                     hostnames: hostnames.clone(),
-                    headers_to_add: rr
-                        .filters
-                        .iter()
-                        .filter_map(|f| {
-                            if f.r#type == HTTPRouteRulesFiltersType::RequestHeaderModifier {
-                                if let Some(modifier) = &f.request_header_modifier {
-                                    modifier.add.as_ref().map(|to_add| to_add.iter().map(HttpHeader::from))
+                    request_headers: FilterHeaders {
+                        add: rr
+                            .filters
+                            .iter()
+                            .filter_map(|f| {
+                                if f.r#type == HTTPRouteRulesFiltersType::RequestHeaderModifier {
+                                    if let Some(modifier) = &f.request_header_modifier {
+                                        modifier.add.as_ref().map(|to_add| to_add.iter().map(HttpHeader::from))
+                                    } else {
+                                        None
+                                    }
                                 } else {
                                     None
                                 }
-                            } else {
-                                None
-                            }
-                        })
-                        .flat_map(std::iter::Iterator::collect::<Vec<_>>)
-                        .collect(),
-
-                    headers_to_remove: rr
-                        .filters
-                        .iter()
-                        .filter_map(|f| {
-                            if f.r#type == HTTPRouteRulesFiltersType::RequestHeaderModifier {
-                                if let Some(modifier) = &f.request_header_modifier {
-                                    modifier.remove.as_ref().map(|to_remove| to_remove.clone().into_iter())
+                            })
+                            .flat_map(std::iter::Iterator::collect::<Vec<_>>)
+                            .collect(),
+                        remove: rr
+                            .filters
+                            .iter()
+                            .filter_map(|f| {
+                                if f.r#type == HTTPRouteRulesFiltersType::RequestHeaderModifier {
+                                    if let Some(modifier) = &f.request_header_modifier {
+                                        modifier.remove.as_ref().map(|to_remove| to_remove.clone().into_iter())
+                                    } else {
+                                        None
+                                    }
                                 } else {
                                     None
                                 }
-                            } else {
-                                None
-                            }
-                        })
-                        .flat_map(std::iter::Iterator::collect::<Vec<_>>)
-                        .collect(),
-                    headers_to_set: rr
-                        .filters
-                        .iter()
-                        .filter_map(|f| {
-                            if f.r#type == HTTPRouteRulesFiltersType::RequestHeaderModifier {
-                                if let Some(modifier) = &f.request_header_modifier {
-                                    modifier.set.as_ref().map(|to_set| to_set.iter().map(HttpHeader::from))
+                            })
+                            .flat_map(std::iter::Iterator::collect::<Vec<_>>)
+                            .collect(),
+                        set: rr
+                            .filters
+                            .iter()
+                            .filter_map(|f| {
+                                if f.r#type == HTTPRouteRulesFiltersType::RequestHeaderModifier {
+                                    if let Some(modifier) = &f.request_header_modifier {
+                                        modifier.set.as_ref().map(|to_set| to_set.iter().map(HttpHeader::from))
+                                    } else {
+                                        None
+                                    }
                                 } else {
                                     None
                                 }
-                            } else {
-                                None
-                            }
-                        })
-                        .flat_map(std::iter::Iterator::collect::<Vec<_>>)
-                        .collect(),
+                            })
+                            .flat_map(std::iter::Iterator::collect::<Vec<_>>)
+                            .collect(),
+                    },
+                    response_headers: FilterHeaders::default(),
                 })
             })
             .collect();
@@ -1412,19 +1421,6 @@ spec:
         println!("{x:#?}");
     }
 
-    impl Default for EffectiveRoutingRule {
-        fn default() -> Self {
-            Self {
-                route_matcher: Default::default(),
-                backends: Default::default(),
-                name: Default::default(),
-                hostnames: Default::default(),
-                headers_to_add: Default::default(),
-                headers_to_remove: Default::default(),
-                headers_to_set: Default::default(),
-            }
-        }
-    }
     #[test]
     pub fn test_headers_sorting_rules() {
         let mut rules = vec![

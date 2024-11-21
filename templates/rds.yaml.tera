@@ -5,14 +5,7 @@ resources:
   virtual_hosts:{% for vc in route.virtual_hosts %}
   - name: backend-{{vc.hostname}}
     domains:{% for hostname in vc.hostnames %}
-    - "{{hostname}}"{% endfor %}
-    request_headers_to_add:{% for header in vc.headers_to_add_or_set %}
-      - header: 
-          key: {{header.name}}
-          value: {{header.value}}
-        append_action: {{header.action}}{% endfor %}
-    request_headers_to_remove:{% for header in vc.headers_to_remove %}
-      - {{header}}{% endfor %}
+    - "{{hostname}}"{% endfor %}    
     routes:{% for route_conf in vc.route_configs %}
       - route:
           cluster_not_found_response_code: INTERNAL_SERVER_ERROR
@@ -25,4 +18,11 @@ resources:
           headers:{% for header in route_conf.headers %}
             - name: {{header.name}}
               string_match:
-                {{header.match_type}}: {{header.value}}{% endfor %}{% endif %}{% endfor %}{% endfor %}          
+                {{header.match_type}}: {{header.value}}{% endfor %}{% endif %}
+        request_headers_to_add:{% for header in route_conf.request_headers_to_add_or_set %}
+          - header: 
+              key: {{header.name}}
+              value: {{header.value}}
+            append_action: {{header.action}}{% endfor %}
+        request_headers_to_remove:{% for header in route_conf.request_headers_to_remove %}
+          - {{header}}{% endfor %}{% endfor %}{% endfor %}          

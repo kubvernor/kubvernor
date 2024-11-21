@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use k8s_openapi::api::core::v1::HTTPHeader;
 use serde::Serialize;
 use tracing::{debug, info, warn};
 
@@ -247,6 +246,10 @@ impl<'a> EnvoyXDSGenerator<'a> {
             pub headers: Option<Vec<TeraMatchHeader>>,
             pub cluster_name: String,
             pub cluster_names: Vec<TeraClusterName>,
+            pub request_headers_to_add_or_set: Vec<TeraFilterHeader>,
+            pub request_headers_to_remove: Vec<String>,
+            pub response_headers_to_add_or_set: Vec<TeraFilterHeader>,
+            pub response_headers_to_remove: Vec<String>,
         }
 
         #[derive(Serialize, Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
@@ -277,8 +280,6 @@ impl<'a> EnvoyXDSGenerator<'a> {
             pub hostname: String,
             pub hostnames: Vec<String>,
             pub route_configs: Vec<VeraRouteConfigs>,
-            pub headers_to_add_or_set: BTreeSet<TeraFilterHeader>,
-            pub headers_to_remove: BTreeSet<String>,
         }
 
         #[derive(Serialize)]
@@ -345,33 +346,45 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                 weight: b.weight(),
                             })
                             .collect(),
+                        request_headers_to_add_or_set: er
+                            .request_headers
+                            .add
+                            .clone()
+                            .into_iter()
+                            .map(TeraFilterHeader::from)
+                            .chain(er.request_headers.set.clone().into_iter().map(TeraFilterHeader::from).map(|mut th| {
+                                th.action = FilterHeaderAction::OverwriteIfExistsOrAdd;
+                                th
+                            }))
+                            .collect(),
+                        request_headers_to_remove: er.request_headers.remove.clone(),
+                        response_headers_to_add_or_set: vec![],
+                        response_headers_to_remove: vec![],
                     })
                     .collect();
 
-                let headers_to_add: BTreeSet<_> = evc
-                    .effective_matching_rules
-                    .iter()
-                    .flat_map(|er| er.headers_to_add.clone().into_iter())
-                    .map(TeraFilterHeader::from)
-                    .collect();
-                let headers_to_set: BTreeSet<_> = evc
-                    .effective_matching_rules
-                    .iter()
-                    .flat_map(|er| er.headers_to_set.clone().into_iter())
-                    .map(TeraFilterHeader::from)
-                    .map(|mut th| {
-                        th.action = FilterHeaderAction::OverwriteIfExistsOrAdd;
-                        th
-                    })
-                    .collect();
-                let headers_to_remove: BTreeSet<String> = evc.effective_matching_rules.iter().flat_map(|er| er.headers_to_remove.clone().into_iter()).collect();
+                // let headers_to_add: BTreeSet<_> = evc
+                //     .effective_matching_rules
+                //     .iter()
+                //     .flat_map(|er| er.headers_to_add.clone().into_iter())
+                //     .map(TeraFilterHeader::from)
+                //     .collect();
+                // let headers_to_set: BTreeSet<_> = evc
+                //     .effective_matching_rules
+                //     .iter()
+                //     .flat_map(|er| er.headers_to_set.clone().into_iter())
+                //     .map(TeraFilterHeader::from)
+                //     .map(|mut th| {
+                //         th.action = FilterHeaderAction::OverwriteIfExistsOrAdd;
+                //         th
+                //     })
+                //     .collect();
+                // let headers_to_remove: BTreeSet<String> = evc.effective_matching_rules.iter().flat_map(|er| er.headers_to_remove.clone().into_iter()).collect();
 
                 TeraVirtualHost {
                     hostname: evc.hostname.clone().map_or("default-accept-all".to_owned(), |hostname| hostname.clone()),
                     hostnames: evc.effective_hostnames.clone(),
                     route_configs,
-                    headers_to_add_or_set: headers_to_add.into_iter().chain(headers_to_set).collect(),
-                    headers_to_remove,
                 }
             })
             .collect();
