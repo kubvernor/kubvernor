@@ -10,7 +10,7 @@ use gateway_api::apis::standard::{
     gateways::{self, Gateway as KubeGateway, GatewayListeners},
     httproutes::{
         HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesBackendRefs, HTTPRouteRulesFilters, HTTPRouteRulesFiltersRequestHeaderModifierAdd, HTTPRouteRulesFiltersRequestHeaderModifierSet,
-        HTTPRouteRulesFiltersType, HTTPRouteRulesMatches,
+        HTTPRouteRulesFiltersRequestRedirect, HTTPRouteRulesFiltersType, HTTPRouteRulesMatches,
     },
 };
 
@@ -358,6 +358,8 @@ pub struct EffectiveRoutingRule {
 
     pub request_headers: FilterHeaders,
     pub response_headers: FilterHeaders,
+
+    pub redirect_filter: Option<HTTPRouteRulesFiltersRequestRedirect>,
 }
 impl PartialOrd for EffectiveRoutingRule {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -601,7 +603,7 @@ impl TryFrom<&HTTPRoute> for Route {
                     .as_ref()
                     .unwrap_or(&vec![])
                     .iter()
-                    .filter_map(|br| {
+                    .map(|br| {
                         let config = BackendServiceConfig {
                             resource_key: ResourceKey::from((br, local_namespace.clone())),
                             endpoint: if let Some(namespace) = br.namespace.as_ref() {
@@ -618,15 +620,12 @@ impl TryFrom<&HTTPRoute> for Route {
                             port: br.port.unwrap_or(0),
                             weight: br.weight.unwrap_or(1),
                         };
-                        if config.weight < 1 {
-                            None
+
+                        if br.kind.is_none() || br.kind == Some("Service".to_owned()) {
+                            Backend::Maybe(config)
                         } else {
-                            Some(if br.kind.is_none() || br.kind == Some("Service".to_owned()) {
-                                Backend::Maybe(config)
-                            } else {
-                                has_invalid_backends = true;
-                                Backend::Invalid(config)
-                            })
+                            has_invalid_backends = true;
+                            Backend::Invalid(config)
                         }
                     })
                     .collect(),
@@ -701,6 +700,13 @@ impl TryFrom<&HTTPRoute> for Route {
                             .collect(),
                     },
                     response_headers: FilterHeaders::default(),
+                    redirect_filter: rr.filters.iter().find_map(|f| {
+                        if f.r#type == HTTPRouteRulesFiltersType::RequestRedirect {
+                            f.request_redirect.clone()
+                        } else {
+                            None
+                        }
+                    }),
                 })
             })
             .collect();
@@ -1709,6 +1715,82 @@ spec:
             },
         ];
         let expected_names = vec!["route2", "route1"];
+        rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(std::cmp::Ordering::Less));
+        let actual_names: Vec<_> = rules.iter().map(|r| &r.name).collect();
+        assert_eq!(expected_names, actual_names);
+    }
+
+    #[test]
+    pub fn test_path_sorting_rules_extended() {
+        let mut rules = vec![
+            EffectiveRoutingRule {
+                route_matcher: HTTPRouteRulesMatches {
+                    path: Some(HTTPRouteRulesMatchesPath {
+                        r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
+                        value: Some("/match/exact/one".to_owned()),
+                    }),
+                    ..Default::default()
+                },
+                name: "route3".to_owned(),
+                ..Default::default()
+            },
+            EffectiveRoutingRule {
+                route_matcher: HTTPRouteRulesMatches {
+                    path: Some(HTTPRouteRulesMatchesPath {
+                        r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
+                        value: Some("/match/exact".to_owned()),
+                    }),
+                    ..Default::default()
+                },
+                name: "route2".to_owned(),
+                ..Default::default()
+            },
+            EffectiveRoutingRule {
+                route_matcher: HTTPRouteRulesMatches {
+                    path: Some(HTTPRouteRulesMatchesPath {
+                        r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
+                        value: Some("/match".to_owned()),
+                    }),
+                    ..Default::default()
+                },
+                name: "route1".to_owned(),
+                ..Default::default()
+            },
+            EffectiveRoutingRule {
+                route_matcher: HTTPRouteRulesMatches {
+                    path: Some(HTTPRouteRulesMatchesPath {
+                        r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
+                        value: Some("/match".to_owned()),
+                    }),
+                    ..Default::default()
+                },
+                name: "route4".to_owned(),
+                ..Default::default()
+            },
+            EffectiveRoutingRule {
+                route_matcher: HTTPRouteRulesMatches {
+                    path: Some(HTTPRouteRulesMatchesPath {
+                        r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
+                        value: Some("/match/prefix".to_owned()),
+                    }),
+                    ..Default::default()
+                },
+                name: "route5".to_owned(),
+                ..Default::default()
+            },
+            EffectiveRoutingRule {
+                route_matcher: HTTPRouteRulesMatches {
+                    path: Some(HTTPRouteRulesMatchesPath {
+                        r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
+                        value: Some("/match/prefix/one".to_owned()),
+                    }),
+                    ..Default::default()
+                },
+                name: "route6".to_owned(),
+                ..Default::default()
+            },
+        ];
+        let expected_names = vec!["route3", "route2", "route1", "route6", "route5", "route4"];
         rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(std::cmp::Ordering::Less));
         let actual_names: Vec<_> = rules.iter().map(|r| &r.name).collect();
         assert_eq!(expected_names, actual_names);

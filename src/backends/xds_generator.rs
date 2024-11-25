@@ -225,7 +225,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
             (_, _) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
         }
     }
-
+    #[allow(clippy::too_many_lines)]
     fn genereate_rds(listener: &EnvoyListener) -> Result<RdsData, Error> {
         #[derive(Serialize)]
         struct TeraClusterName {
@@ -250,6 +250,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
             pub request_headers_to_remove: Vec<String>,
             pub response_headers_to_add_or_set: Vec<TeraFilterHeader>,
             pub response_headers_to_remove: Vec<String>,
+            pub redirect_filter: Option<TeraFilterRedirect>,
         }
 
         #[derive(Serialize, Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
@@ -289,6 +290,12 @@ impl<'a> EnvoyXDSGenerator<'a> {
         }
 
         #[derive(Serialize)]
+        struct TeraFilterRedirect {
+            pub hostname: Option<String>,
+            pub status_code: Option<String>,
+        }
+
+        #[derive(Serialize)]
         struct TeraPath {
             pub path: String,
             pub match_type: String,
@@ -310,7 +317,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     .iter()
                     .map(|er| VeraRouteConfigs {
                         path: er.route_matcher.path.clone().map(|matcher| TeraPath {
-                            path: matcher.value.clone().unwrap_or_default(),
+                            path: matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v }),
                             match_type: matcher.r#type.map_or(String::new(), |f| match f {
                                 gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
                                 gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
@@ -341,6 +348,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         cluster_names: er
                             .backends
                             .iter()
+                            .filter(|b| b.weight() > 0)
                             .map(|b| TeraClusterName {
                                 name: b.cluster_name(),
                                 weight: b.weight(),
@@ -360,26 +368,19 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         request_headers_to_remove: er.request_headers.remove.clone(),
                         response_headers_to_add_or_set: vec![],
                         response_headers_to_remove: vec![],
+                        redirect_filter: er.redirect_filter.clone().map(|f| TeraFilterRedirect {
+                            hostname: f.hostname,
+                            status_code: match f.status_code {
+                                Some(302) => Some("FOUND".to_owned()),
+                                Some(303) => Some("SEE_OTHER".to_owned()),
+                                Some(307) => Some("TEMPORARY_REDIRECT".to_owned()),
+                                Some(308) => Some("PERMANENT_REDIRECT".to_owned()),
+                                Some(301 | _) => Some("MOVED_PERMANENTLY".to_owned()),
+                                None => None,
+                            },
+                        }),
                     })
                     .collect();
-
-                // let headers_to_add: BTreeSet<_> = evc
-                //     .effective_matching_rules
-                //     .iter()
-                //     .flat_map(|er| er.headers_to_add.clone().into_iter())
-                //     .map(TeraFilterHeader::from)
-                //     .collect();
-                // let headers_to_set: BTreeSet<_> = evc
-                //     .effective_matching_rules
-                //     .iter()
-                //     .flat_map(|er| er.headers_to_set.clone().into_iter())
-                //     .map(TeraFilterHeader::from)
-                //     .map(|mut th| {
-                //         th.action = FilterHeaderAction::OverwriteIfExistsOrAdd;
-                //         th
-                //     })
-                //     .collect();
-                // let headers_to_remove: BTreeSet<String> = evc.effective_matching_rules.iter().flat_map(|er| er.headers_to_remove.clone().into_iter()).collect();
 
                 TeraVirtualHost {
                     hostname: evc.hostname.clone().map_or("default-accept-all".to_owned(), |hostname| hostname.clone()),
@@ -421,6 +422,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         r.routing_rules().iter().flat_map(|rr| {
                             rr.backends
                                 .iter()
+                                .filter(|b| b.weight() > 0)
                                 .filter_map(|b| match b {
                                     Backend::Resolved(backend_service_config) => Some(backend_service_config),
                                     _ => None,
