@@ -141,8 +141,11 @@ pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route>
         .unwrap_or_default()
 }
 
-pub async fn resolve_route_backends(client: Client, routes: Vec<Route>, log_context: &str) -> Vec<Route> {
-    let futures: Vec<_> = routes.into_iter().map(|route| RouteResolver::new(route, client.clone(), log_context).resolve()).collect();
+pub async fn resolve_route_backends(gateway_namespace: &str, client: Client, routes: Vec<Route>, log_context: &str) -> Vec<Route> {
+    let futures: Vec<_> = routes
+        .into_iter()
+        .map(|route| RouteResolver::new(gateway_namespace, route, client.clone(), log_context).resolve())
+        .collect();
     let routes = futures::future::join_all(futures);
     routes.await
 }

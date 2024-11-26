@@ -183,22 +183,22 @@ impl Listener {
         }
     }
 
-    pub fn routes(&self) -> (Vec<&Route>, Vec<&Route>, Vec<&Route>) {
+    pub fn routes(&self) -> (Vec<&Route>, Vec<&Route>) {
         match self {
             Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => (
                 Vec::from_iter(&listener_data.resolved_routes),
                 Vec::from_iter(&listener_data.unresolved_routes),
-                Vec::from_iter(&listener_data.routes_with_no_listeners),
+                //Vec::from_iter(&listener_data.routes_with_no_listeners),
             ),
         }
     }
 
-    pub fn update_routes(&mut self, resolved_routes: BTreeSet<Route>, unresolved_routes: BTreeSet<Route>, routes_with_no_listeners: BTreeSet<Route>) {
+    pub fn update_routes(&mut self, resolved_routes: BTreeSet<Route>, unresolved_routes: BTreeSet<Route>) {
         match self {
             Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
                 if !unresolved_routes.is_empty() {
                     if let Some(route) = unresolved_routes.first() {
-                        if route.has_invalid_backends() {
+                        if *route.resolution_status() == ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted) {
                             listener_data
                                 .conditions
                                 .replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidBackend(APPROVED_ROUTES.iter().map(|s| (*s).to_owned()).collect())));
@@ -207,7 +207,7 @@ impl Listener {
                         listener_data.conditions.replace(ListenerCondition::UnresolvedRouteRefs);
                     }
                 }
-                listener_data.routes_with_no_listeners = routes_with_no_listeners;
+
                 listener_data.attached_routes = unresolved_routes.len() + resolved_routes.len();
                 listener_data.resolved_routes = resolved_routes;
                 listener_data.unresolved_routes = unresolved_routes;
@@ -224,7 +224,7 @@ impl Listener {
     }
 
     pub fn effective_matching_rules(&self) -> Vec<&EffectiveRoutingRule> {
-        let (resolved_routes, unresolved, _) = self.routes();
+        let (resolved_routes, unresolved) = self.routes();
         let mut matching_rules: Vec<_> = resolved_routes.iter().chain(unresolved.iter()).flat_map(|r| r.effective_routing_rules()).collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
         //matching_rules.reverse();
@@ -240,7 +240,7 @@ pub struct ListenerData {
     pub conditions: ListenerConditions,
     pub resolved_routes: BTreeSet<Route>,
     pub unresolved_routes: BTreeSet<Route>,
-    pub routes_with_no_listeners: BTreeSet<Route>,
+    //pub routes_with_no_listeners: BTreeSet<Route>,
     pub attached_routes: usize,
 }
 
@@ -272,7 +272,6 @@ impl TryFrom<&GatewayListeners> for Listener {
             conditions: listener_conditions,
             resolved_routes: BTreeSet::new(),
             unresolved_routes: BTreeSet::new(),
-            routes_with_no_listeners: BTreeSet::new(),
             attached_routes: 0,
         };
 
@@ -313,16 +312,27 @@ pub struct RoutingRule {
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub enum NotResolvedReason {
+    Unknown,
+    NotAllowedByListeners,
+    NoMatchingListenerHostname,
+    InvalidBackend,
+    BackendNotFound,
+    RefNotPermitted,
+    NoMatchingParent,
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum ResolutionStatus {
     Resolved,
-    PartiallyResolved,
-    NotResolved,
+    NotResolved(NotResolvedReason),
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub enum Backend {
     Resolved(BackendServiceConfig),
     Unresolved(BackendServiceConfig),
+    NotAllowed(BackendServiceConfig),
     Maybe(BackendServiceConfig),
     Invalid(BackendServiceConfig),
 }
@@ -330,7 +340,7 @@ pub enum Backend {
 impl Backend {
     pub fn config(&self) -> &BackendServiceConfig {
         match self {
-            Backend::Resolved(s) | Backend::Unresolved(s) | Backend::Maybe(s) | Backend::Invalid(s) => s,
+            Backend::Resolved(s) | Backend::Unresolved(s) | Backend::NotAllowed(s) | Backend::Maybe(s) | Backend::Invalid(s) => s,
         }
     }
     pub fn cluster_name(&self) -> String {
@@ -455,7 +465,6 @@ pub struct RouteConfig {
     parents: Option<Vec<HTTPRouteParentRefs>>,
     pub routing_rules: Vec<RoutingRule>,
     hostnames: Vec<String>,
-    has_invalid_backends: bool,
     pub resolution_status: ResolutionStatus,
     pub effective_routing_rules: Vec<EffectiveRoutingRule>,
 }
@@ -544,15 +553,15 @@ impl Route {
         }
     }
 
-    pub fn has_invalid_backends(&self) -> bool {
-        match self {
-            Route::Http(config) | Route::Grpc(config) => config.has_invalid_backends,
-        }
-    }
-
     pub fn effective_routing_rules(&self) -> &[EffectiveRoutingRule] {
         match self {
             Route::Http(c) | Route::Grpc(c) => &c.effective_routing_rules,
+        }
+    }
+
+    pub fn resolution_status_mut(&mut self) -> &mut ResolutionStatus {
+        match self {
+            Route::Http(config) | Route::Grpc(config) => &mut config.resolution_status,
         }
     }
 }
@@ -716,8 +725,11 @@ impl TryFrom<&HTTPRoute> for Route {
             parents,
             routing_rules,
             hostnames,
-            has_invalid_backends,
-            resolution_status: ResolutionStatus::NotResolved,
+            resolution_status: if has_invalid_backends {
+                ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend)
+            } else {
+                ResolutionStatus::NotResolved(NotResolvedReason::Unknown)
+            },
             effective_routing_rules,
         };
 
@@ -738,6 +750,7 @@ pub struct Gateway {
     resource_key: ResourceKey,
     addresses: BTreeSet<GatewayAddress>,
     listeners: BTreeMap<String, Listener>,
+    orphaned_routes: BTreeSet<Route>,
 }
 
 impl PartialEq for Gateway {
@@ -790,25 +803,32 @@ impl Gateway {
         &self.addresses
     }
 
-    pub fn routes(&self) -> (BTreeSet<&Route>, BTreeSet<&Route>, BTreeSet<&Route>) {
+    pub fn routes(&self) -> (BTreeSet<&Route>, BTreeSet<&Route>) {
         let mut resolved_routes = BTreeSet::new();
         let mut unresolved_routes = BTreeSet::new();
-        let mut routes_with_no_hostnames = BTreeSet::new();
+
         for l in self.listeners.values() {
-            let (resolved, unresolved, with_no_hostnames) = l.routes();
+            let (resolved, unresolved) = l.routes();
             resolved_routes.append(&mut BTreeSet::from_iter(resolved));
             unresolved_routes.append(&mut BTreeSet::from_iter(unresolved));
-            routes_with_no_hostnames.append(&mut BTreeSet::from_iter(with_no_hostnames));
         }
-        (resolved_routes, unresolved_routes, routes_with_no_hostnames)
+        (resolved_routes, unresolved_routes)
     }
 
     pub fn effective_matching_rules(&self) -> Vec<&EffectiveRoutingRule> {
-        let (resolved_routes, unresolved, _) = self.routes();
+        let (resolved_routes, unresolved) = self.routes();
         let mut matching_rules: Vec<_> = resolved_routes.iter().chain(unresolved.iter()).flat_map(|r| r.effective_routing_rules()).collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
         //matching_rules.reverse();
         matching_rules
+    }
+
+    pub fn orphaned_routes_mut(&mut self) -> &mut BTreeSet<Route> {
+        &mut self.orphaned_routes
+    }
+
+    pub fn orphaned_routes(&self) -> &BTreeSet<Route> {
+        &self.orphaned_routes
     }
 }
 
@@ -829,6 +849,7 @@ impl TryFrom<&KubeGateway> for Gateway {
             resource_key,
             addresses: BTreeSet::new(),
             listeners: listeners.into_iter().map(|l| (l.name().to_owned(), l)).collect::<BTreeMap<String, Listener>>(),
+            orphaned_routes: BTreeSet::new(),
         })
     }
 }

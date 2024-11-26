@@ -160,7 +160,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
     }
 
     fn generate_virtual_hosts(gateway_name: String, listener: &Listener) -> EnvoyListener {
-        let (resolved, unresolved, _) = listener.routes();
+        let (resolved, unresolved) = listener.routes();
         let resolved: Vec<_> = resolved
             .into_iter()
             .filter(|r| match r {

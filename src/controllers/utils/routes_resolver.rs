@@ -7,26 +7,38 @@ use kube::{Api, Client};
 use tracing::debug;
 
 use crate::{
-    common::{self, calculate_attached_routes, Backend, ResolutionStatus},
+    common::{self, calculate_attached_routes, Backend, NotResolvedReason, ResolutionStatus},
     controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };
 
 pub struct RouteResolver<'a> {
+    gateway_namespace: &'a str,
     route: common::Route,
     client: Client,
     log_context: &'a str,
 }
+struct PermittedBackends(String);
+impl PermittedBackends {
+    fn is_permitted(&self, namespace: &str) -> bool {
+        self.0 == namespace
+    }
+}
 
 impl<'a> RouteResolver<'a> {
-    pub fn new(route: common::Route, client: Client, log_context: &'a str) -> Self {
-        Self { route, client, log_context }
+    pub fn new(gateway_namespace: &'a str, route: common::Route, client: Client, log_context: &'a str) -> Self {
+        Self {
+            gateway_namespace,
+            route,
+            client,
+            log_context,
+        }
     }
 
     pub async fn resolve(self) -> common::Route {
         let mut route = self.route;
         let route_config = route.config_mut();
-        let mut unresolved_count = 0;
+        let mut route_resolution_status = ResolutionStatus::Resolved;
         for rule in &mut route_config.routing_rules {
             let mut new_backends = vec![];
             for backend in rule.backends.clone() {
@@ -34,19 +46,25 @@ impl<'a> RouteResolver<'a> {
                 match backend {
                     Backend::Maybe(backend_service_config) => {
                         let backend_namespace = backend_service_config.resource_key.namespace.clone();
+
                         let backend_name = backend_service_config.resource_key.name.clone();
                         let service_api: Api<Service> = Api::namespaced(client, &backend_namespace);
                         if (service_api.get(&backend_name).await).is_ok() {
-                            new_backends.push(Backend::Resolved(backend_service_config));
+                            if PermittedBackends(self.gateway_namespace.to_owned()).is_permitted(&backend_namespace) {
+                                new_backends.push(Backend::Resolved(backend_service_config));
+                            } else {
+                                new_backends.push(Backend::NotAllowed(backend_service_config));
+                                route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted);
+                            }
                         } else {
                             debug!("{} can't resolve {:?}", self.log_context, &backend_service_config.resource_key);
                             new_backends.push(Backend::Unresolved(backend_service_config));
-                            unresolved_count += 1;
+                            route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound);
                         }
                     }
-                    Backend::Unresolved(_) | Backend::Invalid(_) => {
-                        unresolved_count += 1;
+                    Backend::Unresolved(_) | Backend::NotAllowed(_) | Backend::Invalid(_) => {
                         debug!("Skipping unresolved backend {:?}", backend);
+                        route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend);
                         new_backends.push(backend);
                     }
                     Backend::Resolved(_) => {
@@ -57,10 +75,7 @@ impl<'a> RouteResolver<'a> {
             }
             rule.backends = new_backends;
         }
-        route_config.resolution_status = match unresolved_count {
-            0 => common::ResolutionStatus::Resolved,
-            _ => common::ResolutionStatus::NotResolved,
-        };
+        route_config.resolution_status = route_resolution_status;
         route
     }
 }
@@ -89,7 +104,7 @@ impl<'a> RoutesResolver<'a> {
         debug!("{log_context} Validating routes");
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
-        let linked_routes = utils::resolve_route_backends(self.client.clone(), linked_routes, log_context).await;
+        let linked_routes = utils::resolve_route_backends(&gateway_resource_key.namespace, self.client.clone(), linked_routes, log_context).await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
 
         let (route_to_listeners_mapping, routes_with_no_listeners) = RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();
@@ -98,9 +113,10 @@ impl<'a> RoutesResolver<'a> {
         for (k, routes) in per_listener_calculated_attached_routes {
             if let Some(listener) = self.gateway.listener_mut(&k) {
                 let (resolved, unresolved): (BTreeSet<_>, BTreeSet<_>) = routes.iter().map(|r| (**r).clone()).partition(|f| *f.resolution_status() == ResolutionStatus::Resolved);
-                listener.update_routes(resolved, unresolved, routes_with_no_listeners.clone());
+                listener.update_routes(resolved, unresolved);
             }
         }
+        *self.gateway.orphaned_routes_mut() = routes_with_no_listeners;
 
         self.gateway
     }
