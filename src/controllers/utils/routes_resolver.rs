@@ -4,10 +4,10 @@ use gateway_api::apis::standard::gateways::Gateway;
 use k8s_openapi::api::core::v1::Service;
 
 use kube::{Api, Client};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{
-    common::{self, calculate_attached_routes, Backend, NotResolvedReason, ResolutionStatus},
+    common::{self, calculate_attached_routes, Backend, NotResolvedReason, ResolutionStatus, KUBERNETES_NONE},
     controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };
@@ -20,8 +20,8 @@ pub struct RouteResolver<'a> {
 }
 struct PermittedBackends(String);
 impl PermittedBackends {
-    fn is_permitted(&self, namespace: &str) -> bool {
-        self.0 == namespace
+    fn is_permitted(&self, route_namespace: &str, backend_namespace: &str) -> bool {
+        self.0 != route_namespace || backend_namespace == self.0
     }
 }
 
@@ -37,6 +37,7 @@ impl<'a> RouteResolver<'a> {
 
     pub async fn resolve(self) -> common::Route {
         let mut route = self.route;
+        let route_namespace = route.namespace().to_owned();
         let route_config = route.config_mut();
         let mut route_resolution_status = ResolutionStatus::Resolved;
         for rule in &mut route_config.routing_rules {
@@ -44,20 +45,25 @@ impl<'a> RouteResolver<'a> {
             for backend in rule.backends.clone() {
                 let client = self.client.clone();
                 match backend {
-                    Backend::Maybe(backend_service_config) => {
-                        let backend_namespace = backend_service_config.resource_key.namespace.clone();
-
-                        let backend_name = backend_service_config.resource_key.name.clone();
-                        let service_api: Api<Service> = Api::namespaced(client, &backend_namespace);
-                        if (service_api.get(&backend_name).await).is_ok() {
-                            if PermittedBackends(self.gateway_namespace.to_owned()).is_permitted(&backend_namespace) {
+                    Backend::Maybe(mut backend_service_config) => {
+                        let backend_namespace = &backend_service_config.resource_key.namespace;
+                        let backend_name = &backend_service_config.resource_key.name;
+                        let service_api: Api<Service> = Api::namespaced(client, backend_namespace);
+                        let maybe_service = service_api.get(backend_name).await;
+                        if let Ok(service) = maybe_service {
+                            if PermittedBackends(self.gateway_namespace.to_owned()).is_permitted(&route_namespace, backend_namespace) {
+                                backend_service_config.effective_port = Self::backend_remap_port(backend_service_config.port, service);
                                 new_backends.push(Backend::Resolved(backend_service_config));
                             } else {
+                                debug!(
+                                    "Backend is not permitted gateway namespace is {} route namespace is {} backend namespace is {}",
+                                    self.gateway_namespace, &route_namespace, &backend_namespace,
+                                );
                                 new_backends.push(Backend::NotAllowed(backend_service_config));
                                 route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted);
                             }
                         } else {
-                            debug!("{} can't resolve {:?}", self.log_context, &backend_service_config.resource_key);
+                            debug!("{} can't resolve {:?} {:?}", self.log_context, &backend_service_config.resource_key, maybe_service);
                             new_backends.push(Backend::Unresolved(backend_service_config));
                             route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound);
                         }
@@ -77,6 +83,30 @@ impl<'a> RouteResolver<'a> {
         }
         route_config.resolution_status = route_resolution_status;
         route
+    }
+
+    fn backend_remap_port(port: i32, service: Service) -> i32 {
+        if let Some(spec) = service.spec {
+            if let (_, Some(cluster_ip)) = (spec.selector, spec.cluster_ip) {
+                if cluster_ip != KUBERNETES_NONE {
+                    return port;
+                }
+            }
+
+            debug!("Spec cluster IP is NOT set ... remapping ports");
+            for service_port in spec.ports.unwrap_or_default() {
+                if service_port.port == port {
+                    return service_port.target_port.map_or(port, |target_port| match target_port {
+                        k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::Int(port_value) => port_value,
+                        k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::String(port_name) => {
+                            warn!("Port names are not supported {port_name}");
+                            port
+                        }
+                    });
+                }
+            }
+        }
+        port
     }
 }
 

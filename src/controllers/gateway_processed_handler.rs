@@ -479,35 +479,41 @@ impl<'a> GatewayProcessedHandler<'a> {
     }
 
     fn update_route_parents(&self, route: &Route, gateway_id: &ResourceKey, (new_condition_name, mut new_conditions): (&'static str, Vec<Condition>)) -> Option<HTTPRoute> {
-        let routes = self.state.get_http_routes_attached_to_gateway(gateway_id);
+        let kube_routes = self.state.get_http_routes_attached_to_gateway(gateway_id);
 
-        if let Some(routes) = routes {
-            let route = routes
+        if let Some(kube_routes) = kube_routes {
+            let kube_route = kube_routes
                 .iter()
                 .find(|f| f.metadata.name == Some(route.name().to_owned()) && f.metadata.namespace == Some(route.namespace().clone()));
 
-            if let Some(mut route) = route.map(|r| (***r).clone()) {
-                new_conditions.iter_mut().for_each(|f| f.observed_generation = route.meta().generation);
+            if let Some(mut kube_route) = kube_route.map(|r| (***r).clone()) {
+                new_conditions.iter_mut().for_each(|f| f.observed_generation = kube_route.meta().generation);
 
-                let mut status = if let Some(status) = route.status { status } else { HTTPRouteStatus { parents: vec![] } };
+                let mut status = if let Some(status) = kube_route.status { status } else { HTTPRouteStatus { parents: vec![] } };
 
                 status
                     .parents
                     .retain(|p| !(p.controller_name == self.controller_name && p.parent_ref.namespace == self.gateway.meta().namespace && self.gateway.meta().name == Some(p.parent_ref.name.clone())));
 
-                let route_parents = HTTPRouteStatusParents {
-                    conditions: Some(new_conditions),
-                    controller_name: self.controller_name.clone(),
-                    parent_ref: HTTPRouteStatusParentsParentRef {
-                        namespace: self.gateway.meta().namespace.clone(),
-                        name: self.gateway.meta().name.clone().unwrap_or_default(),
-                        ..Default::default()
-                    },
-                };
-                status.parents.push(route_parents);
-                route.status = Some(status);
-                route.metadata.managed_fields = None;
-                return Some(route);
+                for kube_parent in kube_route.spec.parent_refs.clone().unwrap_or_default() {
+                    let route_parents = HTTPRouteStatusParents {
+                        conditions: Some(new_conditions.clone()),
+                        controller_name: self.controller_name.clone(),
+                        parent_ref: HTTPRouteStatusParentsParentRef {
+                            namespace: kube_parent.namespace.clone(),
+                            name: kube_parent.name.clone(),
+                            group: kube_parent.group.clone(),
+                            kind: kube_parent.kind.clone(),
+                            section_name: kube_parent.section_name.clone(),
+                            port: kube_parent.port,
+                        },
+                    };
+                    status.parents.push(route_parents);
+                }
+
+                kube_route.status = Some(status);
+                kube_route.metadata.managed_fields = None;
+                return Some(kube_route);
             }
         }
         None

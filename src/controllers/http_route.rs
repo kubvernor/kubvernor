@@ -27,7 +27,7 @@ use super::{
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{GatewayEvent, ResourceKey, Route, VerifiyItems},
+    common::{GatewayEvent, ResourceKey, Route, RouteRefKey, VerifiyItems},
     controllers::gateway_deployer::GatewayDeployer,
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
@@ -224,16 +224,16 @@ impl HTTPRouteHandler<HTTPRoute> {
             return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
         };
 
-        let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, ResourceKey::from((parent_ref, route_key.namespace.clone()))));
+        let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
 
         let parent_gateway_refs = parent_gateway_refs_keys
             .clone()
-            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(&key).cloned()))
+            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(&key.as_ref()).cloned()))
             .map(|i| if i.1.is_some() { Ok(i) } else { Err(i) });
 
         let (resolved_gateways, unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
 
-        parent_gateway_refs_keys.for_each(|(_ref, key)| state.attach_http_route_to_gateway(key, route_key.clone()));
+        parent_gateway_refs_keys.for_each(|(_ref, key)| state.attach_http_route_to_gateway(key.as_ref().clone(), route_key.clone()));
 
         let matching_gateways = RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
         let unknown_gateway_status = self.generate_status_for_unknown_gateways(&unknown_gateways, resource.metadata.generation);
@@ -295,16 +295,16 @@ impl HTTPRouteHandler<HTTPRoute> {
             return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
         };
 
-        let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, ResourceKey::from((parent_ref, route_key.namespace.clone()))));
+        let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
 
         let parent_gateway_refs = parent_gateway_refs_keys
             .clone()
-            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(&key).cloned()))
+            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(key.as_ref()).cloned()))
             .map(|i| if i.1.is_some() { Ok(i) } else { Err(i) });
 
         let (resolved_gateways, _unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
         debug!("Parent keys = {parent_gateway_refs_keys:?}");
-        parent_gateway_refs_keys.for_each(|(_ref, gateway_key)| state.detach_http_route_from_gateway(&gateway_key, &route_key));
+        parent_gateway_refs_keys.for_each(|(_ref, gateway_key)| state.detach_http_route_from_gateway(gateway_key.as_ref(), &route_key));
         state.delete_http_route(&route_key);
 
         let matching_gateways = RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);

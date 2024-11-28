@@ -431,7 +431,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                     name: r.cluster_name(),
                                     endpoints: vec![TeraEndpoint {
                                         service: r.endpoint.clone(),
-                                        port: r.port,
+                                        port: r.effective_port,
                                         weight: r.weight,
                                     }],
                                 })

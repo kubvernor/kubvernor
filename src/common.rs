@@ -291,6 +291,7 @@ pub struct BackendServiceConfig {
     pub resource_key: ResourceKey,
     pub endpoint: String,
     pub port: i32,
+    pub effective_port: i32,
     pub weight: i32,
 }
 
@@ -592,19 +593,19 @@ impl From<&HTTPRouteRulesFiltersRequestHeaderModifierSet> for HttpHeader {
 
 impl TryFrom<&HTTPRoute> for Route {
     type Error = ControllerError;
-    fn try_from(value: &HTTPRoute) -> Result<Self, Self::Error> {
-        let key = ResourceKey::from(value);
-        let parents = value.spec.parent_refs.clone();
+    fn try_from(kube_route: &HTTPRoute) -> Result<Self, Self::Error> {
+        let key = ResourceKey::from(kube_route);
+        let parents = kube_route.spec.parent_refs.clone();
         let local_namespace = key.namespace.clone();
 
         let empty_rules: Vec<HTTPRouteRules> = vec![];
         let mut has_invalid_backends = false;
-        let routing_rules = value.spec.rules.as_ref().unwrap_or(&empty_rules);
+        let routing_rules = kube_route.spec.rules.as_ref().unwrap_or(&empty_rules);
         let routing_rules: Vec<RoutingRule> = routing_rules
             .iter()
             .enumerate()
             .map(|(i, rr)| RoutingRule {
-                name: format!("{}-{i}", value.name_any()),
+                name: format!("{}-{i}", kube_route.name_any()),
                 matching_rules: rr.matches.clone().unwrap_or_default(),
                 filters: rr.filters.clone().unwrap_or_default(),
                 backends: rr
@@ -627,6 +628,7 @@ impl TryFrom<&HTTPRoute> for Route {
                                 format!("{}.{local_namespace}", br.name)
                             },
                             port: br.port.unwrap_or(0),
+                            effective_port: br.port.unwrap_or(0),
                             weight: br.weight.unwrap_or(1),
                         };
 
@@ -640,7 +642,7 @@ impl TryFrom<&HTTPRoute> for Route {
                     .collect(),
             })
             .collect();
-        let hostnames = value
+        let hostnames = kube_route
             .spec
             .hostnames
             .as_ref()
@@ -994,6 +996,23 @@ pub struct ResourceKey {
     pub kind: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct BackendResourceKey {
+    pub group: String,
+    namespace: Option<String>,
+    pub name: String,
+    pub kind: String,
+}
+impl BackendResourceKey {
+    pub fn namespace(&self) -> Option<&String> {
+        self.namespace.as_ref()
+    }
+
+    pub fn namespace_mut(&mut self) -> &mut Option<String> {
+        &mut self.namespace
+    }
+}
+
 #[allow(dead_code)]
 impl ResourceKey {
     pub fn new(name: &str) -> Self {
@@ -1011,10 +1030,43 @@ impl ResourceKey {
         }
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Default)]
+pub struct RouteRefKey {
+    pub resource_key: ResourceKey,
+    pub section_name: Option<String>,
+    pub port: Option<i32>,
+}
+
+#[allow(dead_code)]
+impl RouteRefKey {
+    pub fn new(name: &str) -> Self {
+        Self {
+            resource_key: ResourceKey::new(name),
+            ..Default::default()
+        }
+    }
+
+    pub fn namespaced(name: &str, namespace: &str) -> Self {
+        Self {
+            resource_key: ResourceKey::namespaced(name, namespace),
+            ..Default::default()
+        }
+    }
+}
+
+impl AsRef<ResourceKey> for RouteRefKey {
+    fn as_ref(&self) -> &ResourceKey {
+        &self.resource_key
+    }
+}
+
 pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";
 pub const DEFAULT_NAMESPACE_NAME: &str = "default";
 pub const DEFAULT_KIND_NAME: &str = "Gateway";
 pub const DEFAULT_ROUTE_HOSTNAME: &str = "*";
+pub const KUBERNETES_NONE: &str = "None";
+
 impl Default for ResourceKey {
     fn default() -> Self {
         Self {
@@ -1060,13 +1112,28 @@ impl From<(Option<String>, Option<String>, String, Option<String>)> for Resource
     }
 }
 
-impl From<(&HTTPRouteParentRefs, String)> for ResourceKey {
+// impl From<(&HTTPRouteParentRefs, String)> for ResourceKey {
+//     fn from((route_parent, route_namespace): (&HTTPRouteParentRefs, String)) -> Self {
+//         Self {
+//             group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
+//             namespace: route_parent.namespace.clone().unwrap_or(route_namespace),
+//             name: route_parent.name.clone(),
+//             kind: route_parent.kind.clone().unwrap_or(DEFAULT_KIND_NAME.to_owned()),
+//         }
+//     }
+// }
+
+impl From<(&HTTPRouteParentRefs, String)> for RouteRefKey {
     fn from((route_parent, route_namespace): (&HTTPRouteParentRefs, String)) -> Self {
         Self {
-            group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
-            namespace: route_parent.namespace.clone().unwrap_or(route_namespace),
-            name: route_parent.name.clone(),
-            kind: route_parent.kind.clone().unwrap_or(DEFAULT_KIND_NAME.to_owned()),
+            resource_key: ResourceKey {
+                group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
+                namespace: route_parent.namespace.clone().unwrap_or(route_namespace),
+                name: route_parent.name.clone(),
+                kind: route_parent.kind.clone().unwrap_or(DEFAULT_KIND_NAME.to_owned()),
+            },
+            section_name: route_parent.section_name.clone(),
+            port: route_parent.port,
         }
     }
 }
@@ -1111,6 +1178,19 @@ impl From<&HTTPRoute> for ResourceKey {
 impl From<(&HTTPRouteRulesBackendRefs, String)> for ResourceKey {
     fn from((value, gateway_namespace): (&HTTPRouteRulesBackendRefs, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
+
+        Self {
+            group: DEFAULT_GROUP_NAME.to_owned(),
+            namespace,
+            name: value.name.clone(),
+            kind: DEFAULT_KIND_NAME.to_owned(),
+        }
+    }
+}
+
+impl From<&HTTPRouteRulesBackendRefs> for BackendResourceKey {
+    fn from(value: &HTTPRouteRulesBackendRefs) -> Self {
+        let namespace = value.namespace.clone();
 
         Self {
             group: DEFAULT_GROUP_NAME.to_owned(),

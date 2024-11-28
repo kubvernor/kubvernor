@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
-    common::{NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping},
+    common::{NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteRefKey, RouteToListenersMapping},
     state::State,
 };
 use gateway_api::apis::standard::{
@@ -53,16 +53,25 @@ impl<'a> RouteListenerMatcher<'a> {
         let mut routes_and_listeners: Vec<GatewayListeners> = vec![];
         if let Some(route_parents) = route_parents {
             for route_parent in route_parents {
-                let route_parent_key = ResourceKey::from((route_parent, route_key.namespace.clone()));
+                let route_parent_key = RouteRefKey::from((route_parent, route_key.namespace.clone()));
                 let gateway_key = ResourceKey::from(&**self.gateway);
-                if route_parent_key.name == gateway_key.name && route_parent_key.namespace == gateway_key.namespace {
+                if route_parent_key.as_ref().name == gateway_key.name && route_parent_key.as_ref().namespace == gateway_key.namespace {
                     let matching_gateway_listeners = self.filter_listeners_by_namespace(self.gateway.spec.listeners.clone().into_iter(), gateway_key, route_key);
-                    let matching_gateway_listeners = Self::filter_listeners_by_hostnames(matching_gateway_listeners, route);
                     let matching_gateway_listeners = matching_gateway_listeners.collect::<Vec<_>>();
                     debug!("Matching listeners {:?}", matching_gateway_listeners);
                     if matching_gateway_listeners.is_empty() {
                         route_resolution_status = Some(ResolutionStatus::NotResolved(NotResolvedReason::NotAllowedByListeners));
+                        continue;
                     }
+
+                    let matching_gateway_listeners = Self::filter_listeners_by_hostnames(matching_gateway_listeners.into_iter(), route);
+                    let matching_gateway_listeners = matching_gateway_listeners.collect::<Vec<_>>();
+                    debug!("Matching listeners {:?}", matching_gateway_listeners);
+                    if matching_gateway_listeners.is_empty() {
+                        route_resolution_status = Some(ResolutionStatus::NotResolved(NotResolvedReason::NoMatchingListenerHostname));
+                        continue;
+                    }
+
                     let matching_gateway_listeners = matching_gateway_listeners.into_iter();
                     let mut matched: Vec<GatewayListeners> = match (route_parent.port, &route_parent.section_name) {
                         (Some(port), Some(section_name)) => {
@@ -97,9 +106,9 @@ impl<'a> RouteListenerMatcher<'a> {
             .filter_map(|(parent_ref, maybe_gateway)| {
                 if let Some(gateway) = maybe_gateway {
                     let gateway_key = ResourceKey::from(&**gateway);
-                    let parent_ref_key = ResourceKey::from((&**parent_ref, gateway_key.namespace.clone()));
+                    let parent_ref_key = RouteRefKey::from((&**parent_ref, gateway_key.namespace.clone()));
 
-                    if parent_ref_key == gateway_key {
+                    if *parent_ref_key.as_ref() == gateway_key {
                         state.get_gateway(&gateway_key).cloned()
                     } else {
                         None
