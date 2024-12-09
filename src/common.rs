@@ -30,6 +30,8 @@ pub enum ListenerError {
     UnknownProtocol(String),
     #[error("Lisetner is not distinct")]
     NotDistinct(String, i32, ProtocolType, Option<String>),
+    #[error("Unknown tls mode")]
+    UnknownTlsMode,
 }
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
@@ -86,7 +88,7 @@ pub struct ListenerConfig {
     pub name: String,
     pub port: i32,
     pub hostname: Option<String>,
-    pub certificates: Vec<ResourceKey>,
+    pub tls_type: Option<TlsType>,
 }
 
 impl PartialOrd for ListenerConfig {
@@ -105,12 +107,7 @@ impl PartialOrd for ListenerConfig {
 
 impl ListenerConfig {
     pub fn new(name: String, port: i32, hostname: Option<String>) -> Self {
-        Self {
-            name,
-            port,
-            hostname,
-            certificates: vec![],
-        }
+        Self { name, port, hostname, tls_type: None }
     }
 }
 
@@ -244,29 +241,49 @@ pub struct ListenerData {
     pub attached_routes: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub enum TlsType {
+    Terminate(Vec<ResourceKey>),
+    Passthrough,
+}
+
 impl TryFrom<&GatewayListeners> for Listener {
     type Error = ListenerError;
 
     fn try_from(gateway_listener: &GatewayListeners) -> std::result::Result<Self, Self::Error> {
-        let secrets = gateway_listener
-            .tls
-            .as_ref()
-            .and_then(|tls| {
-                tls.certificate_refs.as_ref().map(|refs| {
-                    refs.iter()
-                        .map(|r| ResourceKey::from((r.group.clone(), r.namespace.clone(), r.name.clone(), r.kind.clone())))
-                        .collect::<Vec<_>>()
-                })
-            })
-            .unwrap_or_default();
-
         let mut config = ListenerConfig::new(gateway_listener.name.clone(), gateway_listener.port, gateway_listener.hostname.clone());
-        config.certificates = secrets;
 
         let condition = validate_allowed_routes(gateway_listener);
 
         let mut listener_conditions = ListenerConditions::new();
         _ = listener_conditions.replace(condition);
+
+        let maybe_tls_config = gateway_listener
+            .tls
+            .as_ref()
+            .map(|tls| match tls.mode {
+                Some(gateways::GatewayListenersTlsMode::Passthrough) => Ok(TlsType::Passthrough),
+                Some(gateways::GatewayListenersTlsMode::Terminate) => {
+                    let secrets = tls
+                        .certificate_refs
+                        .as_ref()
+                        .map(|refs| {
+                            refs.iter()
+                                .map(|r| ResourceKey::from((r.group.clone(), r.namespace.clone(), r.name.clone(), r.kind.clone())))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    Ok(TlsType::Terminate(secrets))
+                }
+                None => Err(ListenerError::UnknownTlsMode),
+            })
+            .transpose();
+
+        match maybe_tls_config {
+            Ok(tls) => config.tls_type = tls,
+            Err(e) => return Err(e),
+        }
+
         let listener_data = ListenerData {
             config,
             conditions: listener_conditions,
@@ -519,9 +536,9 @@ impl Route {
             Route::Http(c) | Route::Grpc(c) => &c.resource_key.namespace,
         }
     }
-    pub fn parents(&self) -> &Option<Vec<HTTPRouteParentRefs>> {
+    pub fn parents(&self) -> Option<&Vec<HTTPRouteParentRefs>> {
         match self {
-            Route::Http(c) | Route::Grpc(c) => &c.parents,
+            Route::Http(c) | Route::Grpc(c) => c.parents.as_ref(),
         }
     }
 

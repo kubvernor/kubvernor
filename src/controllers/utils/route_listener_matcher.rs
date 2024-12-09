@@ -47,7 +47,7 @@ impl<'a> RouteListenerMatcher<'a> {
         )
     }
 
-    fn filter_matching_route(&'a self, route_parents: &Option<Vec<HTTPRouteParentRefs>>, route: &'a Route) -> (Vec<GatewayListeners>, Option<ResolutionStatus>) {
+    fn filter_matching_route(&'a self, route_parents: Option<&Vec<HTTPRouteParentRefs>>, route: &'a Route) -> (Vec<GatewayListeners>, Option<ResolutionStatus>) {
         let route_key = route.resource_key();
         let mut route_resolution_status = None;
         let mut routes_and_listeners: Vec<GatewayListeners> = vec![];

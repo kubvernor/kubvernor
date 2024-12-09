@@ -5,7 +5,8 @@ use tracing::{debug, info, warn};
 
 use super::envoy_deployer::TEMPLATES;
 use crate::{
-    common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, DEFAULT_ROUTE_HOSTNAME},
+    backends::envoy_deployer::{create_certificate_name, create_key_name, create_secret_name},
+    common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, TlsType, DEFAULT_ROUTE_HOSTNAME},
     controllers::HostnameMatchFilter,
 };
 #[derive(Debug)]
@@ -22,14 +23,16 @@ impl RdsData {
 #[allow(clippy::struct_field_names)]
 #[derive(Debug)]
 pub struct XdsData {
+    pub bootstrap_content: String,
     pub lds_content: String,
     pub rds_content: Vec<RdsData>,
     pub cds_content: String,
 }
 
 impl XdsData {
-    pub fn new(lds_content: String, rds_content: Vec<RdsData>, cds_content: String) -> Self {
+    pub fn new(bootstrap_content: String, lds_content: String, rds_content: Vec<RdsData>, cds_content: String) -> Self {
         Self {
+            bootstrap_content,
             lds_content,
             rds_content,
             cds_content,
@@ -75,6 +78,7 @@ pub struct EnvoyListener {
     port: i32,
     http_listener_map: BTreeSet<EnvoyVirutalHost>,
     tcp_listener_map: BTreeSet<ListenerNameToHostname>,
+    tls_type: Option<TlsType>,
 }
 
 type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -93,6 +97,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
         info!("Collapsed envoy listeners {envoy_listeners:#?}");
         let listeners = &envoy_listeners.values().cloned().collect::<Vec<_>>();
         let lds = Self::generate_lds(listeners)?;
+        let boostrap = Self::generate_bootstrap(listeners)?;
         let rds = listeners
             .iter()
             .filter_map(|listener| {
@@ -107,7 +112,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
             .collect();
 
         let cds = Self::genereate_cds(listeners)?;
-        Ok(XdsData::new(lds, rds, cds))
+        Ok(XdsData::new(boostrap, lds, rds, cds))
     }
 
     fn generate_envoy_representation(&self) -> BTreeMap<i32, EnvoyListener> {
@@ -122,7 +127,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
 
             if let Some(envoy_listener) = maybe_added {
                 match protocol_type {
-                    ProtocolType::Http => {
+                    ProtocolType::Http | ProtocolType::Https => {
                         let mut new_listener = Self::generate_virtual_hosts(gateway_name, listener);
                         envoy_listener.http_listener_map.append(&mut new_listener.http_listener_map);
                     }
@@ -133,7 +138,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                 }
             } else {
                 match protocol_type {
-                    ProtocolType::Http => {
+                    ProtocolType::Http | ProtocolType::Https => {
                         let envoy_listener = Self::generate_virtual_hosts(gateway_name, listener);
                         acc.insert(port, envoy_listener);
                     }
@@ -147,6 +152,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                 port,
                                 http_listener_map: BTreeSet::new(),
                                 tcp_listener_map: listener_map,
+                                tls_type: None,
                             },
                         );
                     }
@@ -197,6 +203,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
         EnvoyListener {
             name: gateway_name,
             port: listener.port(),
+            tls_type: listener.config().tls_type.clone(),
             http_listener_map: listener_map,
             tcp_listener_map: BTreeSet::new(),
         }
@@ -225,6 +232,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
             (_, _) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
         }
     }
+
     #[allow(clippy::too_many_lines)]
     fn genereate_rds(listener: &EnvoyListener) -> Result<RdsData, Error> {
         #[derive(Serialize)]
@@ -307,6 +315,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
             port,
             http_listener_map,
             tcp_listener_map: _,
+            tls_type: _,
         } = listener;
 
         let tvh: Vec<TeraVirtualHost> = http_listener_map
@@ -446,13 +455,48 @@ impl<'a> EnvoyXDSGenerator<'a> {
         Ok(cds)
     }
 
+    fn generate_bootstrap(listeners: &[EnvoyListener]) -> Result<String, Error> {
+        #[derive(Serialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
+        pub struct TeraSecret {
+            name: String,
+            certificate: String,
+            key: String,
+        }
+        let tera_secrets: BTreeSet<TeraSecret> = listeners
+            .iter()
+            .filter_map(|l| {
+                if let Some(TlsType::Terminate(certificates)) = &l.tls_type {
+                    Some(certificates.iter().map(|certificate_key| TeraSecret {
+                        name: create_secret_name(certificate_key),
+                        certificate: create_certificate_name(certificate_key),
+                        key: create_key_name(certificate_key),
+                    }))
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect();
+        let mut tera_context = tera::Context::new();
+        if !tera_secrets.is_empty() {
+            tera_context.insert("secrets", &tera_secrets);
+        }
+
+        Ok(TEMPLATES.render("envoy-bootstrap.yaml.tera", &tera_context)?)
+    }
+
     fn generate_lds(listeners: &[EnvoyListener]) -> Result<String, Error> {
+        #[derive(Serialize, Debug)]
+        pub struct TeraSecret {
+            name: String,
+        }
         #[derive(Serialize, Debug)]
         pub struct TeraListener {
             pub name: String,
             pub port: i32,
             pub route_name: String,
             pub ip_address: String,
+            pub secrets: Option<Vec<TeraSecret>>,
         }
         let tera_listeners: Vec<TeraListener> = listeners
             .iter()
@@ -461,6 +505,18 @@ impl<'a> EnvoyXDSGenerator<'a> {
                 port: l.port,
                 route_name: format!("{}-dynamic-route", l.name),
                 ip_address: "0.0.0.0".to_owned(),
+                secrets: if let Some(TlsType::Terminate(certificates)) = &l.tls_type {
+                    Some(
+                        certificates
+                            .iter()
+                            .map(|certificate_key| TeraSecret {
+                                name: create_secret_name(certificate_key),
+                            })
+                            .collect(),
+                    )
+                } else {
+                    None
+                },
             })
             .collect();
         let mut tera_context = tera::Context::new();

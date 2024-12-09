@@ -228,7 +228,7 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let parent_gateway_refs = parent_gateway_refs_keys
             .clone()
-            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(&key.as_ref()).cloned()))
+            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(key.as_ref()).cloned()))
             .map(|i| if i.1.is_some() { Ok(i) } else { Err(i) });
 
         let (resolved_gateways, unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
