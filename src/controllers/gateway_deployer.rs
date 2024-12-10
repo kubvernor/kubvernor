@@ -14,10 +14,10 @@ use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    common::{self, ChangedContext, GatewayEvent, GatewayResponse, ResolvedRefs},
+    common::{self, ChangedContext, GatewayEvent, GatewayResponse, ListenerCondition, ResolvedRefs},
     controllers::{
         gateway_processed_handler::GatewayProcessedHandler,
         utils::{ListenerTlsConfigValidator, RoutesResolver},
@@ -28,6 +28,8 @@ use crate::{
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
+
+const CONDITION_MESSAGE: &str = "Gateway updated by controller";
 
 pub struct GatewayDeployer<'a> {
     pub client: Client,
@@ -54,7 +56,7 @@ impl<'a> GatewayDeployer<'a> {
         let mut backend_gateway = RoutesResolver::new(backend_gateway, self.client.clone(), log_context, self.state, self.kube_gateway).validate().await;
         Self::adjust_statuses(&mut backend_gateway);
         self.resolve_listeners_statuses(&backend_gateway, &mut updated_kube_gateway);
-        debug!("Effective gateway {:#?}", backend_gateway);
+        info!("Effective gateway {}-{} {:#?}", backend_gateway.name(), backend_gateway.namespace(), backend_gateway);
 
         let (response_sender, response_receiver) = oneshot::channel();
         let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway));
@@ -83,35 +85,37 @@ impl<'a> GatewayDeployer<'a> {
             let (resolved, unresolved) = l.routes();
             let resolved_count = resolved.len();
             let unresolved_count = unresolved.len();
+
             if l.attached_routes() != resolved_count + unresolved_count {
                 error!("We have a problem here... the route accounting is off ");
             }
             let conditions = l.conditions_mut();
 
             debug!("Adjusting conditions {} conditions {:#?}", name, conditions);
-            if let Some(common::ListenerCondition::ResolvedRefs(resolved_refs)) = conditions.get(&common::ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes)) {
+            if let Some(ListenerCondition::ResolvedRefs(resolved_refs)) = conditions.get(&ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes)) {
                 match resolved_refs {
-                    ResolvedRefs::Resolved(_) | ResolvedRefs::ResolvedWithNotAllowedRoutes(_) => {
-                        conditions.replace(common::ListenerCondition::Accepted);
-                        conditions.replace(common::ListenerCondition::Programmed);
+                    ResolvedRefs::Resolved(_) | ResolvedRefs::ResolvedWithNotAllowedRoutes(_) | ResolvedRefs::InvalidBackend(_) => {
+                        conditions.replace(ListenerCondition::Accepted);
+                        conditions.replace(ListenerCondition::Programmed);
                     }
 
                     ResolvedRefs::InvalidAllowedRoutes => {
-                        conditions.insert(common::ListenerCondition::NotProgrammed);
-                        conditions.replace(common::ListenerCondition::NotAccepted);
+                        conditions.insert(ListenerCondition::NotProgrammed);
+                        conditions.replace(ListenerCondition::NotAccepted);
                     }
                     ResolvedRefs::InvalidCertificates(_) => {
-                        conditions.replace(common::ListenerCondition::NotAccepted);
+                        conditions.remove(&ListenerCondition::Accepted);
+                        conditions.replace(ListenerCondition::NotProgrammed);
                     }
                 }
             };
 
-            if conditions.contains(&common::ListenerCondition::UnresolvedRouteRefs) {
+            if conditions.contains(&ListenerCondition::UnresolvedRouteRefs) {
                 if resolved_count == 0 {
-                    conditions.replace(common::ListenerCondition::NotProgrammed);
-                    conditions.replace(common::ListenerCondition::NotAccepted);
+                    conditions.replace(ListenerCondition::NotProgrammed);
+                    conditions.replace(ListenerCondition::NotAccepted);
                 }
-                conditions.remove(&common::ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes));
+                conditions.remove(&ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes));
             };
 
             debug!("Adjusted  conditions {conditions:#?}");
@@ -139,23 +143,27 @@ impl<'a> GatewayDeployer<'a> {
                 let reason = reason.to_string();
                 listener_conditions.retain(|c| c.type_ != type_);
                 match condition {
-                    common::ListenerCondition::ResolvedRefs(
-                        ResolvedRefs::Resolved(allowed_routes) | ResolvedRefs::ResolvedWithNotAllowedRoutes(allowed_routes) | ResolvedRefs::InvalidCertificates(allowed_routes),
+                    ListenerCondition::ResolvedRefs(
+                        ResolvedRefs::Resolved(_) | ResolvedRefs::InvalidBackend(_) | ResolvedRefs::ResolvedWithNotAllowedRoutes(_) | ResolvedRefs::InvalidCertificates(_),
                     ) => {
                         listener_conditions.push(Condition {
                             last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
+                            message: CONDITION_MESSAGE.to_owned(),
                             observed_generation: generation,
                             reason,
                             status,
                             type_,
                         });
-                        listener_status.supported_kinds = allowed_routes.iter().map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() }).collect();
+                        listener_status.supported_kinds = condition
+                            .supported_routes()
+                            .iter()
+                            .map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() })
+                            .collect();
                     }
-                    common::ListenerCondition::UnresolvedRouteRefs => {
+                    ListenerCondition::UnresolvedRouteRefs => {
                         listener_conditions.push(Condition {
                             last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
+                            message: CONDITION_MESSAGE.to_owned(),
                             observed_generation: generation,
                             reason,
                             status,
@@ -170,7 +178,7 @@ impl<'a> GatewayDeployer<'a> {
                     _ => {
                         listener_conditions.push(Condition {
                             last_transition_time: Time(Utc::now()),
-                            message: "Updated by controller".to_owned(),
+                            message: CONDITION_MESSAGE.to_owned(),
                             observed_generation: generation,
                             reason,
                             status,

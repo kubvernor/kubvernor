@@ -3,15 +3,30 @@ resources:{% for listener in listeners %}
 - "@type": type.googleapis.com/envoy.config.listener.v3.Listener
   name: {{listener.name}}-{{listener.port}}
   address:
-    socket_address: { address: {{listener.ip_address}}, port_value: {{listener.port}} }
+    socket_address: { address: {{listener.ip_address}}, port_value: {{listener.port}} }{% if listener.secrets %}
+  listener_filters:  
+    - name: listener_https_1_tls_inspector
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector{% endif %}
+
   filter_chains:
     - name: filter_chain_http
       filter_chain_match:
-        destination_port: {{listener.port}}
+        destination_port: {{listener.port}}{% if listener.secrets %}
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typedConfig:
+          '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          requireClientCertificate: false
+          full_scan_certs_on_sni_mismatch: true
+          common_tls_context:              
+            tls_certificate_sds_secret_configs:{% for secret in listener.secrets %}
+              - name: {{secret.name}}{% endfor %}{% endif %}
       filters:
         - name: http_gateway
           typed_config:
             "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager                                        
+#            strip_any_host_port: true
             httpFilters:
               - name: envoy.filters.http.router
                 typedConfig:

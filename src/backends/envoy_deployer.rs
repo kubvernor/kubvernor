@@ -1,11 +1,14 @@
-use std::collections::BTreeMap;
+use std::collections::{btree_map::Values, BTreeMap, BTreeSet};
 
 use futures::FutureExt;
 use itertools::Itertools;
 use k8s_openapi::{
     api::{
         apps::v1::{Deployment, DeploymentSpec},
-        core::v1::{ConfigMap, ConfigMapVolumeSource, ContainerPort, KeyToPath, PodSpec, PodTemplateSpec, Service, ServiceAccount, ServicePort, ServiceSpec, Volume},
+        core::v1::{
+            ConfigMap, ConfigMapVolumeSource, ContainerPort, KeyToPath, PodSpec, PodTemplateSpec, ProjectedVolumeSource, SecretProjection, Service, ServiceAccount, ServicePort, ServiceSpec, Volume,
+            VolumeProjection,
+        },
     },
     apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
 };
@@ -23,7 +26,7 @@ use tracing::{debug, info, warn};
 use super::xds_generator::{self, RdsData};
 use crate::{
     backends::xds_generator::XdsData,
-    common::{ChangedContext, DeletedContext, Gateway, GatewayAddress, GatewayEvent, GatewayResponse},
+    common::{ChangedContext, DeletedContext, Gateway, GatewayAddress, GatewayEvent, GatewayResponse, Listener, ResourceKey, TlsType},
 };
 
 lazy_static! {
@@ -108,8 +111,6 @@ impl EnvoyDeployerChannelHandler {
         let config_map_api: Api<ConfigMap> = Api::namespaced(self.client.clone(), gateway.namespace());
         let (xds_cm, bootstrap_cm) = config_map_names(gateway);
 
-        let envoy_boostrap_config_map = Self::create_envoy_bootstrap_config_map(&bootstrap_cm, gateway);
-
         let deployment = Self::create_deployment(gateway);
         let service = Self::create_service(gateway);
         let service_account = Self::create_service_account(gateway);
@@ -119,12 +120,12 @@ impl EnvoyDeployerChannelHandler {
             ..Default::default()
         };
 
-        let _res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&envoy_boostrap_config_map)).await?;
         debug!("Created bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
 
         let maybe_templates = xds_generator::EnvoyXDSGenerator::new(gateway).generate_xds();
-        //let maybe_templates = Self::create_envoy_xds(gateway, route_to_listeners_mapping);
+
         if let Ok(XdsData {
+            bootstrap_content,
             lds_content,
             rds_content,
             cds_content,
@@ -132,6 +133,8 @@ impl EnvoyDeployerChannelHandler {
         {
             let envoy_xds_config_map = Self::create_envoy_xds_config_map(&xds_cm, gateway, lds_content, rds_content, cds_content);
             let _envoy_xds_config_map = config_map_api.patch(&xds_cm, &pp, &Patch::Apply(&envoy_xds_config_map)).await?;
+            let envoy_boostrap_config_map = Self::create_envoy_bootstrap_config_map(&bootstrap_cm, gateway, bootstrap_content);
+            let _res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&envoy_boostrap_config_map)).await?;
             debug!("Created xds config map for {}-{}", gateway.name(), gateway.namespace());
         } else {
             warn!("Problem when processing templates {maybe_templates:?}");
@@ -239,9 +242,9 @@ impl EnvoyDeployerChannelHandler {
         }
     }
 
-    fn create_envoy_bootstrap_config_map(name: &str, gateway: &Gateway) -> ConfigMap {
+    fn create_envoy_bootstrap_config_map(name: &str, gateway: &Gateway, boostrap_content: String) -> ConfigMap {
         let mut map = BTreeMap::new();
-        map.insert("envoy-bootstrap.yaml".to_owned(), ENVOY_BOOTSTRAP.to_owned());
+        map.insert("envoy-bootstrap.yaml".to_owned(), boostrap_content);
         ConfigMap {
             binary_data: None,
             data: Some(map),
@@ -272,13 +275,12 @@ impl EnvoyDeployerChannelHandler {
         if let Some(container) = pod_spec.containers.first_mut() {
             container.ports = Some(ports);
         }
-
         let (xds_cm, boostrap_cm) = config_map_names(gateway);
-        pod_spec.volumes = Some(vec![
+        let mut default_volumes = vec![
             Volume {
                 name: "envoy-config".to_owned(),
                 config_map: Some(ConfigMapVolumeSource {
-                    name: Some(boostrap_cm),
+                    name: boostrap_cm,
                     items: Some(vec![KeyToPath {
                         key: "envoy-bootstrap.yaml".to_owned(),
                         path: "envoy-bootstrap.yaml".to_owned(),
@@ -290,16 +292,17 @@ impl EnvoyDeployerChannelHandler {
             },
             Volume {
                 name: "envoy-xds".to_owned(),
-                config_map: Some(ConfigMapVolumeSource {
-                    name: Some(xds_cm),
-                    ..Default::default()
-                }),
+                config_map: Some(ConfigMapVolumeSource { name: xds_cm, ..Default::default() }),
                 ..Default::default()
             },
-        ]);
+        ];
+        let mut secret_volumes = Self::create_secret_volumes(gateway.listeners());
+        default_volumes.append(&mut secret_volumes);
+        pod_spec.volumes = Some(default_volumes);
 
         Deployment {
             metadata: ObjectMeta {
+                //annotations: Some(annotations.clone()),
                 name: Some(gateway.name().to_owned()),
                 namespace: Some(gateway.namespace().to_owned()),
                 labels: Some(labels.clone()),
@@ -314,6 +317,7 @@ impl EnvoyDeployerChannelHandler {
                 template: PodTemplateSpec {
                     metadata: Some(ObjectMeta {
                         labels: Some(labels.clone()),
+                        //annotations: Some(annotations),
                         ..Default::default()
                     }),
                     spec: Some(pod_spec),
@@ -386,6 +390,63 @@ impl EnvoyDeployerChannelHandler {
                 .collect(),
         );
     }
+
+    fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
+        let mut all_certificates = BTreeSet::new();
+        for listener in listeners {
+            if let Listener::Https(listener_data) = listener {
+                if let Some(TlsType::Terminate(certificates)) = &listener_data.config.tls_type {
+                    for certificate in certificates {
+                        all_certificates.insert(certificate.clone());
+                    }
+                }
+            }
+        }
+
+        let secrets = all_certificates
+            .into_iter()
+            .map(|resource_key| VolumeProjection {
+                secret: Some(SecretProjection {
+                    name: resource_key.name.clone(),
+                    items: Some(vec![
+                        KeyToPath {
+                            key: "tls.crt".to_owned(),
+                            path: create_certificate_name(&resource_key),
+                            ..Default::default()
+                        },
+                        KeyToPath {
+                            key: "tls.key".to_owned(),
+                            path: create_key_name(&resource_key),
+                            ..Default::default()
+                        },
+                    ]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .collect();
+
+        vec![Volume {
+            name: "envoy-secrets".to_owned(),
+            projected: Some(ProjectedVolumeSource {
+                sources: Some(secrets),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }]
+    }
+}
+
+pub fn create_secret_name(resource_key: &ResourceKey) -> String {
+    resource_key.name.clone() + "_" + &resource_key.namespace
+}
+
+pub fn create_certificate_name(resource_key: &ResourceKey) -> String {
+    resource_key.name.clone() + "_" + &resource_key.namespace + "_cert.pem"
+}
+
+pub fn create_key_name(resource_key: &ResourceKey) -> String {
+    resource_key.name.clone() + "_" + &resource_key.namespace + "_key.pem"
 }
 
 fn config_map_names(gateway: &Gateway) -> (String, String) {
@@ -488,31 +549,15 @@ const ENVOY_POD_SPEC: &str = r#"
                     "name": "envoy-xds",
                     "mountPath": "/envoy-xds",
                     "readOnly": true
+                },
+                {
+                    "name": "envoy-secrets",
+                    "mountPath": "/envoy-secrets",
+                    "readOnly": true
                 }
+
             ]
         }
     ]
 }
 "#;
-
-const ENVOY_BOOTSTRAP: &str = "
-admin:
-  address:
-    socket_address:
-      address: 0.0.0.0
-      port_value: 9901
-dynamic_resources:
-  lds_config:
-    path_config_source:
-      path: ./envoy-xds/lds.yaml
-      watched_directory:
-        path: ./envoy-xds
-  cds_config:
-    path_config_source:
-      path: ./envoy-xds/cds.yaml
-      watched_directory:
-        path: ./envoy-xds
-static_resources:
-  listeners: []
-  clusters: []
-";

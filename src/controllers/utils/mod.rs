@@ -1,15 +1,20 @@
+mod hostname_match_filter;
+mod route_listener_matcher;
 mod routes_resolver;
 mod tls_config_validator;
 
+pub use hostname_match_filter::HostnameMatchFilter;
+pub(crate) use route_listener_matcher::RouteListenerMatcher;
 pub(crate) use routes_resolver::RoutesResolver;
 pub(crate) use tls_config_validator::ListenerTlsConfigValidator;
 
-use std::{marker::PhantomData, sync::Arc};
+use k8s_openapi::api::core::v1::Namespace;
+use std::{collections::BTreeMap, marker::PhantomData, sync::Arc};
 
 use gateway_api::apis::standard::gateways::Gateway;
 
 use kube::{
-    api::{Patch, PatchParams},
+    api::{ListParams, Patch, PatchParams},
     runtime::{
         controller::Action,
         finalizer::{self, Error},
@@ -136,10 +141,30 @@ pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route>
         .unwrap_or_default()
 }
 
-pub async fn resolve_route_backends(client: Client, routes: Vec<Route>, log_context: &str) -> Vec<Route> {
-    let futures: Vec<_> = routes.into_iter().map(|route| RouteResolver::new(route, client.clone(), log_context).resolve()).collect();
+pub async fn resolve_route_backends(gateway_namespace: &str, client: Client, routes: Vec<Route>, log_context: &str) -> Vec<Route> {
+    let futures: Vec<_> = routes
+        .into_iter()
+        .map(|route| RouteResolver::new(gateway_namespace, route, client.clone(), log_context).resolve())
+        .collect();
     let routes = futures::future::join_all(futures);
     routes.await
+}
+
+pub async fn resolve_namespaces(client: Client) -> BTreeMap<String, BTreeMap<String, String>> {
+    let api = Api::<Namespace>::all(client);
+    let lp = ListParams::default();
+    let maybe_namespaces = api.list(&lp).await;
+    let mut namespace_map = BTreeMap::new();
+    if let Ok(namespaces) = maybe_namespaces {
+        for namespace in namespaces.items {
+            if let Some(labels) = namespace.metadata.labels {
+                if let Some(namesapce_name) = labels.get("kubernetes.io/metadata.name") {
+                    namespace_map.insert(namesapce_name.clone(), labels);
+                }
+            };
+        }
+    };
+    namespace_map
 }
 
 pub struct LogContext<'a, T> {

@@ -4,10 +4,28 @@ resources:
   name: {{route.name}}
   virtual_hosts:{% for vc in route.virtual_hosts %}
   - name: backend-{{vc.hostname}}
-    domains:
-    - "{{vc.hostname}}"
-    routes:{% for route_conf in vc.route_configs %}            
+    domains:{% for hostname in vc.hostnames %}
+    - "{{hostname}}"{% endfor %}    
+    routes:{% for route_conf in vc.route_configs %}{% if not route_conf.redirect_filter %}
       - route:
-          cluster: {{route_conf.cluster_name}}
+          cluster_not_found_response_code: INTERNAL_SERVER_ERROR
+          weighted_clusters:
+            clusters:{% for cluster_desc in route_conf.cluster_names %}
+              - name: {{cluster_desc.name}}
+                weight: {{cluster_desc.weight}}{% endfor %}{% else %}
+      - redirect:
+          host_redirect: {{route_conf.redirect_filter.hostname}}                    
+          response_code: {{route_conf.redirect_filter.status_code}}{% endif %}        
         match:
-          {{route_conf.path.match_type}}: {{route_conf.path.path}}{% endfor %}{% endfor %}          
+          {{route_conf.path.match_type}}: {{route_conf.path.path}}{% if route_conf.headers%}
+          headers:{% for header in route_conf.headers %}
+            - name: {{header.name}}
+              string_match:
+                {{header.match_type}}: {{header.value}}{% endfor %}{% endif %}
+        request_headers_to_add:{% for header in route_conf.request_headers_to_add_or_set %}
+          - header: 
+              key: {{header.name}}
+              value: {{header.value}}
+            append_action: {{header.action}}{% endfor %}
+        request_headers_to_remove:{% for header in route_conf.request_headers_to_remove %}
+          - {{header}}{% endfor %}{% endfor %}{% endfor %}          

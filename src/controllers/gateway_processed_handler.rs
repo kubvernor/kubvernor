@@ -8,16 +8,19 @@ use k8s_openapi::{
 };
 use kube::{Resource, ResourceExt};
 use tokio::sync::{mpsc::Sender, oneshot};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
-    common::{self, ResourceKey, Route},
+    common::{self, GatewayAddress, NotResolvedReason, ResolutionStatus, ResourceKey, Route},
     controllers::ControllerError,
     patchers::{Operation, PatchContext},
     state::State,
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
+
+const GATEWAY_CONDITION_MESSAGE: &str = "Gateway status updated by controller";
+const ROUTE_CONDITION_MESSAGE: &str = "Route status updated by controller";
 pub struct GatewayProcessedHandler<'a> {
     pub effective_gateway: common::Gateway,
     pub gateway: Gateway,
@@ -55,7 +58,7 @@ impl<'a> GatewayProcessedHandler<'a> {
 
         let new_condition = Condition {
             last_transition_time: Time(Utc::now()),
-            message: "Updated by controller".to_owned(),
+            message: GATEWAY_CONDITION_MESSAGE.to_owned(),
             observed_generation,
             reason: gateway_api::apis::standard::constants::GatewayConditionReason::Ready.to_string(),
             status: String::from("True"),
@@ -71,12 +74,14 @@ impl<'a> GatewayProcessedHandler<'a> {
     }
 
     async fn update_routes(&self) {
-        let (attached_routes, ignored_routes) = self.effective_gateway.routes();
-        debug!("{} Attached routes {attached_routes:?}", &self.log_context);
+        let (attached_routes, unresolved_routes) = self.effective_gateway.routes();
+
+        let routes_with_no_hostnames = self.effective_gateway.orphaned_routes();
+        debug!("{} Updating attached routes {attached_routes:?}", &self.log_context);
         let gateway_id = &self.effective_gateway.key();
         let log_context = &self.log_context;
         for attached_route in attached_routes {
-            let updated_route = self.update_accepted_route_parents(attached_route, gateway_id);
+            let updated_route = self.update_attached_route_parents(attached_route, gateway_id);
             if let Some(route) = updated_route {
                 let route_resource_key = ResourceKey::from(route.meta());
                 let version = route.resource_version().clone();
@@ -102,9 +107,41 @@ impl<'a> GatewayProcessedHandler<'a> {
                 }
             }
         }
-        debug!("{log_context} Ignored routes  {ignored_routes:?}");
-        for ignored_route in ignored_routes {
-            let updated_route = self.update_rejected_route_parents(ignored_route, gateway_id);
+        debug!("{log_context} Updating unresolved routes  {unresolved_routes:?}");
+        for unresolve_route in unresolved_routes {
+            let updated_route = self.update_unresolved_route_parents(unresolve_route, gateway_id);
+            if let Some(route) = updated_route {
+                let route_resource_key = ResourceKey::from(route.meta());
+                let version = route.resource_version().clone();
+                let (sender, receiver) = oneshot::channel();
+                let _res = self
+                    .route_patcher
+                    .send(Operation::PatchStatus(PatchContext {
+                        resource_key: route_resource_key.clone(),
+                        resource: route,
+                        controller_name: self.controller_name.clone(),
+                        version,
+                        response_sender: sender,
+                    }))
+                    .await;
+
+                let patched_route = receiver.await;
+                if let Ok(maybe_patched) = patched_route {
+                    match maybe_patched {
+                        Ok(_patched_route) => {
+                            //patched_route.metadata.resource_version = None;
+                            //self.state.save_http_route(route_resource_key, &Arc::new(patched_route));
+                        }
+                        Err(e) => {
+                            warn!("{log_context} Error while patching {e}");
+                        }
+                    }
+                }
+            }
+        }
+        debug!("{log_context} Updating routes with no hostnames  {routes_with_no_hostnames:?}");
+        for route_with_no_hostname in self.effective_gateway.orphaned_routes() {
+            let updated_route = self.update_non_attached_route_parents(route_with_no_hostname, gateway_id);
             if let Some(route) = updated_route {
                 let route_resource_key = ResourceKey::from(route.meta());
                 let version = route.resource_version().clone();
@@ -136,7 +173,7 @@ impl<'a> GatewayProcessedHandler<'a> {
         }
     }
 
-    fn update_accepted_route_parents(&self, attached_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
+    fn update_attached_route_parents(&self, attached_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
         self.update_route_parents(
             attached_route,
             gateway_id,
@@ -145,7 +182,7 @@ impl<'a> GatewayProcessedHandler<'a> {
                 vec![
                     Condition {
                         last_transition_time: Time(Utc::now()),
-                        message: "Updated by controller".to_owned(),
+                        message: ROUTE_CONDITION_MESSAGE.to_owned(),
                         observed_generation: None,
                         reason: "Accepted".to_owned(),
                         status: "True".to_owned(),
@@ -153,7 +190,7 @@ impl<'a> GatewayProcessedHandler<'a> {
                     },
                     Condition {
                         last_transition_time: Time(Utc::now()),
-                        message: "Updated by controller".to_owned(),
+                        message: ROUTE_CONDITION_MESSAGE.to_owned(),
                         observed_generation: None,
                         reason: "ResolvedRefs".to_owned(),
                         status: "True".to_owned(),
@@ -164,71 +201,319 @@ impl<'a> GatewayProcessedHandler<'a> {
         )
     }
 
-    fn update_rejected_route_parents(&self, rejected_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
+    fn update_unresolved_route_parents(&self, rejected_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
+        let key = rejected_route.resource_key();
+        info!("Unresolved route resolution status  {key:?}  {:?}", rejected_route.resolution_status());
         let conditions = match rejected_route.resolution_status() {
-            crate::common::ResolutionStatus::Resolved => vec![Condition {
+            ResolutionStatus::Resolved => vec![Condition {
                 last_transition_time: Time(Utc::now()),
-                message: "Updated by controller".to_owned(),
+                message: ROUTE_CONDITION_MESSAGE.to_owned(),
                 observed_generation: None,
                 reason: gateway_api::apis::standard::constants::ListenerConditionReason::Invalid.to_string(),
                 status: "False".to_owned(),
                 type_: gateway_api::apis::standard::constants::ListenerConditionType::Conflicted.to_string(),
             }],
 
-            crate::common::ResolutionStatus::PartiallyResolved | crate::common::ResolutionStatus::NotResolved => {
-                vec![
-                    Condition {
-                        last_transition_time: Time(Utc::now()),
-                        message: "Updated by controller".to_owned(),
-                        observed_generation: None,
-                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs.to_string(),
-                        status: "False".to_owned(),
-                        type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
-                    },
-                    Condition {
-                        last_transition_time: Time(Utc::now()),
-                        message: "Updated by controller".to_owned(),
-                        observed_generation: None,
-                        reason: gateway_api::apis::standard::constants::ListenerConditionReason::Programmed.to_string(),
-                        status: "False".to_owned(),
-                        type_: gateway_api::apis::standard::constants::ListenerConditionType::Programmed.to_string(),
-                    },
-                ]
-            }
+            ResolutionStatus::NotResolved(resolution_reason) => match resolution_reason {
+                NotResolvedReason::InvalidBackend => {
+                    vec![
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: "InvalidKind".to_owned(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::Programmed.to_string(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Programmed.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted.to_string(),
+                            status: "True".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+                        },
+                    ]
+                }
+                NotResolvedReason::BackendNotFound => {
+                    vec![
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: "BackendNotFound".to_owned(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::Programmed.to_string(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Programmed.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted.to_string(),
+                            status: "True".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+                        },
+                    ]
+                }
+                NotResolvedReason::RefNotPermitted => {
+                    vec![
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: "RefNotPermitted".to_owned(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::Accepted.to_string(),
+                            status: "True".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+                        },
+                    ]
+                }
+                NotResolvedReason::NoMatchingParent => {
+                    vec![
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: "NoMatchingParent".to_owned(),
+                            status: "True".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: "NoMatchingParent".to_owned(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+                        },
+                    ]
+                }
+                _ => {
+                    vec![
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs.to_string(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::Programmed.to_string(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Programmed.to_string(),
+                        },
+                    ]
+                }
+            },
         };
         self.update_route_parents(rejected_route, gateway_id, ("Rejected", conditions))
     }
 
-    fn update_route_parents(&self, route: &Route, gateway_id: &ResourceKey, (new_condition_name, mut new_conditions): (&'static str, Vec<Condition>)) -> Option<HTTPRoute> {
-        let routes = self.state.get_http_routes_attached_to_gateway(gateway_id);
+    fn update_non_attached_route_parents(&self, non_attached_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
+        let key = non_attached_route.resource_key();
+        info!("Non attached route resolution status  {key:?}  {:?}", non_attached_route.resolution_status());
+        let conditions = match non_attached_route.resolution_status() {
+            ResolutionStatus::Resolved => vec![
+                Condition {
+                    last_transition_time: Time(Utc::now()),
+                    message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                    observed_generation: None,
+                    reason: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+                    status: "True".to_owned(),
+                    type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+                },
+                Condition {
+                    last_transition_time: Time(Utc::now()),
+                    message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                    observed_generation: None,
+                    reason: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                    status: "True".to_owned(),
+                    type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                },
+            ],
 
-        if let Some(routes) = routes {
-            let route = routes
+            ResolutionStatus::NotResolved(resolution_reason) => match resolution_reason {
+                NotResolvedReason::Unknown => vec![Condition {
+                    last_transition_time: Time(Utc::now()),
+                    message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                    observed_generation: None,
+                    reason: "Uknown reason".to_owned(),
+                    status: "False".to_owned(),
+                    type_: gateway_api::apis::standard::constants::ListenerConditionType::Programmed.to_string(),
+                }],
+
+                NotResolvedReason::NotAllowedByListeners => {
+                    vec![
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: "NotAllowedByListeners".to_owned(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            status: "True".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                        },
+                    ]
+                }
+
+                NotResolvedReason::RefNotPermitted => {
+                    vec![
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: "RefNotPermitted".to_owned(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: "RefNotPermitted".to_owned(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                        },
+                    ]
+                }
+
+                NotResolvedReason::NoMatchingListenerHostname => {
+                    vec![
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: "NoMatchingListenerHostname".to_owned(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            status: "True".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                        },
+                    ]
+                }
+
+                NotResolvedReason::NoMatchingParent => {
+                    vec![
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: "NoMatchingParent".to_owned(),
+                            status: "True".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: "NoMatchingParent".to_owned(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Accepted.to_string(),
+                        },
+                    ]
+                }
+
+                NotResolvedReason::InvalidBackend | NotResolvedReason::BackendNotFound => {
+                    vec![
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs.to_string(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                        },
+                        Condition {
+                            last_transition_time: Time(Utc::now()),
+                            message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                            observed_generation: None,
+                            reason: gateway_api::apis::standard::constants::ListenerConditionReason::Programmed.to_string(),
+                            status: "False".to_owned(),
+                            type_: gateway_api::apis::standard::constants::ListenerConditionType::Programmed.to_string(),
+                        },
+                    ]
+                }
+            },
+        };
+        self.update_route_parents(non_attached_route, gateway_id, ("Rejected", conditions))
+    }
+
+    fn update_route_parents(&self, route: &Route, gateway_id: &ResourceKey, (new_condition_name, mut new_conditions): (&'static str, Vec<Condition>)) -> Option<HTTPRoute> {
+        let kube_routes = self.state.get_http_routes_attached_to_gateway(gateway_id);
+
+        if let Some(kube_routes) = kube_routes {
+            let kube_route = kube_routes
                 .iter()
                 .find(|f| f.metadata.name == Some(route.name().to_owned()) && f.metadata.namespace == Some(route.namespace().clone()));
 
-            if let Some(mut route) = route.map(|r| (***r).clone()) {
-                new_conditions.iter_mut().for_each(|f| f.observed_generation = route.meta().generation);
+            if let Some(mut kube_route) = kube_route.map(|r| (***r).clone()) {
+                new_conditions.iter_mut().for_each(|f| f.observed_generation = kube_route.meta().generation);
 
-                let mut status = if let Some(status) = route.status { status } else { HTTPRouteStatus { parents: vec![] } };
+                let mut status = if let Some(status) = kube_route.status { status } else { HTTPRouteStatus { parents: vec![] } };
 
                 status
                     .parents
                     .retain(|p| !(p.controller_name == self.controller_name && p.parent_ref.namespace == self.gateway.meta().namespace && self.gateway.meta().name == Some(p.parent_ref.name.clone())));
 
-                let route_parents = HTTPRouteStatusParents {
-                    conditions: Some(new_conditions),
-                    controller_name: self.controller_name.clone(),
-                    parent_ref: HTTPRouteStatusParentsParentRef {
-                        namespace: self.gateway.meta().namespace.clone(),
-                        name: self.gateway.meta().name.clone().unwrap_or_default(),
-                        ..Default::default()
-                    },
-                };
-                status.parents.push(route_parents);
-                route.status = Some(status);
-                route.metadata.managed_fields = None;
-                return Some(route);
+                for kube_parent in kube_route.spec.parent_refs.clone().unwrap_or_default() {
+                    let route_parents = HTTPRouteStatusParents {
+                        conditions: Some(new_conditions.clone()),
+                        controller_name: self.controller_name.clone(),
+                        parent_ref: HTTPRouteStatusParentsParentRef {
+                            namespace: kube_parent.namespace.clone(),
+                            name: kube_parent.name.clone(),
+                            group: kube_parent.group.clone(),
+                            kind: kube_parent.kind.clone(),
+                            section_name: kube_parent.section_name.clone(),
+                            port: kube_parent.port,
+                        },
+                    };
+                    status.parents.push(route_parents);
+                }
+
+                kube_route.status = Some(status);
+                kube_route.metadata.managed_fields = None;
+                return Some(kube_route);
             }
         }
         None
@@ -241,15 +526,15 @@ impl<'a> GatewayProcessedHandler<'a> {
             .addresses()
             .iter()
             .map(|a| match a {
-                common::GatewayAddress::Hostname(hostname) => GatewayStatusAddresses {
+                GatewayAddress::Hostname(hostname) => GatewayStatusAddresses {
                     r#type: None,
                     value: hostname.clone(),
                 },
-                common::GatewayAddress::IPAddress(ip_addr) => GatewayStatusAddresses {
+                GatewayAddress::IPAddress(ip_addr) => GatewayStatusAddresses {
                     r#type: None,
                     value: ip_addr.to_string(),
                 },
-                common::GatewayAddress::NamedAddress(addr) => GatewayStatusAddresses { r#type: None, value: addr.clone() },
+                GatewayAddress::NamedAddress(addr) => GatewayStatusAddresses { r#type: None, value: addr.clone() },
             })
             .collect::<Vec<_>>();
         status.addresses = Some(addresses);

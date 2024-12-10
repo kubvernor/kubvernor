@@ -33,5 +33,7 @@ kubectl --namespace kubvernor create configmap envoy-xds --from-file ./resources
 ```
 
 
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+
 
 
