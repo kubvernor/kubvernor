@@ -3,17 +3,16 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::apis::standard::{gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute};
-
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource,
 };
-
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot, Mutex,
 };
-use tracing::warn;
+use tracing::{warn, Span};
+use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use super::{
@@ -23,15 +22,15 @@ use super::{
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, DeletedContext, GatewayEvent, ResourceKey},
+    common::{self, DeletedContext, GatewayEvent, ReferenceResolveRequest, RequestContext, ResourceKey},
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
-#[derive(Clone)]
-struct Context {
+#[derive(Clone, TypedBuilder)]
+pub struct GatewayControllerContext {
     controller_name: String,
     client: Client,
     gateway_channel_sender: mpsc::Sender<GatewayEvent>,
@@ -39,59 +38,28 @@ struct Context {
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
     gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
+    gateway_deployer_channel_sender: mpsc::Sender<(common::Gateway, Arc<Gateway>, String)>,
+    resolve_references_channel_sender: mpsc::Sender<ReferenceResolveRequest>,
 }
 
+#[derive(TypedBuilder)]
 pub struct GatewayController {
-    pub controller_name: String,
-    gateway_channel_sender: mpsc::Sender<GatewayEvent>,
-    api: Api<Gateway>,
-    state: Arc<Mutex<State>>,
-    gateway_patcher: mpsc::Sender<Operation<Gateway>>,
-    gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
-    http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
-    client: kube::Client,
+    ctx: Arc<GatewayControllerContext>,
 }
 
 impl GatewayController {
-    pub(crate) fn new(
-        controller_name: String,
-        gateway_channel_sender: mpsc::Sender<GatewayEvent>,
-        client: kube::Client,
-        state: Arc<Mutex<State>>,
-        gateway_patcher: mpsc::Sender<Operation<Gateway>>,
-        gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
-        http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
-    ) -> Self {
-        GatewayController {
-            controller_name,
-            gateway_channel_sender,
-            api: Api::all(client.clone()),
-            state,
-            gateway_patcher,
-            gateway_class_patcher,
-            http_route_patcher,
-            client,
-        }
-    }
     pub fn get_controller(&self) -> BoxFuture<()> {
-        let context = Arc::new(Context {
-            controller_name: self.controller_name.clone(),
-            gateway_channel_sender: self.gateway_channel_sender.clone(),
-            state: Arc::clone(&self.state),
-            gateway_patcher: self.gateway_patcher.clone(),
-            gateway_class_patcher: self.gateway_class_patcher.clone(),
-            http_route_patcher: self.http_route_patcher.clone(),
-            client: self.client.clone(),
-        });
+        let client = self.ctx.client.clone();
+        let context = &self.ctx;
 
-        Controller::new(self.api.clone(), Config::default())
-            .run(Self::reconcile_gateway, Self::error_policy, Arc::clone(&context))
+        Controller::new(Api::all(client), Config::default())
+            .run(Self::reconcile_gateway, Self::error_policy, Arc::clone(context))
             .for_each(|_| futures::future::ready(()))
             .boxed()
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn error_policy<T>(_object: Arc<T>, err: &ControllerError, _ctx: Arc<Context>) -> Action {
+    fn error_policy<T>(_object: Arc<T>, err: &ControllerError, _ctx: Arc<GatewayControllerContext>) -> Action {
         match err {
             ControllerError::PatchFailed
             | ControllerError::AlreadyAdded
@@ -104,7 +72,7 @@ impl GatewayController {
         }
     }
 
-    async fn reconcile_gateway(resource: Arc<Gateway>, ctx: Arc<Context>) -> Result<Action> {
+    async fn reconcile_gateway(resource: Arc<Gateway>, ctx: Arc<GatewayControllerContext>) -> Result<Action> {
         let controller_name = ctx.controller_name.clone();
         let gateway_patcher = ctx.gateway_patcher.clone();
         let gateway_class_patcher = ctx.gateway_class_patcher.clone();
@@ -141,19 +109,22 @@ impl GatewayController {
             state.get_gateway(&resource_key).cloned()
         };
 
-        let handler = GatewayResourceHandler {
-            state: Arc::clone(&ctx.state),
-            client: ctx.client.clone(),
-            resource_key,
-            controller_name: controller_name.clone(),
-            gateway_class_name,
-            resource,
-            version,
-            gateway_channel_sender: ctx.gateway_channel_sender.clone(),
-            gateway_patcher,
-            gateway_class_patcher,
-            http_route_patcher,
-        };
+        let handler = GatewayResourceHandler::builder()
+            .state(Arc::clone(&ctx.state))
+            .resource_key(resource_key)
+            .controller_name(controller_name)
+            .gateway_class_name(gateway_class_name)
+            .resource(resource)
+            .version(version)
+            .gateway_channel_sender(ctx.gateway_channel_sender.clone())
+            .gateway_patcher(gateway_patcher)
+            .gateway_class_patcher(gateway_class_patcher)
+            .http_route_patcher(http_route_patcher)
+            .client(ctx.client.clone())
+            .gateway_deployer_channel_sender(ctx.gateway_deployer_channel_sender.clone())
+            .resolve_references_channel_sender(ctx.resolve_references_channel_sender.clone())
+            .build();
+
         handler.process(maybe_stored_gateway_class, Self::check_spec_changed, Self::check_status_changed).await
     }
 
@@ -176,6 +147,7 @@ impl GatewayController {
     }
 }
 
+#[derive(TypedBuilder)]
 struct GatewayResourceHandler<R> {
     state: Arc<Mutex<State>>,
     client: Client,
@@ -188,6 +160,8 @@ struct GatewayResourceHandler<R> {
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
     gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
+    gateway_deployer_channel_sender: mpsc::Sender<(common::Gateway, Arc<Gateway>, String)>,
+    resolve_references_channel_sender: mpsc::Sender<ReferenceResolveRequest>,
 }
 
 #[async_trait]
@@ -264,43 +238,61 @@ impl GatewayResourceHandler<Gateway> {
     /// * we should update gatway's status if the route count has changed for a listener
     /// * we should update the route's status and reflect that the ownership might changed
     ///
-    async fn on_new_or_changed(&self, gateway_id: ResourceKey, gateway: &Arc<Gateway>, state: &mut State) -> Result<Action> {
-        let sender = &self.gateway_channel_sender;
+    async fn on_new_or_changed(&self, gateway_id: ResourceKey, kube_gateway: &Arc<Gateway>, state: &mut State) -> Result<Action> {
+        let log_context = self.log_context().to_string();
+        // let updated_gateway = GatewayDeployer {
+        //     client: self.client.clone(),
+        //     log_context: &log_context,
+        //     sender: sender.clone(),
+        //     kube_gateway: gateway,
+        //     state,
+        //     http_route_patcher: self.http_route_patcher.clone(),
+        //     controller_name: &self.controller_name,
+        // }
+        // .deploy_gateway()
+        // .await?;
 
-        let updated_gateway = GatewayDeployer {
-            client: self.client.clone(),
-            log_context: self.log_context().to_string().as_str(),
-            sender: sender.clone(),
-            kube_gateway: gateway,
-            state,
-            http_route_patcher: self.http_route_patcher.clone(),
-            controller_name: &self.controller_name,
-        }
-        .deploy_gateway()
-        .await?;
-        state.save_gateway(gateway_id.clone(), gateway);
-        let (sender, receiver) = oneshot::channel();
-        let _res = self
-            .gateway_patcher
-            .send(Operation::PatchStatus(PatchContext {
-                resource_key: gateway_id.clone(),
-                resource: updated_gateway,
-                controller_name: self.controller_name.clone(),
-                version: self.version.clone(),
-                response_sender: sender,
-            }))
+        let maybe_gateway = common::Gateway::try_from(&**kube_gateway);
+
+        let Ok(backend_gateway) = maybe_gateway else {
+            warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
+            return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
+        };
+        //let _ = self.gateway_deployer_channel_sender.send((backend_gateway, Arc::clone(kube_gateway))).await;
+        let _ = self
+            .resolve_references_channel_sender
+            .send(ReferenceResolveRequest::New(
+                RequestContext::builder()
+                    .gateway(backend_gateway)
+                    .kube_gateway(Arc::clone(kube_gateway))
+                    .gateway_class_name(self.gateway_class_name.clone())
+                    .build(),
+            ))
             .await;
-        let patched_gateway = receiver.await;
-        if let Ok(maybe_patched) = patched_gateway {
-            match maybe_patched {
-                Ok(patched_gateway) => {
-                    let patched_gateway = Arc::new(patched_gateway);
-                    state.save_gateway(gateway_id.clone(), &patched_gateway);
-                    _ = self.on_version_not_changed(gateway_id, &patched_gateway, state).await;
-                }
-                Err(e) => warn!("{} Error while patching {e}", self.log_context()),
-            }
-        }
+
+        // state.save_gateway(gateway_id.clone(), kube_gateway);
+        // let (sender, receiver) = oneshot::channel();
+        // let _res = self
+        //     .gateway_patcher
+        //     .send(Operation::PatchStatus(PatchContext {
+        //         resource_key: gateway_id.clone(),
+        //         resource: updated_gateway,
+        //         controller_name: self.controller_name.clone(),
+        //         version: self.version.clone(),
+        //         response_sender: sender,
+        //     }))
+        //     .await;
+        // let patched_gateway = receiver.await;
+        // if let Ok(maybe_patched) = patched_gateway {
+        //     match maybe_patched {
+        //         Ok(patched_gateway) => {
+        //             let patched_gateway = Arc::new(patched_gateway);
+        //             state.save_gateway(gateway_id.clone(), &patched_gateway);
+        //             _ = self.on_version_not_changed(gateway_id, &patched_gateway, state).await;
+        //         }
+        //         Err(e) => warn!("{} Error while patching {e}", self.log_context()),
+        //     }
+        // }
 
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }

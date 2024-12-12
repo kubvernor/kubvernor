@@ -27,7 +27,7 @@ use super::{
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{GatewayEvent, ResourceKey, Route, RouteRefKey, VerifiyItems},
+    common::{self, GatewayEvent, ResourceKey, Route, RouteRefKey, VerifiyItems},
     controllers::gateway_deployer::GatewayDeployer,
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
@@ -248,6 +248,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                 client: self.client.clone(),
                 log_context: &log_context,
                 sender: gateway_channel_sender.clone(),
+                gateway: common::Gateway::try_from(&*gateway).unwrap(),
                 kube_gateway: &gateway,
                 state,
                 http_route_patcher: self.http_route_patcher.clone(),
@@ -317,6 +318,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                 log_context: &log_context,
                 sender: gateway_channel_sender.clone(),
                 kube_gateway: &gateway,
+                gateway: common::Gateway::try_from(&*gateway).unwrap(),
                 state,
                 http_route_patcher: self.http_route_patcher.clone(),
                 controller_name: &self.controller_name,

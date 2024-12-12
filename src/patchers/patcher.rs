@@ -7,7 +7,7 @@ use kube::{
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{info, span, warn, Instrument, Level};
 
 use crate::{
     common::ResourceKey,
@@ -50,7 +50,6 @@ where
 {
     fn receiver(&mut self) -> &mut mpsc::Receiver<Operation<R>>;
     fn api(&self, namespace: &str) -> Api<R>;
-    fn log_context<'a>(&'a self, resource_key: &'a ResourceKey, controller_name: &'a str, version: Option<String>) -> impl std::fmt::Display + Send;
 
     async fn start(&mut self) {
         while let Some(event) = self.receiver().recv().await {
@@ -59,21 +58,22 @@ where
                     resource_key,
                     mut resource,
                     controller_name,
-                    version,
+                    version: _,
                     response_sender,
                 }) => {
+                    let span = span!(Level::INFO, "PatcherService", resource= %std::any::type_name_of_val(&resource), operation="PatchStatus", id = %resource_key);
                     resource.meta_mut().resource_version = Option::<String>::None;
                     let api = self.api(&resource_key.namespace);
                     let patch_params = PatchParams::apply(&controller_name).force();
-                    let log_context = self.log_context(&resource_key, &controller_name, version);
-                    let res = api.patch_status(&resource_key.name, &patch_params, &Patch::Apply(resource)).await;
+
+                    let res = api.patch_status(&resource_key.name, &patch_params, &Patch::Apply(resource)).instrument(span.clone()).await;
                     match &res {
-                        Ok(_new_gateway) => {
-                            info!("{log_context} patch status result ok");
-                        }
-                        Err(e) => {
-                            warn!("{log_context} patch status failed {e:?}");
-                        }
+                        Ok(_new_gateway) => span.in_scope(|| {
+                            info!("patch status result ok");
+                        }),
+                        Err(e) => span.in_scope(|| {
+                            warn!("patch status failed {e:?}");
+                        }),
                     }
                     let _ = response_sender.send(res);
                 }
@@ -82,30 +82,32 @@ where
                     controller_name,
                     finalizer_name,
                 }) => {
-                    let log_context = self.log_context(&resource_key, &controller_name, None);
+                    let span = span!(Level::INFO, "PatcherService",  operation="PatchFinalizer", id = %resource_key);
                     let api = self.api(&resource_key.namespace);
-                    let res = FinalizerPatcher::patch_finalizer(&api, &resource_key.name, &controller_name, &finalizer_name).await;
-                    match res {
-                        Ok(_new_gateway) => {
-                            info!("{log_context} finalizer ok");
-                        }
-                        Err(e) => {
-                            warn!("{log_context} finalizer failed {e:?}");
-                        }
+                    let res = FinalizerPatcher::patch_finalizer(&api, &resource_key.name, &controller_name, &finalizer_name)
+                        .instrument(span.clone())
+                        .await;
+                    match &res {
+                        Ok(_new_gateway) => span.in_scope(|| {
+                            info!("finalizer ok");
+                        }),
+                        Err(e) => span.in_scope(|| {
+                            warn!("finalizer failed {resource_key} {controller_name} {finalizer_name} {e:?}");
+                        }),
                     }
                 }
                 Operation::Delete((resource_key, resource, controller_name)) => {
+                    let span = span!(Level::INFO, "PatcherService", resource= %std::any::type_name_of_val(&resource), operation="PatchDelete", id = %resource_key);
                     let api = self.api(&resource_key.namespace);
-                    let log_context = self.log_context(&resource_key, &controller_name, None);
                     let res: Result<kube::runtime::controller::Action, kube::runtime::finalizer::Error<ControllerError>> =
-                        ResourceFinalizer::delete_resource(&api, &controller_name, &Arc::new(resource)).await;
+                        ResourceFinalizer::delete_resource(&api, &controller_name, &Arc::new(resource)).instrument(span.clone()).await;
                     match res {
-                        Ok(_new_gateway) => {
-                            info!("{log_context} delete ok");
-                        }
-                        Err(e) => {
-                            warn!("{log_context} delete failed {e:?}");
-                        }
+                        Ok(_new_gateway) => span.in_scope(|| {
+                            info!("delete result ok");
+                        }),
+                        Err(e) => span.in_scope(|| {
+                            warn!("delete failed {e:?}");
+                        }),
                     }
                 }
             }

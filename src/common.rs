@@ -3,6 +3,7 @@ use std::{
     collections::{btree_map, BTreeMap, BTreeSet, HashMap},
     fmt::Display,
     net::IpAddr,
+    sync::Arc,
 };
 
 use gateway_api::apis::standard::{
@@ -13,13 +14,12 @@ use gateway_api::apis::standard::{
         HTTPRouteRulesFiltersRequestRedirect, HTTPRouteRulesFiltersType, HTTPRouteRulesMatches,
     },
 };
-
 use kube::{Resource, ResourceExt};
 use kube_core::ObjectMeta;
 use thiserror::Error;
 use tokio::sync::oneshot;
-
 use tracing::debug;
+use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use crate::controllers::ControllerError;
@@ -1431,13 +1431,25 @@ pub fn calculate_attached_routes(mapped_routes: &[RouteToListenersMapping]) -> H
     attached_routes
 }
 
+#[derive(TypedBuilder)]
+pub struct RequestContext {
+    pub gateway: Gateway,
+    pub kube_gateway: Arc<KubeGateway>,
+    pub gateway_class_name: String,
+}
+pub enum ReferenceResolveRequest {
+    New(RequestContext),
+    Remove(Gateway),
+}
+
 #[cfg(test)]
 mod test {
+
+    use std::collections::BTreeSet;
 
     use gateway_api::apis::standard::httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesMatches, HTTPRouteRulesMatchesHeaders, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType};
 
     use super::{EffectiveRoutingRule, ListenerCondition};
-    use std::collections::BTreeSet;
 
     #[test]
     pub fn test_enums() {

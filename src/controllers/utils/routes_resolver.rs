@@ -2,7 +2,6 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use gateway_api::apis::standard::gateways::Gateway;
 use k8s_openapi::api::core::v1::Service;
-
 use kube::{Api, Client};
 use tracing::{debug, warn};
 
@@ -63,7 +62,10 @@ impl<'a> RouteResolver<'a> {
                                 route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted);
                             }
                         } else {
-                            debug!("{} can't resolve {:?} {:?}", self.log_context, &backend_service_config.resource_key, maybe_service);
+                            debug!(
+                                "{} can't resolve {}-{} {:?}",
+                                self.log_context, &backend_service_config.resource_key.name, &backend_service_config.resource_key.namespace, maybe_service
+                            );
                             new_backends.push(Backend::Unresolved(backend_service_config));
                             route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound);
                         }

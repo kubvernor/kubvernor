@@ -1,9 +1,5 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use crate::{
-    common::{NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteRefKey, RouteToListenersMapping},
-    state::State,
-};
 use gateway_api::apis::standard::{
     gateways::{self, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom},
     httproutes::HTTPRouteParentRefs,
@@ -11,6 +7,10 @@ use gateway_api::apis::standard::{
 use tracing::{debug, warn};
 
 use super::HostnameMatchFilter;
+use crate::{
+    common::{NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteRefKey, RouteToListenersMapping},
+    state::State,
+};
 
 pub struct RouteListenerMatcher<'a> {
     gateway: &'a Arc<gateways::Gateway>,

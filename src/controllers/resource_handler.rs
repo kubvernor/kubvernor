@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kube::{runtime::controller::Action, Resource, ResourceExt};
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{field, info, instrument, span, Instrument, Level, Span};
 
 use super::{
     utils::{ResourceChecker, ResourceState, ResourceStateChecker},
@@ -21,30 +21,31 @@ where
     R: Resource<DynamicType = ()>,
     R: Send + Sync + 'static,
 {
+    #[instrument(level = "info", name="ResourceHandler", skip_all, fields(id = %self.resource_key()))]
     async fn process(&self, stored_resource: Option<Arc<R>>, resource_spec_checker: ResourceChecker<R>, resource_status_checker: ResourceChecker<R>) -> Result<Action> {
         let resource = &Arc::clone(&self.resource());
         let id = self.resource_key();
         let state = self.state();
         let mut state = state.lock().await;
         let state = &mut state;
-        let log_context = self.log_context();
-
         let resource_state = ResourceStateChecker::check_status(resource, stored_resource.clone(), resource_spec_checker, resource_status_checker);
 
-        info!("{log_context} Resource state {resource_state:?}");
+        info!("Resource state {resource_state:?}");
+        let span = span!(Level::INFO, "ResourceHandlerStatus", handler = format!("{resource_state:?}"));
 
         match resource_state {
-            ResourceState::VersionNotChanged => self.on_version_not_changed(id, resource, state).await,
-            ResourceState::SpecNotChanged => self.on_spec_not_changed(id, resource, state).await,
-            ResourceState::New => self.on_new(id, resource, state).await,
-            ResourceState::SpecChanged => self.on_spec_changed(id, resource, state).await,
-            ResourceState::StatusChanged => self.on_status_changed(id, resource, state).await,
-            ResourceState::StatusNotChanged => self.on_status_not_changed(id, resource, state).await,
-            ResourceState::Deleted => self.on_deleted(id, resource, state).await,
+            ResourceState::VersionNotChanged => self.on_version_not_changed(id, resource, state).instrument(span).await,
+            ResourceState::SpecNotChanged => self.on_spec_not_changed(id, resource, state).instrument(span).await,
+            ResourceState::New => self.on_new(id, resource, state).instrument(span).await,
+            ResourceState::SpecChanged => self.on_spec_changed(id, resource, state).instrument(span).await,
+            ResourceState::StatusChanged => self.on_status_changed(id, resource, state).instrument(span).await,
+            ResourceState::StatusNotChanged => self.on_status_not_changed(id, resource, state).instrument(span).await,
+            ResourceState::Deleted => self.on_deleted(id, resource, state).instrument(span).await,
         }
     }
 
     async fn on_version_not_changed(&self, _: ResourceKey, _: &Arc<R>, _: &mut State) -> Result<Action> {
+        info!("on_version_not_changed");
         Err(ControllerError::AlreadyAdded)
     }
 

@@ -18,10 +18,11 @@ use kube::{
 };
 use kube_core::ObjectMeta;
 use lazy_static::lazy_static;
-
 use tera::Tera;
-use tokio::sync::mpsc::{self, Receiver};
-use tracing::{debug, info, warn};
+use tokio::sync::mpsc::Receiver;
+use tracing::{debug, info, span, warn, Instrument, Level};
+use typed_builder::TypedBuilder;
+use uuid::Uuid;
 
 use super::xds_generator::{self, RdsData};
 use crate::{
@@ -41,33 +42,24 @@ lazy_static! {
     };
 }
 
-pub struct EnvoyDeployerChannelHandler {
+#[derive(TypedBuilder)]
+pub struct EnvoyDeployerChannelHandlerService {
     controller_name: String,
     client: Client,
-    event_receiver: Receiver<GatewayEvent>,
+    receiver: Receiver<GatewayEvent>,
 }
 
-impl EnvoyDeployerChannelHandler {
-    pub fn new(controller_name: &str, client: Client) -> (mpsc::Sender<GatewayEvent>, Self) {
-        let (sender, receiver) = mpsc::channel(1024);
-        (
-            sender,
-            Self {
-                controller_name: controller_name.to_owned(),
-                client,
-                event_receiver: receiver,
-            },
-        )
-    }
+impl EnvoyDeployerChannelHandlerService {
     pub async fn start(&mut self) {
         info!("Gateways handler started");
         loop {
             tokio::select! {
-                    Some(event) = self.event_receiver.recv() => {
+                    Some(event) = self.receiver.recv() => {
                         info!("Backend got event {event:#}");
-                         match event{
+                        match event{
                             GatewayEvent::GatewayChanged(ChangedContext{ response_sender, mut gateway }) => {
-                                let maybe_service = self.deploy_envoy(&gateway).await;
+                                let span = span!(Level::INFO, "EnvoyDeployerService", event="GatewayChanged", id = %gateway.key());
+                                let maybe_service = self.deploy_envoy(&gateway).instrument(span.clone()).await;
                                 if let Ok(service) = maybe_service{
                                     Self::update_addresses(&mut gateway, &service);
                                     let _res = response_sender.send(GatewayResponse::GatewayProcessed(gateway));
@@ -78,12 +70,14 @@ impl EnvoyDeployerChannelHandler {
                             }
 
                             GatewayEvent::GatewayDeleted(DeletedContext{ response_sender, gateway }) => {
-                                self.delete_envoy(&gateway).await;
+                                let span = span!(Level::INFO, "EnvoyDeployerService", event="GatewayDeleted", id = %gateway.key());
+                                self.delete_envoy(&gateway).instrument(span.clone()).await;
                                 let _res = response_sender.send(GatewayResponse::GatewayDeleted(vec![]));
                             }
 
                             GatewayEvent::RouteChanged(ChangedContext{ response_sender, mut gateway }) => {
-                                let maybe_service = self.deploy_envoy(&gateway).await;
+                                let span = span!(Level::INFO, "EnvoyDeployerService", event="RouteChanged", id = %gateway.key());
+                                let maybe_service = self.deploy_envoy(&gateway).instrument(span.clone()).await;
                                 if let Ok(service) = maybe_service{
                                     Self::update_addresses(&mut gateway, &service);
                                     let _res = response_sender.send(GatewayResponse::GatewayProcessed(gateway));
@@ -230,6 +224,9 @@ impl EnvoyDeployerChannelHandler {
             map.insert(format!("{route_name}.yaml"), rds_content);
         }
 
+        let mut annotations = BTreeMap::new();
+        annotations.insert("gateway-version".to_owned(), Uuid::new_v4().to_string());
+
         ConfigMap {
             binary_data: None,
             data: Some(map),
@@ -237,6 +234,7 @@ impl EnvoyDeployerChannelHandler {
             metadata: ObjectMeta {
                 name: Some(name.to_owned()),
                 namespace: Some(gateway.namespace().to_owned()),
+                annotations: Some(annotations),
                 ..Default::default()
             },
         }
@@ -245,6 +243,8 @@ impl EnvoyDeployerChannelHandler {
     fn create_envoy_bootstrap_config_map(name: &str, gateway: &Gateway, boostrap_content: String) -> ConfigMap {
         let mut map = BTreeMap::new();
         map.insert("envoy-bootstrap.yaml".to_owned(), boostrap_content);
+        let mut annotations = BTreeMap::new();
+        annotations.insert("gateway-version".to_owned(), Uuid::new_v4().to_string());
         ConfigMap {
             binary_data: None,
             data: Some(map),
@@ -252,6 +252,7 @@ impl EnvoyDeployerChannelHandler {
             metadata: ObjectMeta {
                 name: Some(name.to_owned()),
                 namespace: Some(gateway.namespace().to_owned()),
+                annotations: Some(annotations),
                 ..Default::default()
             },
         }
@@ -300,9 +301,11 @@ impl EnvoyDeployerChannelHandler {
         default_volumes.append(&mut secret_volumes);
         pod_spec.volumes = Some(default_volumes);
 
+        let mut annotations = BTreeMap::new();
+        annotations.insert("gateway-version".to_owned(), Uuid::new_v4().to_string());
         Deployment {
             metadata: ObjectMeta {
-                //annotations: Some(annotations.clone()),
+                annotations: Some(annotations.clone()),
                 name: Some(gateway.name().to_owned()),
                 namespace: Some(gateway.namespace().to_owned()),
                 labels: Some(labels.clone()),

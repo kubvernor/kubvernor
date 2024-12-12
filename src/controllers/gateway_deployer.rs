@@ -4,7 +4,6 @@ use gateway_api::apis::standard::{
     gateways::{Gateway, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
     httproutes::HTTPRoute,
 };
-
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
@@ -35,6 +34,7 @@ pub struct GatewayDeployer<'a> {
     pub client: Client,
     pub log_context: &'a str,
     pub sender: Sender<GatewayEvent>,
+    pub gateway: common::Gateway,
     pub kube_gateway: &'a Arc<Gateway>,
     pub state: &'a State,
 
@@ -45,15 +45,16 @@ impl<'a> GatewayDeployer<'a> {
     pub async fn deploy_gateway(&mut self) -> Result<Gateway> {
         let log_context = self.log_context;
         let mut updated_kube_gateway = (**self.kube_gateway).clone();
+        let mut backend_gateway = self.gateway.clone();
 
-        let maybe_gateway = common::Gateway::try_from(&updated_kube_gateway);
-        let Ok(backend_gateway) = maybe_gateway else {
-            warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
-            return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
-        };
+        // let maybe_gateway = common::Gateway::try_from(&updated_kube_gateway);
+        // let Ok(backend_gateway) = maybe_gateway else {
+        //     warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
+        //     return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
+        // };
 
-        let backend_gateway = ListenerTlsConfigValidator::new(backend_gateway, self.client.clone(), log_context).validate().await;
-        let mut backend_gateway = RoutesResolver::new(backend_gateway, self.client.clone(), log_context, self.state, self.kube_gateway).validate().await;
+        // let backend_gateway = ListenerTlsConfigValidator::new(backend_gateway, self.client.clone(), log_context).validate().await;
+        // let mut backend_gateway = RoutesResolver::new(backend_gateway, self.client.clone(), log_context, self.state, self.kube_gateway).validate().await;
         Self::adjust_statuses(&mut backend_gateway);
         self.resolve_listeners_statuses(&backend_gateway, &mut updated_kube_gateway);
         info!("Effective gateway {}-{} {:#?}", backend_gateway.name(), backend_gateway.namespace(), backend_gateway);

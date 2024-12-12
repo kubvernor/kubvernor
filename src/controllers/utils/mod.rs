@@ -3,16 +3,11 @@ mod route_listener_matcher;
 mod routes_resolver;
 mod tls_config_validator;
 
-pub use hostname_match_filter::HostnameMatchFilter;
-pub(crate) use route_listener_matcher::RouteListenerMatcher;
-pub(crate) use routes_resolver::RoutesResolver;
-pub(crate) use tls_config_validator::ListenerTlsConfigValidator;
-
-use k8s_openapi::api::core::v1::Namespace;
 use std::{collections::BTreeMap, marker::PhantomData, sync::Arc};
 
 use gateway_api::apis::standard::gateways::Gateway;
-
+pub use hostname_match_filter::HostnameMatchFilter;
+use k8s_openapi::api::core::v1::Namespace;
 use kube::{
     api::{ListParams, Patch, PatchParams},
     runtime::{
@@ -22,9 +17,11 @@ use kube::{
     Api, Client, Resource, ResourceExt,
 };
 use kube_core::{PartialObjectMeta, PartialObjectMetaExt};
+pub(crate) use route_listener_matcher::RouteListenerMatcher;
 use routes_resolver::RouteResolver;
-
+pub use routes_resolver::RoutesResolver;
 use serde::Serialize;
+pub use tls_config_validator::ListenerTlsConfigValidator;
 use tracing::{debug, warn};
 
 use crate::{

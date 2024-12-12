@@ -1,8 +1,6 @@
 use k8s_openapi::api::core::v1::Secret;
 use kube::{Api, Client};
-
 use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
-
 use tracing::debug;
 
 use crate::common::{self, ListenerCondition, ProtocolType, ResolvedRefs, TlsType};
