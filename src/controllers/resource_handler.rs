@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kube::{runtime::controller::Action, Resource, ResourceExt};
 use tokio::sync::Mutex;
-use tracing::{field, info, instrument, span, Instrument, Level, Span};
+use tracing::{info, instrument, span, Instrument, Level};
 
 use super::{
     utils::{ResourceChecker, ResourceState, ResourceStateChecker},

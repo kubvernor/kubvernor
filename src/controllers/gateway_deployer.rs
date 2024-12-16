@@ -8,7 +8,6 @@ use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
 };
-use kube::Client;
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
@@ -18,11 +17,7 @@ use typed_builder::TypedBuilder;
 
 use crate::{
     common::{self, ChangedContext, GatewayEvent, GatewayResponse, ListenerCondition, ResolvedRefs},
-    controllers::{
-        gateway_processed_handler::GatewayProcessedHandler,
-        utils::{ListenerTlsConfigValidator, RoutesResolver},
-        ControllerError,
-    },
+    controllers::{gateway_processed_handler::GatewayProcessedHandler, ControllerError},
     patchers::Operation,
     state::State,
 };

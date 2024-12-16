@@ -11,19 +11,18 @@ use tokio::sync::{
     mpsc::{self, Sender},
     oneshot, Mutex,
 };
-use tracing::{warn, Span};
+use tracing::warn;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use super::{
-    gateway_deployer::GatewayDeployer,
     resource_handler::ResourceHandler,
-    utils::{LogContext, ResourceCheckerArgs, ResourceState},
+    utils::{ResourceCheckerArgs, ResourceState},
     ControllerError, GATEWAY_CLASS_FINALIZER_NAME, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
     common::{self, DeletedContext, GatewayEvent, ReferenceResolveRequest, RequestContext, ResourceKey},
-    patchers::{FinalizerContext, Operation, PatchContext},
+    patchers::{FinalizerContext, Operation},
     state::State,
 };
 

@@ -2,15 +2,14 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use clap::Parser;
 use futures::FutureExt;
-use gateway_api::apis::standard::httproutes::HTTPRoute;
 use gateway_deployer::GatewayDeployerService;
 use kube::Client;
-use patchers::{GatewayClassPatcherService, GatewayPatcherService, HttpRoutePatcherService, Operation, Patcher};
+use patchers::{GatewayClassPatcherService, GatewayPatcherService, HttpRoutePatcherService, Patcher};
 use reference_resolver::ReferenceResolverService;
 use state::State;
 use tokio::{
     sync::{
-        mpsc::{self, Receiver, Sender},
+        mpsc::{self},
         Mutex,
     },
     time::sleep,
@@ -34,14 +33,13 @@ use controllers::{
     gateway_class::GatewayClassController,
     http_route::HttpRouteController,
 };
+use typed_builder::TypedBuilder;
 
 const STARTUP_DURATION: Duration = Duration::from_secs(10);
 
 /// Simple program to greet a person
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[derive(Parser, Debug, TypedBuilder)]
 pub struct Args {
-    #[arg(short, long)]
     controller_name: String,
 }
 

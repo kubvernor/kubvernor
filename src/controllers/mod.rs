@@ -7,7 +7,7 @@ pub mod http_route;
 mod resource_handler;
 mod utils;
 pub use gateway_deployer::GatewayDeployer;
-pub use utils::{FinalizerPatcher, HostnameMatchFilter, ListenerTlsConfigValidator, LogContext, ResourceFinalizer, RoutesResolver};
+pub use utils::{FinalizerPatcher, HostnameMatchFilter, ListenerTlsConfigValidator, ResourceFinalizer, RoutesResolver};
 
 #[allow(dead_code)]
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]

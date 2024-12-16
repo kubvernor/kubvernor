@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use gateway_api::apis::standard::{gatewayclasses::GatewayClass, gateways::Gateway as KubeGateway, httproutes::HTTPRoute};
 use kube::{Client, Resource};
@@ -7,8 +7,8 @@ use tracing::{span, warn, Instrument, Level};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{Gateway, GatewayEvent, ReferenceResolveRequest, ResourceKey},
-    controllers::{ControllerError, GatewayDeployer},
+    common::{Gateway, GatewayEvent, ResourceKey},
+    controllers::GatewayDeployer,
     patchers::{FinalizerContext, Operation, PatchContext},
     state::State,
 };
@@ -112,7 +112,7 @@ impl<'a> GatewayDeployerServiceInternal<'a> {
                     };
 
                     if !has_finalizer {
-                        let _ = self.add_finalizer(gateway_id, controller_name).await;
+                        let () = self.add_finalizer(gateway_id, controller_name).await;
                     };
                 }
             }
