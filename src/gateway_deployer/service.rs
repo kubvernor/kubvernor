@@ -39,16 +39,16 @@ impl GatewayDeployerService {
                     let version = kube_gateway.meta().resource_version.clone();
                     let mut state = self.state.lock().await;
 
-                    let mut deployer = GatewayDeployer {
-                        client: self.client.clone(),
-                        log_context: "GatewayDeployerService",
-                        sender: self.backend_deployer_channel_sender.clone(),
-                        gateway: gateway.clone(),
-                        kube_gateway: &kube_gateway,
-                        state: &state,
-                        http_route_patcher: self.http_route_patcher_channel_sender.clone(),
-                        controller_name: &controller_name,
-                    };
+                    let mut deployer = GatewayDeployer::builder()
+                        .sender(self.backend_deployer_channel_sender.clone())
+                        .gateway(gateway.clone())
+                        .kube_gateway(&kube_gateway)
+                        .state(&state)
+                        .http_route_patcher(self.http_route_patcher_channel_sender.clone())
+                        .controller_name(&self.controller_name)
+                        .build();
+
+
                     if let Ok(updated_gateway) = deployer.deploy_gateway().instrument(span.clone()).await{
                         state.save_gateway(gateway_id.clone(), &kube_gateway);
                         let (sender, receiver) = oneshot::channel();

@@ -166,10 +166,6 @@ struct GatewayResourceHandler<R> {
 
 #[async_trait]
 impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
-    fn log_context(&self) -> impl std::fmt::Display {
-        LogContext::<Gateway>::new(&self.controller_name, &self.resource_key, self.version.clone())
-    }
-
     fn state(&self) -> &Arc<Mutex<State>> {
         &self.state
     }
@@ -218,10 +214,9 @@ impl GatewayResourceHandler<Gateway> {
     }
 
     async fn delete_gateway(&self, sender: &Sender<GatewayEvent>, kube_gateway: &Arc<Gateway>) -> Result<Gateway> {
-        let log_context = self.log_context();
         let maybe_gateway = common::Gateway::try_from(&**kube_gateway);
         let Ok(backend_gateway) = maybe_gateway else {
-            warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
+            warn!("Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
 
@@ -239,7 +234,6 @@ impl GatewayResourceHandler<Gateway> {
     /// * we should update the route's status and reflect that the ownership might changed
     ///
     async fn on_new_or_changed(&self, gateway_id: ResourceKey, kube_gateway: &Arc<Gateway>, state: &mut State) -> Result<Action> {
-        let log_context = self.log_context().to_string();
         // let updated_gateway = GatewayDeployer {
         //     client: self.client.clone(),
         //     log_context: &log_context,
@@ -255,7 +249,7 @@ impl GatewayResourceHandler<Gateway> {
         let maybe_gateway = common::Gateway::try_from(&**kube_gateway);
 
         let Ok(backend_gateway) = maybe_gateway else {
-            warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
+            warn!("Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
         //let _ = self.gateway_deployer_channel_sender.send((backend_gateway, Arc::clone(kube_gateway))).await;

@@ -76,5 +76,4 @@ where
     fn state(&self) -> &Arc<Mutex<State>>;
     fn resource_key(&self) -> ResourceKey;
     fn resource(&self) -> Arc<R>;
-    fn log_context(&self) -> impl std::fmt::Display + Send;
 }

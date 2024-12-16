@@ -167,10 +167,6 @@ struct HTTPRouteHandler<R> {
 
 #[async_trait]
 impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
-    fn log_context(&self) -> impl std::fmt::Display {
-        LogContext::<HTTPRoute>::new(&self.controller_name, &self.resource_key, self.version.clone())
-    }
-
     fn state(&self) -> &Arc<Mutex<State>> {
         &self.state
     }
@@ -217,7 +213,6 @@ impl HTTPRouteHandler<HTTPRoute> {
     /// * we should update gatway's if the route count has changed for a listener
     /// * we shoudl update the route's status
     async fn on_new_or_changed(&self, route_key: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        let log_context = self.log_context().to_string();
         let gateway_channel_sender = &self.gateway_channel_sender;
 
         let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
@@ -244,19 +239,17 @@ impl HTTPRouteHandler<HTTPRoute> {
         for gateway in matching_gateways {
             let gateway_id = ResourceKey::from(&*gateway);
 
-            let mut deployer = GatewayDeployer {
-                client: self.client.clone(),
-                log_context: &log_context,
-                sender: gateway_channel_sender.clone(),
-                gateway: common::Gateway::try_from(&*gateway).unwrap(),
-                kube_gateway: &gateway,
-                state,
-                http_route_patcher: self.http_route_patcher.clone(),
-                controller_name: &self.controller_name,
-            };
+            let mut deployer = GatewayDeployer::builder()
+                .sender(gateway_channel_sender.clone())
+                .gateway(common::Gateway::try_from(&*gateway).unwrap())
+                .kube_gateway(&gateway)
+                .state(state)
+                .http_route_patcher(self.http_route_patcher.clone())
+                .controller_name(&self.controller_name)
+                .build();
 
             if let Ok(updated_gateway) = deployer.deploy_gateway().await {
-                debug!("{log_context} Deploying gateway {updated_gateway:?}");
+                debug!("Deploying gateway {updated_gateway:?}");
                 state.save_gateway(gateway_id.clone(), &Arc::new(updated_gateway.clone()));
                 let (sender, receiver) = oneshot::channel();
                 let gateway_id = ResourceKey::from(&updated_gateway);
@@ -278,7 +271,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                             state.save_gateway(gateway_id.clone(), &Arc::new(patched_gateway));
                         }
                         Err(e) => {
-                            warn!("{} Error while patching {e}", self.log_context());
+                            warn!("Error while patching {e}");
                         }
                     }
                 }
@@ -288,7 +281,6 @@ impl HTTPRouteHandler<HTTPRoute> {
     }
 
     async fn on_deleted(&self, route_key: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        let log_context = self.log_context().to_string();
         let gateway_channel_sender = &self.gateway_channel_sender;
         let _route = Route::try_from(&**resource)?;
 
@@ -313,19 +305,17 @@ impl HTTPRouteHandler<HTTPRoute> {
         for gateway in matching_gateways {
             let gateway_id = ResourceKey::from(&*gateway);
 
-            let mut deployer = GatewayDeployer {
-                client: self.client.clone(),
-                log_context: &log_context,
-                sender: gateway_channel_sender.clone(),
-                kube_gateway: &gateway,
-                gateway: common::Gateway::try_from(&*gateway).unwrap(),
-                state,
-                http_route_patcher: self.http_route_patcher.clone(),
-                controller_name: &self.controller_name,
-            };
+            let mut deployer = GatewayDeployer::builder()
+                .sender(gateway_channel_sender.clone())
+                .gateway(common::Gateway::try_from(&*gateway).unwrap())
+                .kube_gateway(&gateway)
+                .state(state)
+                .http_route_patcher(self.http_route_patcher.clone())
+                .controller_name(&self.controller_name)
+                .build();
 
             if let Ok(updated_gateway) = deployer.deploy_gateway().await {
-                debug!("{log_context} Deploying gateway {updated_gateway:?}");
+                debug!("Deploying gateway {updated_gateway:?}");
                 state.save_gateway(gateway_id.clone(), &Arc::new(updated_gateway.clone()));
                 let (sender, receiver) = oneshot::channel();
                 let gateway_id = ResourceKey::from(&updated_gateway);
@@ -347,7 +337,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                             state.save_gateway(gateway_id.clone(), &Arc::new(patched_gateway));
                         }
                         Err(e) => {
-                            warn!("{} Error while patching {e}", self.log_context());
+                            warn!("Error while patching {e}");
                         }
                     }
                 }

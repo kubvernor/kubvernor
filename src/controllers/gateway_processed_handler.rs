@@ -25,7 +25,6 @@ pub struct GatewayProcessedHandler<'a> {
     pub effective_gateway: common::Gateway,
     pub gateway: Gateway,
     pub state: &'a State,
-    pub log_context: &'a str,
     pub route_patcher: Sender<Operation<HTTPRoute>>,
     pub controller_name: String,
 }
@@ -77,9 +76,8 @@ impl<'a> GatewayProcessedHandler<'a> {
         let (attached_routes, unresolved_routes) = self.effective_gateway.routes();
 
         let routes_with_no_hostnames = self.effective_gateway.orphaned_routes();
-        debug!("{} Updating attached routes {attached_routes:?}", &self.log_context);
+        debug!("Updating attached routes {attached_routes:?}");
         let gateway_id = &self.effective_gateway.key();
-        let log_context = &self.log_context;
         for attached_route in attached_routes {
             let updated_route = self.update_attached_route_parents(attached_route, gateway_id);
             if let Some(route) = updated_route {
@@ -101,13 +99,13 @@ impl<'a> GatewayProcessedHandler<'a> {
                     match maybe_patched {
                         Ok(_patched_route) => {}
                         Err(e) => {
-                            warn!("{log_context} Error while patching {e}");
+                            warn!("Error while patching {e}");
                         }
                     }
                 }
             }
         }
-        debug!("{log_context} Updating unresolved routes  {unresolved_routes:?}");
+        debug!("Updating unresolved routes  {unresolved_routes:?}");
         for unresolve_route in unresolved_routes {
             let updated_route = self.update_unresolved_route_parents(unresolve_route, gateway_id);
             if let Some(route) = updated_route {
@@ -133,13 +131,13 @@ impl<'a> GatewayProcessedHandler<'a> {
                             //self.state.save_http_route(route_resource_key, &Arc::new(patched_route));
                         }
                         Err(e) => {
-                            warn!("{log_context} Error while patching {e}");
+                            warn!("Error while patching {e}");
                         }
                     }
                 }
             }
         }
-        debug!("{log_context} Updating routes with no hostnames  {routes_with_no_hostnames:?}");
+        debug!("Updating routes with no hostnames  {routes_with_no_hostnames:?}");
         for route_with_no_hostname in self.effective_gateway.orphaned_routes() {
             let updated_route = self.update_non_attached_route_parents(route_with_no_hostname, gateway_id);
             if let Some(route) = updated_route {
@@ -165,7 +163,7 @@ impl<'a> GatewayProcessedHandler<'a> {
                             //self.state.save_http_route(route_resource_key, &Arc::new(patched_route));
                         }
                         Err(e) => {
-                            warn!("{log_context} Error while patching {e}");
+                            warn!("Error while patching {e}");
                         }
                     }
                 }

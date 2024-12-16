@@ -185,7 +185,7 @@ impl GatewayClassResourceHandler<GatewayClass> {
                     state.save_gateway_class(gateway_class_id, &Arc::new(patched_gateway_class));
                 }
                 Err(e) => {
-                    warn!("{} Error while patching {e}", self.log_context());
+                    warn!("Error while patching {e}");
                 }
             }
         }
@@ -207,10 +207,6 @@ impl<'a> LogContext<'a, GatewayClass> {
 
 #[async_trait]
 impl ResourceHandler<GatewayClass> for GatewayClassResourceHandler<GatewayClass> {
-    fn log_context(&self) -> impl std::fmt::Display {
-        LogContext::<GatewayClass>::new(&self.controller_name, &self.resource_key, self.version.clone())
-    }
-
     fn state(&self) -> &Arc<Mutex<State>> {
         &self.state
     }

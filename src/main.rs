@@ -22,9 +22,3 @@ async fn main() -> kubvernor::Result<()> {
     let _guard = init_logging();
     start(args).await
 }
-
-// async fn reconcile_crd(crd: Arc<CustomResourceDefinition>, ctx: Arc<Context>) -> Result<Action> {
-//     println!("reconcile crd request: {:?}", crd.metadata.name);
-//     println!("reconcile crd request status: {:?}", crd.status);
-//     Ok(Action::requeue(Duration::from_secs(3600)))
-// }
