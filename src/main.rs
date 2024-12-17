@@ -1,6 +1,5 @@
 use clap::Parser;
 use kubvernor::{start, Args};
-
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
@@ -45,10 +44,10 @@ fn init_logging(args: &CommandArgs) -> Guard {
                 .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
                 .with_id_generator(RandomIdGenerator::default())
                 .with_sampler(Sampler::AlwaysOn)
-                .with_resource(opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new("service.name", controller_name)]))
+                .with_resource(opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new("service.name", controller_name.clone())]))
                 .build();
 
-            let tracer = tracer_provider.tracer("readme_example");
+            let tracer = tracer_provider.tracer(controller_name);
             let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
             registry

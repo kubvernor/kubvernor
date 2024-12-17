@@ -27,7 +27,7 @@ use uuid::Uuid;
 use super::xds_generator::{self, RdsData};
 use crate::{
     backends::xds_generator::XdsData,
-    common::{ChangedContext, DeletedContext, Gateway, GatewayAddress, GatewayEvent, GatewayResponse, Listener, ResourceKey, TlsType},
+    common::{BackendGatewayEvent, Certificate, ChangedContext, DeletedContext, Gateway, GatewayAddress, GatewayResponse, Listener, ResourceKey, TlsType},
 };
 
 lazy_static! {
@@ -46,7 +46,7 @@ lazy_static! {
 pub struct EnvoyDeployerChannelHandlerService {
     controller_name: String,
     client: Client,
-    receiver: Receiver<GatewayEvent>,
+    receiver: Receiver<BackendGatewayEvent>,
 }
 
 impl EnvoyDeployerChannelHandlerService {
@@ -57,8 +57,9 @@ impl EnvoyDeployerChannelHandlerService {
                     Some(event) = self.receiver.recv() => {
                         info!("Backend got event {event:#}");
                         match event{
-                            GatewayEvent::GatewayChanged(ChangedContext{ response_sender, mut gateway }) => {
-                                let span = span!(Level::INFO, "EnvoyDeployerService", event="GatewayChanged", id = %gateway.key());
+                            BackendGatewayEvent::GatewayChanged(ChangedContext{ response_sender, mut gateway, span }) => {
+                                let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="GatewayChanged", id = %gateway.key());
+                                let _entered = span.enter();
                                 let maybe_service = self.deploy_envoy(&gateway).instrument(span.clone()).await;
                                 if let Ok(service) = maybe_service{
                                     Self::update_addresses(&mut gateway, &service);
@@ -69,14 +70,16 @@ impl EnvoyDeployerChannelHandlerService {
                                 }
                             }
 
-                            GatewayEvent::GatewayDeleted(DeletedContext{ response_sender, gateway }) => {
-                                let span = span!(Level::INFO, "EnvoyDeployerService", event="GatewayDeleted", id = %gateway.key());
+                            BackendGatewayEvent::GatewayDeleted(DeletedContext{ response_sender, gateway, span }) => {
+                                let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="GatewayDeleted", id = %gateway.key());
+                                let _entered = span.enter();
                                 self.delete_envoy(&gateway).instrument(span.clone()).await;
                                 let _res = response_sender.send(GatewayResponse::GatewayDeleted(vec![]));
                             }
 
-                            GatewayEvent::RouteChanged(ChangedContext{ response_sender, mut gateway }) => {
-                                let span = span!(Level::INFO, "EnvoyDeployerService", event="RouteChanged", id = %gateway.key());
+                            BackendGatewayEvent::RouteChanged(ChangedContext{ response_sender, mut gateway, span }) => {
+                                let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="RouteChanged", id = %gateway.key());
+                                let _entered = span.enter();
                                 let maybe_service = self.deploy_envoy(&gateway).instrument(span.clone()).await;
                                 if let Ok(service) = maybe_service{
                                     Self::update_addresses(&mut gateway, &service);
@@ -408,6 +411,10 @@ impl EnvoyDeployerChannelHandlerService {
 
         let secrets = all_certificates
             .into_iter()
+            .filter_map(|c| match c {
+                Certificate::Resolved(resource_key) => Some(resource_key),
+                Certificate::NotResolved(_) | Certificate::Invalid(_) => None,
+            })
             .map(|resource_key| VolumeProjection {
                 secret: Some(SecretProjection {
                     name: resource_key.name.clone(),

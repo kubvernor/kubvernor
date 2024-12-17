@@ -7,7 +7,7 @@ use kube::{
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
-use tracing::{info, span, warn, Instrument, Level};
+use tracing::{info, span, warn, Instrument, Level, Span};
 
 use crate::{
     common::ResourceKey,
@@ -20,7 +20,7 @@ where
 {
     PatchStatus(PatchContext<R>),
     PatchFinalizer(FinalizerContext),
-    Delete((ResourceKey, R, String)),
+    Delete(DeleteContext<R>),
 }
 
 pub struct PatchContext<R>
@@ -30,14 +30,22 @@ where
     pub resource_key: ResourceKey,
     pub resource: R,
     pub controller_name: String,
-    pub version: Option<String>,
     pub response_sender: tokio::sync::oneshot::Sender<Result<R, kube::Error>>,
+    pub span: Span,
 }
 
 pub struct FinalizerContext {
     pub resource_key: ResourceKey,
     pub controller_name: String,
     pub finalizer_name: String,
+    pub span: Span,
+}
+
+pub struct DeleteContext<R> {
+    pub resource_key: ResourceKey,
+    pub resource: R,
+    pub controller_name: String,
+    pub span: Span,
 }
 
 #[async_trait]
@@ -58,10 +66,10 @@ where
                     resource_key,
                     mut resource,
                     controller_name,
-                    version: _,
                     response_sender,
+                    span,
                 }) => {
-                    let span = span!(Level::INFO, "PatcherService", resource= %std::any::type_name_of_val(&resource), operation="PatchStatus", id = %resource_key);
+                    let span = span!(parent: &span, Level::INFO, "PatcherService", resource= %std::any::type_name_of_val(&resource), operation="PatchStatus", id = %resource_key);
                     resource.meta_mut().resource_version = Option::<String>::None;
                     let api = self.api(&resource_key.namespace);
                     let patch_params = PatchParams::apply(&controller_name).force();
@@ -81,8 +89,9 @@ where
                     resource_key,
                     controller_name,
                     finalizer_name,
+                    span,
                 }) => {
-                    let span = span!(Level::INFO, "PatcherService",  operation="PatchFinalizer", id = %resource_key);
+                    let span = span!(parent: &span, Level::INFO, "PatcherService",  operation="PatchFinalizer", id = %resource_key);
                     let api = self.api(&resource_key.namespace);
                     let res = FinalizerPatcher::patch_finalizer(&api, &resource_key.name, &controller_name, &finalizer_name)
                         .instrument(span.clone())
@@ -96,8 +105,13 @@ where
                         }),
                     }
                 }
-                Operation::Delete((resource_key, resource, controller_name)) => {
-                    let span = span!(Level::INFO, "PatcherService", resource= %std::any::type_name_of_val(&resource), operation="PatchDelete", id = %resource_key);
+                Operation::Delete(DeleteContext {
+                    resource_key,
+                    resource,
+                    controller_name,
+                    span,
+                }) => {
+                    let span = span!(parent: &span, Level::INFO, "PatcherService", resource= %std::any::type_name_of_val(&resource), operation="PatchDelete", id = %resource_key);
                     let api = self.api(&resource_key.namespace);
                     let res: Result<kube::runtime::controller::Action, kube::runtime::finalizer::Error<ControllerError>> =
                         ResourceFinalizer::delete_resource(&api, &controller_name, &Arc::new(resource)).instrument(span.clone()).await;

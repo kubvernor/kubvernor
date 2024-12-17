@@ -466,11 +466,19 @@ impl<'a> EnvoyXDSGenerator<'a> {
             .iter()
             .filter_map(|l| {
                 if let Some(TlsType::Terminate(certificates)) = &l.tls_type {
-                    Some(certificates.iter().map(|certificate_key| TeraSecret {
-                        name: create_secret_name(certificate_key),
-                        certificate: create_certificate_name(certificate_key),
-                        key: create_key_name(certificate_key),
-                    }))
+                    Some(
+                        certificates
+                            .iter()
+                            .filter_map(|cert| match cert {
+                                common::Certificate::Resolved(resource_key) => Some(resource_key),
+                                common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) => None,
+                            })
+                            .map(|certificate_key| TeraSecret {
+                                name: create_secret_name(certificate_key),
+                                certificate: create_certificate_name(certificate_key),
+                                key: create_key_name(certificate_key),
+                            }),
+                    )
                 } else {
                     None
                 }
@@ -509,6 +517,10 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     Some(
                         certificates
                             .iter()
+                            .filter_map(|cert| match cert {
+                                common::Certificate::Resolved(resource_key) => Some(resource_key),
+                                common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) => None,
+                            })
                             .map(|certificate_key| TeraSecret {
                                 name: create_secret_name(certificate_key),
                             })

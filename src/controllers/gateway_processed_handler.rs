@@ -6,9 +6,9 @@ use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
 };
-use kube::{Resource, ResourceExt};
+use kube::Resource;
 use tokio::sync::{mpsc::Sender, oneshot};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, Instrument, Span};
 
 use crate::{
     common::{self, GatewayAddress, NotResolvedReason, ResolutionStatus, ResourceKey, Route},
@@ -32,7 +32,7 @@ pub struct GatewayProcessedHandler<'a> {
 impl<'a> GatewayProcessedHandler<'a> {
     pub async fn deploy_gateway(mut self) -> Result<Gateway> {
         self.update_gateway_resource();
-        self.update_routes().await;
+        self.update_routes().instrument(Span::current().clone()).await;
         Ok(self.gateway)
     }
 
@@ -82,7 +82,6 @@ impl<'a> GatewayProcessedHandler<'a> {
             let updated_route = self.update_attached_route_parents(attached_route, gateway_id);
             if let Some(route) = updated_route {
                 let route_resource_key = ResourceKey::from(route.meta());
-                let version = route.resource_version().clone();
                 let (sender, receiver) = oneshot::channel();
                 let _res = self
                     .route_patcher
@@ -90,8 +89,8 @@ impl<'a> GatewayProcessedHandler<'a> {
                         resource_key: route_resource_key.clone(),
                         resource: route,
                         controller_name: self.controller_name.clone(),
-                        version,
                         response_sender: sender,
+                        span: Span::current().clone(),
                     }))
                     .await;
                 let patched_route = receiver.await;
@@ -110,7 +109,6 @@ impl<'a> GatewayProcessedHandler<'a> {
             let updated_route = self.update_unresolved_route_parents(unresolve_route, gateway_id);
             if let Some(route) = updated_route {
                 let route_resource_key = ResourceKey::from(route.meta());
-                let version = route.resource_version().clone();
                 let (sender, receiver) = oneshot::channel();
                 let _res = self
                     .route_patcher
@@ -118,8 +116,8 @@ impl<'a> GatewayProcessedHandler<'a> {
                         resource_key: route_resource_key.clone(),
                         resource: route,
                         controller_name: self.controller_name.clone(),
-                        version,
                         response_sender: sender,
+                        span: Span::current().clone(),
                     }))
                     .await;
 
@@ -142,7 +140,6 @@ impl<'a> GatewayProcessedHandler<'a> {
             let updated_route = self.update_non_attached_route_parents(route_with_no_hostname, gateway_id);
             if let Some(route) = updated_route {
                 let route_resource_key = ResourceKey::from(route.meta());
-                let version = route.resource_version().clone();
                 let (sender, receiver) = oneshot::channel();
                 let _res = self
                     .route_patcher
@@ -150,8 +147,8 @@ impl<'a> GatewayProcessedHandler<'a> {
                         resource_key: route_resource_key.clone(),
                         resource: route,
                         controller_name: self.controller_name.clone(),
-                        version,
                         response_sender: sender,
+                        span: Span::current().clone(),
                     }))
                     .await;
 
@@ -477,14 +474,14 @@ impl<'a> GatewayProcessedHandler<'a> {
     }
 
     fn update_route_parents(&self, route: &Route, gateway_id: &ResourceKey, (new_condition_name, mut new_conditions): (&'static str, Vec<Condition>)) -> Option<HTTPRoute> {
-        let kube_routes = self.state.get_http_routes_attached_to_gateway(gateway_id);
+        let kube_routes = self.state.get_http_routes_attached_to_gateway(gateway_id).expect("We expect the lock to work");
 
         if let Some(kube_routes) = kube_routes {
             let kube_route = kube_routes
                 .iter()
                 .find(|f| f.metadata.name == Some(route.name().to_owned()) && f.metadata.namespace == Some(route.namespace().clone()));
 
-            if let Some(mut kube_route) = kube_route.map(|r| (***r).clone()) {
+            if let Some(mut kube_route) = kube_route.map(|r| (**r).clone()) {
                 new_conditions.iter_mut().for_each(|f| f.observed_generation = kube_route.meta().generation);
 
                 let mut status = if let Some(status) = kube_route.status { status } else { HTTPRouteStatus { parents: vec![] } };

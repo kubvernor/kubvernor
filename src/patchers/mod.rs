@@ -6,4 +6,4 @@ mod patcher;
 pub use gateway_class_patcher::GatewayClassPatcherService;
 pub use gateway_patcher::GatewayPatcherService;
 pub use http_route_patcher::HttpRoutePatcherService;
-pub use patcher::{FinalizerContext, Operation, PatchContext, Patcher};
+pub use patcher::{DeleteContext, FinalizerContext, Operation, PatchContext, Patcher};

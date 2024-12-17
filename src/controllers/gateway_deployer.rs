@@ -12,11 +12,11 @@ use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, Instrument, Span};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{self, ChangedContext, GatewayEvent, GatewayResponse, ListenerCondition, ResolvedRefs},
+    common::{self, BackendGatewayEvent, ChangedContext, GatewayResponse, ListenerCondition, ResolvedRefs},
     controllers::{gateway_processed_handler::GatewayProcessedHandler, ControllerError},
     patchers::Operation,
     state::State,
@@ -28,7 +28,7 @@ const CONDITION_MESSAGE: &str = "Gateway updated by controller";
 
 #[derive(TypedBuilder)]
 pub struct GatewayDeployer<'a> {
-    sender: Sender<GatewayEvent>,
+    sender: Sender<BackendGatewayEvent>,
     gateway: common::Gateway,
     kube_gateway: &'a Arc<Gateway>,
     state: &'a State,
@@ -40,20 +40,18 @@ impl<'a> GatewayDeployer<'a> {
         let mut updated_kube_gateway = (**self.kube_gateway).clone();
         let mut backend_gateway = self.gateway.clone();
 
-        // let maybe_gateway = common::Gateway::try_from(&updated_kube_gateway);
-        // let Ok(backend_gateway) = maybe_gateway else {
-        //     warn!("{log_context} Misconfigured  gateway {maybe_gateway:?}");
-        //     return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
-        // };
-
-        // let backend_gateway = ListenerTlsConfigValidator::new(backend_gateway, self.client.clone(), log_context).validate().await;
-        // let mut backend_gateway = RoutesResolver::new(backend_gateway, self.client.clone(), log_context, self.state, self.kube_gateway).validate().await;
         Self::adjust_statuses(&mut backend_gateway);
-        self.resolve_listeners_statuses(&backend_gateway, &mut updated_kube_gateway);
+        Self::resolve_listeners_statuses(&backend_gateway, &mut updated_kube_gateway);
         info!("Effective gateway {}-{} {:#?}", backend_gateway.name(), backend_gateway.namespace(), backend_gateway);
 
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = GatewayEvent::GatewayChanged(ChangedContext::new(response_sender, backend_gateway));
+        let listener_event = BackendGatewayEvent::GatewayChanged(
+            ChangedContext::builder()
+                .response_sender(response_sender)
+                .gateway(backend_gateway)
+                .span(Span::current().clone())
+                .build(),
+        );
         let _ = self.sender.send(listener_event).await;
         let response = response_receiver.await;
 
@@ -65,7 +63,7 @@ impl<'a> GatewayDeployer<'a> {
                 route_patcher: self.http_route_patcher.clone(),
                 controller_name: self.controller_name.to_owned(),
             };
-            gateway_event_handler.deploy_gateway().await
+            gateway_event_handler.deploy_gateway().instrument(Span::current().clone()).await
         } else {
             warn!("{response:?} ... Problem {response:?}");
             Err(ControllerError::BackendError)
@@ -114,7 +112,8 @@ impl<'a> GatewayDeployer<'a> {
             debug!("Adjusted  conditions {conditions:#?}");
         });
     }
-    fn resolve_listeners_statuses(&self, gateway: &common::Gateway, kube_gateway: &mut Gateway) {
+
+    fn resolve_listeners_statuses(gateway: &common::Gateway, kube_gateway: &mut Gateway) {
         let mut status = kube_gateway.status.clone().unwrap_or_default();
         let mut listeners_statuses = vec![];
         let generation = kube_gateway.metadata.generation;

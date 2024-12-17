@@ -8,10 +8,7 @@ use patchers::{GatewayClassPatcherService, GatewayPatcherService, HttpRoutePatch
 use reference_resolver::ReferenceResolverService;
 use state::State;
 use tokio::{
-    sync::{
-        mpsc::{self},
-        Mutex,
-    },
+    sync::mpsc::{self},
     time::sleep,
 };
 use tracing::info;
@@ -31,7 +28,7 @@ use backends::envoy_deployer::EnvoyDeployerChannelHandlerService;
 use controllers::{
     gateway::{self, GatewayController},
     gateway_class::GatewayClassController,
-    http_route::HttpRouteController,
+    http_route::{self, HttpRouteController},
 };
 use typed_builder::TypedBuilder;
 
@@ -45,7 +42,7 @@ pub struct Args {
 
 pub async fn start(args: Args) -> Result<()> {
     info!("Kubvernor started");
-    let state = Arc::new(Mutex::new(State::new()));
+    let state = State::new();
     let client = Client::try_default().await?;
     //let (gateway_channel_sender, mut gateway_deployer_channel_handler) = GatewayDeployerChannelHandler::new();
 
@@ -57,10 +54,9 @@ pub async fn start(args: Args) -> Result<()> {
     let (backend_deployer_channel_sender, backend_deployer_channel_receiver) = mpsc::channel(1024);
 
     let gateway_deployer_service = GatewayDeployerService::builder()
-        .client(client.clone())
         .gateway_deployer_channel_receiver(gateway_deployer_channel_receiver)
         .backend_deployer_channel_sender(backend_deployer_channel_sender.clone())
-        .state(Arc::clone(&state))
+        .state(state.clone())
         .gateway_patcher_channel_sender(gateway_patcher_channel_sender.clone())
         .gateway_class_patcher_channel_sender(gateway_class_patcher_channel_sender.clone())
         .http_route_patcher_channel_sender(http_route_patcher_channel_sender.clone())
@@ -71,7 +67,7 @@ pub async fn start(args: Args) -> Result<()> {
         .client(client.clone())
         .resolve_channel_receiver(resolve_referemces_channel_receiver)
         .gateway_deployer_channel_sender(gateway_deployer_channel_sender.clone())
-        .state(Arc::clone(&state))
+        .state(state.clone())
         .build();
 
     let mut gateway_patcher_service = GatewayPatcherService::builder().client(client.clone()).receiver(gateway_patcher_channel_receiver).build();
@@ -84,7 +80,7 @@ pub async fn start(args: Args) -> Result<()> {
         .receiver(backend_deployer_channel_receiver)
         .build();
 
-    let gateway_class_controller = GatewayClassController::new(args.controller_name.clone(), &client, Arc::clone(&state), gateway_class_patcher_channel_sender.clone());
+    let gateway_class_controller = GatewayClassController::new(args.controller_name.clone(), &client, state.clone(), gateway_class_patcher_channel_sender.clone());
     let gateway_controller = GatewayController::builder()
         .ctx(Arc::new(
             gateway::GatewayControllerContext::builder()
@@ -92,23 +88,24 @@ pub async fn start(args: Args) -> Result<()> {
                 .controller_name(args.controller_name.clone())
                 .gateway_channel_sender(backend_deployer_channel_sender.clone())
                 .gateway_class_patcher(gateway_class_patcher_channel_sender)
-                .state(Arc::clone(&state))
+                .state(state.clone())
                 .gateway_patcher(gateway_patcher_channel_sender.clone())
-                .http_route_patcher(http_route_patcher_channel_sender.clone())
-                .gateway_deployer_channel_sender(gateway_deployer_channel_sender.clone())
-                .resolve_references_channel_sender(resolve_references_channel_sender)
+                .resolve_references_channel_sender(resolve_references_channel_sender.clone())
                 .build(),
         ))
         .build();
 
-    let http_route_controller = HttpRouteController::new(
-        args.controller_name.clone(),
-        client,
-        backend_deployer_channel_sender,
-        state,
-        http_route_patcher_channel_sender,
-        gateway_patcher_channel_sender,
-    );
+    let http_route_controller = HttpRouteController::builder()
+        .ctx(Arc::new(
+            http_route::HttpRouteControllerContext::builder()
+                .client(client.clone())
+                .controller_name(args.controller_name.clone())
+                .state(state.clone())
+                .http_route_patcher(http_route_patcher_channel_sender.clone())
+                .resolve_references_channel_sender(resolve_references_channel_sender)
+                .build(),
+        ))
+        .build();
 
     let resolver_service = resolver_service.start().boxed();
     let gateway_deployer_service = gateway_deployer_service.start().boxed();

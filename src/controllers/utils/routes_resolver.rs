@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use gateway_api::apis::standard::gateways::Gateway;
 use k8s_openapi::api::core::v1::Service;
 use kube::{Api, Client};
-use tracing::{debug, warn};
+use tracing::{debug, warn, Instrument, Span};
 
 use crate::{
     common::{self, calculate_attached_routes, Backend, NotResolvedReason, ResolutionStatus, KUBERNETES_NONE},
@@ -15,7 +15,6 @@ pub struct RouteResolver<'a> {
     gateway_namespace: &'a str,
     route: common::Route,
     client: Client,
-    log_context: &'a str,
 }
 struct PermittedBackends(String);
 impl PermittedBackends {
@@ -25,13 +24,8 @@ impl PermittedBackends {
 }
 
 impl<'a> RouteResolver<'a> {
-    pub fn new(gateway_namespace: &'a str, route: common::Route, client: Client, log_context: &'a str) -> Self {
-        Self {
-            gateway_namespace,
-            route,
-            client,
-            log_context,
-        }
+    pub fn new(gateway_namespace: &'a str, route: common::Route, client: Client) -> Self {
+        Self { gateway_namespace, route, client }
     }
 
     pub async fn resolve(self) -> common::Route {
@@ -63,8 +57,8 @@ impl<'a> RouteResolver<'a> {
                             }
                         } else {
                             debug!(
-                                "{} can't resolve {}-{} {:?}",
-                                self.log_context, &backend_service_config.resource_key.name, &backend_service_config.resource_key.namespace, maybe_service
+                                "can't resolve {}-{} {:?}",
+                                &backend_service_config.resource_key.name, &backend_service_config.resource_key.namespace, maybe_service
                             );
                             new_backends.push(Backend::Unresolved(backend_service_config));
                             route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound);
@@ -115,28 +109,22 @@ impl<'a> RouteResolver<'a> {
 pub struct RoutesResolver<'a> {
     gateway: common::Gateway,
     client: Client,
-    log_context: &'a str,
     state: &'a State,
     kube_gateway: &'a Arc<Gateway>,
 }
 
 impl<'a> RoutesResolver<'a> {
-    pub fn new(gateway: common::Gateway, client: Client, log_context: &'a str, state: &'a State, kube_gateway: &'a Arc<Gateway>) -> Self {
-        Self {
-            gateway,
-            client,
-            log_context,
-            state,
-            kube_gateway,
-        }
+    pub fn new(gateway: common::Gateway, client: Client, state: &'a State, kube_gateway: &'a Arc<Gateway>) -> Self {
+        Self { gateway, client, state, kube_gateway }
     }
 
     pub async fn validate(mut self) -> common::Gateway {
-        let log_context = self.log_context;
-        debug!("{log_context} Validating routes");
+        debug!("Validating routes");
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
-        let linked_routes = utils::resolve_route_backends(&gateway_resource_key.namespace, self.client.clone(), linked_routes, log_context).await;
+        let linked_routes = utils::resolve_route_backends(&gateway_resource_key.namespace, self.client.clone(), linked_routes)
+            .instrument(Span::current().clone())
+            .await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
 
         let (route_to_listeners_mapping, routes_with_no_listeners) = RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();

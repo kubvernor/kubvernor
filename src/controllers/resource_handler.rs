@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kube::{runtime::controller::Action, Resource, ResourceExt};
-use tokio::sync::Mutex;
 use tracing::{info, instrument, span, Instrument, Level};
 
 use super::{
@@ -21,13 +20,12 @@ where
     R: Resource<DynamicType = ()>,
     R: Send + Sync + 'static,
 {
-    #[instrument(level = "info", name="ResourceHandler", skip_all, fields(id = %self.resource_key()))]
+    #[instrument(level = "info", name="ResourceHandler", skip_all, fields(id = %self.resource_key(), resource=std::any::type_name::<R>(), version=self.version()))]
     async fn process(&self, stored_resource: Option<Arc<R>>, resource_spec_checker: ResourceChecker<R>, resource_status_checker: ResourceChecker<R>) -> Result<Action> {
         let resource = &Arc::clone(&self.resource());
         let id = self.resource_key();
         let state = self.state();
-        let mut state = state.lock().await;
-        let state = &mut state;
+
         let resource_state = ResourceStateChecker::check_status(resource, stored_resource.clone(), resource_spec_checker, resource_status_checker);
 
         info!("Resource state {resource_state:?}");
@@ -44,36 +42,37 @@ where
         }
     }
 
-    async fn on_version_not_changed(&self, _: ResourceKey, _: &Arc<R>, _: &mut State) -> Result<Action> {
-        info!("on_version_not_changed");
+    async fn on_version_not_changed(&self, key: ResourceKey, _: &Arc<R>, _: &State) -> Result<Action> {
+        info!("on_version_not_changed {key}");
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_spec_not_changed(&self, _: ResourceKey, _: &Arc<R>, _: &mut State) -> Result<Action> {
+    async fn on_spec_not_changed(&self, _: ResourceKey, _: &Arc<R>, _: &State) -> Result<Action> {
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_new(&self, _: ResourceKey, _: &Arc<R>, _: &mut State) -> Result<Action> {
+    async fn on_new(&self, _: ResourceKey, _: &Arc<R>, _: &State) -> Result<Action> {
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_spec_changed(&self, _: ResourceKey, _: &Arc<R>, _: &mut State) -> Result<Action> {
+    async fn on_spec_changed(&self, _: ResourceKey, _: &Arc<R>, _: &State) -> Result<Action> {
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_status_changed(&self, _: ResourceKey, _: &Arc<R>, _: &mut State) -> Result<Action> {
+    async fn on_status_changed(&self, _: ResourceKey, _: &Arc<R>, _: &State) -> Result<Action> {
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_status_not_changed(&self, _: ResourceKey, _: &Arc<R>, _: &mut State) -> Result<Action> {
+    async fn on_status_not_changed(&self, _: ResourceKey, _: &Arc<R>, _: &State) -> Result<Action> {
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_deleted(&self, _: ResourceKey, _: &Arc<R>, _: &mut State) -> Result<Action> {
+    async fn on_deleted(&self, _: ResourceKey, _: &Arc<R>, _: &State) -> Result<Action> {
         Err(ControllerError::AlreadyAdded)
     }
 
-    fn state(&self) -> &Arc<Mutex<State>>;
+    fn state(&self) -> &State;
     fn resource_key(&self) -> ResourceKey;
+    fn version(&self) -> String;
     fn resource(&self) -> Arc<R>;
 }

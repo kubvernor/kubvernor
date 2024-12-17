@@ -14,91 +14,58 @@ use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource,
 };
-use tokio::sync::{
-    mpsc::{self},
-    oneshot, Mutex,
-};
-use tracing::{debug, warn};
+use tokio::sync::mpsc::{self};
+use tracing::{debug, warn, Span};
+use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use super::{
     resource_handler::ResourceHandler,
-    utils::{LogContext, ResourceCheckerArgs, ResourceState, RouteListenerMatcher},
+    utils::{ResourceCheckerArgs, ResourceState, RouteListenerMatcher},
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, GatewayEvent, ResourceKey, Route, RouteRefKey, VerifiyItems},
-    controllers::gateway_deployer::GatewayDeployer,
-    patchers::{FinalizerContext, Operation, PatchContext},
+    common::{self, ReferenceResolveRequest, RequestContext, ResourceKey, Route, RouteRefKey, VerifiyItems},
+    patchers::{DeleteContext, FinalizerContext, Operation},
     state::State,
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 const CONDITION_MESSAGE: &str = "Route updated by controller";
 
-#[derive(Clone)]
-struct Context {
-    pub controller_name: String,
-    gateway_channel_sender: mpsc::Sender<GatewayEvent>,
-    state: Arc<Mutex<State>>,
-    http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
-    gateway_patcher: mpsc::Sender<Operation<Gateway>>,
+#[derive(Clone, TypedBuilder)]
+pub struct HttpRouteControllerContext {
+    controller_name: String,
     client: Client,
+    state: State,
+    http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
+    resolve_references_channel_sender: mpsc::Sender<ReferenceResolveRequest>,
 }
 
+#[derive(TypedBuilder)]
 pub struct HttpRouteController {
-    pub controller_name: String,
-    client: kube::Client,
-    state: Arc<Mutex<State>>,
-    gateway_channel_sender: mpsc::Sender<GatewayEvent>,
-    http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
-    gateway_patcher: mpsc::Sender<Operation<Gateway>>,
+    ctx: Arc<HttpRouteControllerContext>,
 }
 
 impl HttpRouteController {
-    pub(crate) fn new(
-        controller_name: String,
-        client: kube::Client,
-        gateway_channel_sender: mpsc::Sender<GatewayEvent>,
-        state: Arc<Mutex<State>>,
-        http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
-        gateway_patcher: mpsc::Sender<Operation<Gateway>>,
-    ) -> Self {
-        HttpRouteController {
-            controller_name,
-            client,
-            state,
-            gateway_channel_sender,
-            http_route_patcher,
-            gateway_patcher,
-        }
-    }
     pub fn get_controller(&self) -> BoxFuture<()> {
-        let context = Arc::new(Context {
-            gateway_channel_sender: self.gateway_channel_sender.clone(),
-            controller_name: self.controller_name.clone(),
-            state: Arc::clone(&self.state),
-            http_route_patcher: self.http_route_patcher.clone(),
-            gateway_patcher: self.gateway_patcher.clone(),
-            client: self.client.clone(),
-        });
+        let client = self.ctx.client.clone();
+        let context = &self.ctx;
 
-        let api = Api::<HTTPRoute>::all(self.client.clone());
-        Controller::new(api, Config::default())
-            .run(Self::reconcile_http_route, Self::error_policy, Arc::clone(&context))
+        Controller::new(Api::all(client), Config::default())
+            .run(Self::reconcile_http_route, Self::error_policy, Arc::clone(context))
             .for_each(|_| futures::future::ready(()))
             .boxed()
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn error_policy<T>(_object: Arc<T>, _err: &ControllerError, _ctx: Arc<Context>) -> Action {
+    fn error_policy<T>(_object: Arc<T>, _err: &ControllerError, _ctx: Arc<HttpRouteControllerContext>) -> Action {
         Action::requeue(RECONCILE_LONG_WAIT)
     }
 
-    async fn reconcile_http_route(resource: Arc<httproutes::HTTPRoute>, ctx: Arc<Context>) -> Result<Action> {
+    async fn reconcile_http_route(resource: Arc<httproutes::HTTPRoute>, ctx: Arc<HttpRouteControllerContext>) -> Result<Action> {
         let controller_name = ctx.controller_name.clone();
         let http_route_patcher = ctx.http_route_patcher.clone();
-        let gateway_patcher = ctx.gateway_patcher.clone();
 
         let Some(maybe_id) = resource.metadata.uid.clone() else {
             return Err(ControllerError::InvalidPayload("Uid must be present".to_owned()));
@@ -107,30 +74,25 @@ impl HttpRouteController {
         let Ok(_) = Uuid::parse_str(&maybe_id) else {
             return Err(ControllerError::InvalidPayload("Uid in wrong format".to_owned()));
         };
-
+        let version = resource.meta().resource_version.clone();
         let resource_key = ResourceKey::from(&*resource);
 
-        let state = Arc::clone(&ctx.state);
-        let version = resource.meta().resource_version.clone();
+        let state = &ctx.state;
 
-        let maybe_stored_route = {
-            let state = state.lock().await;
-            state.get_http_route_by_id(&resource_key).cloned()
-        };
+        let maybe_stored_route = state.get_http_route_by_id(&resource_key).expect("We expect the lock to work");
 
         let _ = Route::try_from(&*resource)?;
 
-        let handler = HTTPRouteHandler {
-            state: Arc::clone(&ctx.state),
-            resource_key,
-            controller_name: controller_name.clone(),
-            resource,
-            version,
-            gateway_channel_sender: ctx.gateway_channel_sender.clone(),
-            http_route_patcher,
-            gateway_patcher,
-            client: ctx.client.clone(),
-        };
+        let handler = HTTPRouteHandler::builder()
+            .state(ctx.state.clone())
+            .resource_key(resource_key)
+            .controller_name(controller_name)
+            .resource(resource)
+            .http_route_patcher(http_route_patcher)
+            .resolve_references_channel_sender(ctx.resolve_references_channel_sender.clone())
+            .version(version)
+            .build();
+
         handler.process(maybe_stored_route, Self::check_spec, Self::check_status).await
     }
 
@@ -153,22 +115,25 @@ impl HttpRouteController {
     }
 }
 
+#[derive(TypedBuilder)]
 struct HTTPRouteHandler<R> {
-    state: Arc<Mutex<State>>,
+    state: State,
     resource_key: ResourceKey,
     controller_name: String,
     resource: Arc<R>,
-    version: Option<String>,
-    gateway_channel_sender: mpsc::Sender<GatewayEvent>,
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
-    gateway_patcher: mpsc::Sender<Operation<Gateway>>,
-    client: Client,
+    resolve_references_channel_sender: mpsc::Sender<ReferenceResolveRequest>,
+    version: Option<String>,
 }
 
 #[async_trait]
 impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
-    fn state(&self) -> &Arc<Mutex<State>> {
+    fn state(&self) -> &State {
         &self.state
+    }
+
+    fn version(&self) -> String {
+        self.version.clone().unwrap_or_default()
     }
 
     fn resource(&self) -> Arc<HTTPRoute> {
@@ -179,29 +144,29 @@ impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
         self.resource_key.clone()
     }
 
-    async fn on_spec_not_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        state.save_http_route(id, resource);
+    async fn on_spec_not_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
+        let () = state.save_http_route(id, resource).expect("We expect the lock to work");
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_status_not_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        state.maybe_save_http_route(id, resource);
+    async fn on_status_not_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
+        let () = state.maybe_save_http_route(id, resource).expect("We expect the lock to work");
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_new(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
+    async fn on_new(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
         self.on_new_or_changed(id, resource, state).await
     }
 
-    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
+    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
         self.on_status_changed(id, resource, state).await
     }
 
-    async fn on_spec_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
+    async fn on_spec_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
         self.on_new_or_changed(id, resource, state).await
     }
 
-    async fn on_deleted(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
+    async fn on_deleted(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
         self.on_deleted(id, resource, state).await
     }
 }
@@ -212,9 +177,7 @@ impl HTTPRouteHandler<HTTPRoute> {
     /// * backend should return information whether the route was attached to the gateway or not and to which listener/listeners
     /// * we should update gatway's if the route count has changed for a listener
     /// * we shoudl update the route's status
-    async fn on_new_or_changed(&self, route_key: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        let gateway_channel_sender = &self.gateway_channel_sender;
-
+    async fn on_new_or_changed(&self, route_key: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
         let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
             return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
         };
@@ -223,65 +186,57 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let parent_gateway_refs = parent_gateway_refs_keys
             .clone()
-            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(key.as_ref()).cloned()))
+            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(key.as_ref()).expect("We expect the lock to work")))
             .map(|i| if i.1.is_some() { Ok(i) } else { Err(i) });
 
         let (resolved_gateways, unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
 
-        parent_gateway_refs_keys.for_each(|(_ref, key)| state.attach_http_route_to_gateway(key.as_ref().clone(), route_key.clone()));
+        parent_gateway_refs_keys.for_each(|(_ref, key)| state.attach_http_route_to_gateway(key.as_ref().clone(), route_key.clone()).expect("We expect the lock to work"));
 
         let matching_gateways = RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
         let unknown_gateway_status = self.generate_status_for_unknown_gateways(&unknown_gateways, resource.metadata.generation);
         let mut http_route = (**resource).clone();
         http_route.status = Some(HTTPRouteStatus { parents: unknown_gateway_status });
-        state.save_http_route(route_key.clone(), &Arc::new(http_route));
+        let () = state.save_http_route(route_key.clone(), &Arc::new(http_route)).expect("We expect the lock to work");
 
-        for gateway in matching_gateways {
-            let gateway_id = ResourceKey::from(&*gateway);
+        for kube_gateway in matching_gateways {
+            let gateway_class_name = {
+                let gateway_class_name = &kube_gateway.spec.gateway_class_name;
 
-            let mut deployer = GatewayDeployer::builder()
-                .sender(gateway_channel_sender.clone())
-                .gateway(common::Gateway::try_from(&*gateway).unwrap())
-                .kube_gateway(&gateway)
-                .state(state)
-                .http_route_patcher(self.http_route_patcher.clone())
-                .controller_name(&self.controller_name)
-                .build();
-
-            if let Ok(updated_gateway) = deployer.deploy_gateway().await {
-                debug!("Deploying gateway {updated_gateway:?}");
-                state.save_gateway(gateway_id.clone(), &Arc::new(updated_gateway.clone()));
-                let (sender, receiver) = oneshot::channel();
-                let gateway_id = ResourceKey::from(&updated_gateway);
-                let version = updated_gateway.metadata.resource_version.clone();
-                let _res = self
-                    .gateway_patcher
-                    .send(Operation::PatchStatus(PatchContext {
-                        resource_key: gateway_id.clone(),
-                        resource: updated_gateway,
-                        controller_name: self.controller_name.clone(),
-                        version,
-                        response_sender: sender,
-                    }))
-                    .await;
-                let patched_gateway = receiver.await;
-                if let Ok(maybe_patched) = patched_gateway {
-                    match maybe_patched {
-                        Ok(patched_gateway) => {
-                            state.save_gateway(gateway_id.clone(), &Arc::new(patched_gateway));
-                        }
-                        Err(e) => {
-                            warn!("Error while patching {e}");
-                        }
-                    }
+                if !self
+                    .state
+                    .get_gateway_classes()
+                    .expect("We expect the lock to work")
+                    .into_iter()
+                    .any(|gc| gc.metadata.name == Some(gateway_class_name.to_string()))
+                {
+                    warn!(
+                        "reconcile_gateway: {} {:?} Unknown gateway class name {gateway_class_name}",
+                        &self.controller_name,
+                        kube_gateway.meta().name
+                    );
+                    return Err(ControllerError::UnknownGatewayClass(gateway_class_name.clone()));
                 }
-            }
+                gateway_class_name.clone()
+            };
+
+            let _ = self
+                .resolve_references_channel_sender
+                .send(ReferenceResolveRequest::New(
+                    RequestContext::builder()
+                        .gateway(common::Gateway::try_from(&*kube_gateway).expect("We expect the lock to work"))
+                        .kube_gateway(kube_gateway)
+                        .gateway_class_name(gateway_class_name)
+                        .span(Span::current())
+                        .build(),
+                ))
+                .await;
         }
+
         Ok(Action::await_change())
     }
 
-    async fn on_deleted(&self, route_key: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
-        let gateway_channel_sender = &self.gateway_channel_sender;
+    async fn on_deleted(&self, route_key: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
         let _route = Route::try_from(&**resource)?;
 
         let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
@@ -292,61 +247,60 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let parent_gateway_refs = parent_gateway_refs_keys
             .clone()
-            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(key.as_ref()).cloned()))
+            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(key.as_ref()).expect("We expect the lock to work")))
             .map(|i| if i.1.is_some() { Ok(i) } else { Err(i) });
 
         let (resolved_gateways, _unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
         debug!("Parent keys = {parent_gateway_refs_keys:?}");
-        parent_gateway_refs_keys.for_each(|(_ref, gateway_key)| state.detach_http_route_from_gateway(gateway_key.as_ref(), &route_key));
-        state.delete_http_route(&route_key);
+        parent_gateway_refs_keys.for_each(|(_ref, gateway_key)| state.detach_http_route_from_gateway(gateway_key.as_ref(), &route_key).expect("We expect the lock to work"));
+        let _ = state.delete_http_route(&route_key).expect("We expect the lock to work");
 
         let matching_gateways = RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
 
-        for gateway in matching_gateways {
-            let gateway_id = ResourceKey::from(&*gateway);
-
-            let mut deployer = GatewayDeployer::builder()
-                .sender(gateway_channel_sender.clone())
-                .gateway(common::Gateway::try_from(&*gateway).unwrap())
-                .kube_gateway(&gateway)
-                .state(state)
-                .http_route_patcher(self.http_route_patcher.clone())
-                .controller_name(&self.controller_name)
-                .build();
-
-            if let Ok(updated_gateway) = deployer.deploy_gateway().await {
-                debug!("Deploying gateway {updated_gateway:?}");
-                state.save_gateway(gateway_id.clone(), &Arc::new(updated_gateway.clone()));
-                let (sender, receiver) = oneshot::channel();
-                let gateway_id = ResourceKey::from(&updated_gateway);
-                let version = updated_gateway.metadata.resource_version.clone();
-                let _res = self
-                    .gateway_patcher
-                    .send(Operation::PatchStatus(PatchContext {
-                        resource_key: gateway_id.clone(),
-                        resource: updated_gateway,
-                        controller_name: self.controller_name.clone(),
-                        version,
-                        response_sender: sender,
-                    }))
-                    .await;
-                let patched_gateway = receiver.await;
-                if let Ok(maybe_patched) = patched_gateway {
-                    match maybe_patched {
-                        Ok(patched_gateway) => {
-                            state.save_gateway(gateway_id.clone(), &Arc::new(patched_gateway));
-                        }
-                        Err(e) => {
-                            warn!("Error while patching {e}");
-                        }
-                    }
-                }
-            }
-        }
-
         let http_route = (**resource).clone();
         let resource_key = route_key;
-        let _res = self.http_route_patcher.send(Operation::Delete((resource_key, http_route, self.controller_name.clone()))).await;
+        let _res = self
+            .http_route_patcher
+            .send(Operation::Delete(DeleteContext {
+                resource_key,
+                resource: http_route,
+                controller_name: self.controller_name.clone(),
+                span: Span::current().clone(),
+            }))
+            .await;
+
+        for kube_gateway in matching_gateways {
+            let gateway_class_name = {
+                let gateway_class_name = &kube_gateway.spec.gateway_class_name;
+
+                if !state
+                    .get_gateway_classes()
+                    .expect("We expect the lock to work")
+                    .into_iter()
+                    .any(|gc| gc.metadata.name == Some(gateway_class_name.to_string()))
+                {
+                    warn!(
+                        "reconcile_gateway: {} {:?} Unknown gateway class name {gateway_class_name}",
+                        &self.controller_name,
+                        kube_gateway.meta().name
+                    );
+                    return Err(ControllerError::UnknownGatewayClass(gateway_class_name.clone()));
+                }
+                gateway_class_name.clone()
+            };
+
+            let _ = self
+                .resolve_references_channel_sender
+                .send(ReferenceResolveRequest::New(
+                    RequestContext::builder()
+                        .gateway(common::Gateway::try_from(&*kube_gateway).expect("We expect the lock to work"))
+                        .kube_gateway(kube_gateway)
+                        .gateway_class_name(gateway_class_name)
+                        .span(Span::current())
+                        .build(),
+                ))
+                .await;
+        }
 
         Ok(Action::await_change())
     }
@@ -376,9 +330,9 @@ impl HTTPRouteHandler<HTTPRoute> {
             .collect()
     }
 
-    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &mut State) -> Result<Action> {
+    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
         let controller_name = &self.controller_name;
-        state.save_http_route(id, resource);
+        let () = state.save_http_route(id, resource).expect("We expect the lock to work");
         if let Some(status) = &resource.status {
             let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
                 finalizers.iter().any(|f| f == controller_name)
@@ -401,20 +355,10 @@ impl HTTPRouteHandler<HTTPRoute> {
                 resource_key: self.resource_key.clone(),
                 controller_name: controller_name.to_owned(),
                 finalizer_name: controller_name.to_owned(),
+                span: Span::current().clone(),
             }))
             .await;
 
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
-    }
-}
-
-impl<'a> LogContext<'a, HTTPRoute> {
-    pub fn new(controller_name: &'a str, resource_key: &'a ResourceKey, version: Option<String>) -> Self {
-        Self {
-            controller_name,
-            resource_key,
-            version,
-            resource_type: std::marker::PhantomData,
-        }
     }
 }

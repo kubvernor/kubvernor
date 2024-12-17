@@ -100,7 +100,7 @@ impl<'a> RouteListenerMatcher<'a> {
         (routes_and_listeners, route_resolution_status)
     }
 
-    pub fn filter_matching_gateways(state: &mut State, resolved_gateways: &[(&HTTPRouteParentRefs, Option<Arc<gateways::Gateway>>)]) -> Vec<Arc<gateways::Gateway>> {
+    pub fn filter_matching_gateways(state: &State, resolved_gateways: &[(&HTTPRouteParentRefs, Option<Arc<gateways::Gateway>>)]) -> Vec<Arc<gateways::Gateway>> {
         resolved_gateways
             .iter()
             .filter_map(|(parent_ref, maybe_gateway)| {
@@ -109,7 +109,7 @@ impl<'a> RouteListenerMatcher<'a> {
                     let parent_ref_key = RouteRefKey::from((&**parent_ref, gateway_key.namespace.clone()));
 
                     if *parent_ref_key.as_ref() == gateway_key {
-                        state.get_gateway(&gateway_key).cloned()
+                        state.get_gateway(&gateway_key).expect("We expect the lock to work")
                     } else {
                         None
                     }

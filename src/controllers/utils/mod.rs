@@ -3,9 +3,8 @@ mod route_listener_matcher;
 mod routes_resolver;
 mod tls_config_validator;
 
-use std::{collections::BTreeMap, marker::PhantomData, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
-use gateway_api::apis::standard::gateways::Gateway;
 pub use hostname_match_filter::HostnameMatchFilter;
 use k8s_openapi::api::core::v1::Namespace;
 use kube::{
@@ -134,15 +133,13 @@ impl ResourceFinalizer {
 pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route> {
     state
         .get_http_routes_attached_to_gateway(gateway_id)
-        .map(|routes| routes.iter().filter_map(|r| Route::try_from(&***r).ok()).collect())
+        .expect("We expect the lock to work")
+        .map(|routes| routes.iter().filter_map(|r| Route::try_from(&**r).ok()).collect())
         .unwrap_or_default()
 }
 
-pub async fn resolve_route_backends(gateway_namespace: &str, client: Client, routes: Vec<Route>, log_context: &str) -> Vec<Route> {
-    let futures: Vec<_> = routes
-        .into_iter()
-        .map(|route| RouteResolver::new(gateway_namespace, route, client.clone(), log_context).resolve())
-        .collect();
+pub async fn resolve_route_backends(gateway_namespace: &str, client: Client, routes: Vec<Route>) -> Vec<Route> {
+    let futures: Vec<_> = routes.into_iter().map(|route| RouteResolver::new(gateway_namespace, route, client.clone()).resolve()).collect();
     let routes = futures::future::join_all(futures);
     routes.await
 }
@@ -162,32 +159,6 @@ pub async fn resolve_namespaces(client: Client) -> BTreeMap<String, BTreeMap<Str
         }
     };
     namespace_map
-}
-
-pub struct LogContext<'a, T> {
-    pub controller_name: &'a str,
-    pub resource_key: &'a ResourceKey,
-    pub version: Option<String>,
-    pub resource_type: PhantomData<T>,
-}
-
-impl<T> std::fmt::Display for LogContext<'_, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let resource = format!("{:?}", &self.resource_type);
-        let resource = &resource["PhantomData".len()..];
-        write!(f, "{}: resource_id: {},  version: {:?}", resource, self.resource_key, self.version)
-    }
-}
-
-impl<'a> LogContext<'a, Gateway> {
-    pub fn new(controller_name: &'a str, resource_key: &'a ResourceKey, version: Option<String>) -> Self {
-        Self {
-            controller_name,
-            resource_key,
-            version,
-            resource_type: std::marker::PhantomData,
-        }
-    }
 }
 
 // pub struct ListenerStatusesMerger {

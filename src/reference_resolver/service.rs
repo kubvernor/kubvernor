@@ -1,13 +1,11 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::collections::BTreeMap;
 
-use gateway_api::apis::standard::gateways::Gateway as KubeGateway;
 use kube::Client;
-use tokio::sync::Mutex;
 use tracing::{span, warn, Instrument, Level};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{Gateway, ReferenceResolveRequest, RequestContext, ResourceKey},
+    common::{GatewayDeployRequest, ReferenceResolveRequest, RequestContext, ResourceKey},
     controllers::{ListenerTlsConfigValidator, RoutesResolver},
     state::State,
 };
@@ -20,18 +18,18 @@ enum ReferenceStatus {
 #[derive(TypedBuilder)]
 pub struct ReferenceResolverService {
     client: Client,
-    state: Arc<Mutex<State>>,
+    state: State,
     #[builder(default)]
     referenecs: BTreeMap<ResourceKey, ReferenceStatus>,
     resolve_channel_receiver: tokio::sync::mpsc::Receiver<ReferenceResolveRequest>,
-    gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<(Gateway, Arc<KubeGateway>, String)>,
+    gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<GatewayDeployRequest>,
 }
 
 struct ReferenceResolverHandler {
     client: Client,
-    state: Arc<Mutex<State>>,
+    state: State,
     referenecs: BTreeMap<ResourceKey, ReferenceStatus>,
-    gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<(Gateway, Arc<KubeGateway>, String)>,
+    gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<GatewayDeployRequest>,
 }
 
 impl ReferenceResolverService {
@@ -64,20 +62,32 @@ impl ReferenceResolverHandler {
                 gateway,
                 kube_gateway,
                 gateway_class_name,
+                span,
             }) => {
-                let span = span!(Level::INFO, "ReferenceResolverService", id = %gateway.key());
+                let span = span!(parent: &span, Level::INFO, "ReferenceResolverService", id = %gateway.key());
+                let _entered = span.enter();
                 let backend_gateway = ListenerTlsConfigValidator::new(gateway, self.client.clone(), "ReferenceResolverService")
                     .validate()
                     .instrument(span.clone())
                     .await;
-                let state = self.state.lock().await;
-                let backend_gateway = RoutesResolver::new(backend_gateway, self.client.clone(), "ReferenceResolverService", &state, &kube_gateway)
+
+                let backend_gateway = RoutesResolver::new(backend_gateway, self.client.clone(), &self.state, &kube_gateway)
                     .validate()
                     .instrument(span.clone())
                     .await;
-                let _ = self.gateway_deployer_channel_sender.send((backend_gateway, kube_gateway, gateway_class_name)).await;
+                let _ = self
+                    .gateway_deployer_channel_sender
+                    .send(GatewayDeployRequest::Deploy(
+                        RequestContext::builder()
+                            .gateway(backend_gateway)
+                            .kube_gateway(kube_gateway)
+                            .gateway_class_name(gateway_class_name)
+                            .span(span.clone())
+                            .build(),
+                    ))
+                    .await;
             }
-            ReferenceResolveRequest::Remove(gateway) => {}
+            ReferenceResolveRequest::Remove(_gateway) => {}
         }
     }
 }

@@ -17,12 +17,15 @@ use gateway_api::apis::standard::{
 use kube::{Resource, ResourceExt};
 use kube_core::ObjectMeta;
 use thiserror::Error;
-use tokio::sync::oneshot;
-use tracing::debug;
+use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, Span};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-use crate::controllers::ControllerError;
+use crate::{
+    controllers::ControllerError,
+    patchers::{FinalizerContext, Operation},
+};
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum ListenerError {
@@ -241,9 +244,45 @@ pub struct ListenerData {
     pub attached_routes: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
+pub enum Certificate {
+    Resolved(ResourceKey),
+    NotResolved(ResourceKey),
+    Invalid(ResourceKey),
+}
+
+impl Certificate {
+    pub fn resolve(self: &Certificate) -> Self {
+        let resource = match self {
+            Certificate::Resolved(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+        };
+        Certificate::Resolved(resource.clone())
+    }
+
+    pub fn not_resolved(self: &Certificate) -> Self {
+        let resource = match self {
+            Certificate::Resolved(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+        };
+        Certificate::NotResolved(resource.clone())
+    }
+
+    pub fn invalid(self: &Certificate) -> Self {
+        let resource = match self {
+            Certificate::Resolved(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+        };
+        Certificate::Invalid(resource.clone())
+    }
+
+    pub fn resouce_key(&self) -> &ResourceKey {
+        match self {
+            Certificate::Resolved(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum TlsType {
-    Terminate(Vec<ResourceKey>),
+    Terminate(Vec<Certificate>),
     Passthrough,
 }
 
@@ -269,7 +308,7 @@ impl TryFrom<&GatewayListeners> for Listener {
                         .as_ref()
                         .map(|refs| {
                             refs.iter()
-                                .map(|r| ResourceKey::from((r.group.clone(), r.namespace.clone(), r.name.clone(), r.kind.clone())))
+                                .map(|r| Certificate::NotResolved(ResourceKey::from((r.group.clone(), r.namespace.clone(), r.name.clone(), r.kind.clone()))))
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default();
@@ -942,15 +981,11 @@ impl Display for RouteToListenersMapping {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, TypedBuilder)]
 pub struct ChangedContext {
+    pub span: Span,
     pub response_sender: oneshot::Sender<GatewayResponse>,
     pub gateway: Gateway,
-}
-impl ChangedContext {
-    pub fn new(response_sender: oneshot::Sender<GatewayResponse>, gateway: Gateway) -> Self {
-        ChangedContext { response_sender, gateway }
-    }
 }
 
 impl Display for ChangedContext {
@@ -959,33 +994,29 @@ impl Display for ChangedContext {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, TypedBuilder)]
 pub struct DeletedContext {
+    pub span: Span,
     pub response_sender: oneshot::Sender<GatewayResponse>,
     pub gateway: Gateway,
 }
 
-impl DeletedContext {
-    pub fn new(response_sender: oneshot::Sender<GatewayResponse>, gateway: Gateway) -> Self {
-        DeletedContext { response_sender, gateway }
-    }
-}
 #[derive(Debug)]
-pub enum GatewayEvent {
+pub enum BackendGatewayEvent {
     GatewayChanged(ChangedContext),
     GatewayDeleted(DeletedContext),
     RouteChanged(ChangedContext),
 }
 
-impl Display for GatewayEvent {
+impl Display for BackendGatewayEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GatewayEvent::GatewayChanged(ctx) => write!(
+            BackendGatewayEvent::GatewayChanged(ctx) => write!(
                 f,
                 "GatewayEvent::GatewayChanged
                 {ctx}"
             ),
-            GatewayEvent::GatewayDeleted(ctx) => {
+            BackendGatewayEvent::GatewayDeleted(ctx) => {
                 write!(
                     f,
                     "GatewayEvent::GatewayDeleted
@@ -994,7 +1025,7 @@ impl Display for GatewayEvent {
                 )
             }
 
-            GatewayEvent::RouteChanged(ctx) => {
+            BackendGatewayEvent::RouteChanged(ctx) => {
                 write!(
                     f,
                     "GatewayEvent::RouteChanged                 
@@ -1436,10 +1467,40 @@ pub struct RequestContext {
     pub gateway: Gateway,
     pub kube_gateway: Arc<KubeGateway>,
     pub gateway_class_name: String,
+    pub span: Span,
 }
 pub enum ReferenceResolveRequest {
     New(RequestContext),
     Remove(Gateway),
+}
+
+pub enum GatewayDeployRequest {
+    Deploy(RequestContext),
+}
+
+pub async fn add_finalizer(sender: &mpsc::Sender<Operation<KubeGateway>>, gateway_id: &ResourceKey, controller_name: &str) {
+    let _ = sender
+        .send(Operation::PatchFinalizer(FinalizerContext {
+            resource_key: gateway_id.clone(),
+            controller_name: controller_name.to_owned(),
+            finalizer_name: controller_name.to_owned(),
+            span: Span::current().clone(),
+        }))
+        .await;
+}
+
+const GATEWAY_CLASS_FINALIZER_NAME: &str = "gateway-exists-finalizer.gateway.networking.k8s.io";
+
+pub async fn add_finalizer_to_gateway_class(sender: &mpsc::Sender<Operation<GatewayClass>>, gateway_class_name: &str, controller_name: &str) {
+    let key = ResourceKey::new(gateway_class_name);
+    let _ = sender
+        .send(Operation::PatchFinalizer(FinalizerContext {
+            resource_key: key,
+            controller_name: controller_name.to_owned(),
+            finalizer_name: GATEWAY_CLASS_FINALIZER_NAME.to_owned(),
+            span: Span::current().clone(),
+        }))
+        .await;
 }
 
 #[cfg(test)]
