@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use gateway_api::apis::standard::{
-    gateways::{Gateway, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
+    gatewayclasses::GatewayClass,
+    gateways::{Gateway as KubeGateway, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
     httproutes::HTTPRoute,
 };
 use k8s_openapi::{
@@ -16,11 +17,46 @@ use tracing::{debug, error, info, warn, Instrument, Span};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{self, BackendGatewayEvent, ChangedContext, GatewayResponse, ListenerCondition, ResolvedRefs},
-    controllers::{gateway_processed_handler::GatewayProcessedHandler, ControllerError},
-    patchers::Operation,
+    common::{self, BackendGatewayEvent, BackendGatewayResponse, ChangedContext, ListenerCondition, ResolvedRefs, ResourceKey},
+    controllers::ControllerError,
+    services::patchers::Operation,
     state::State,
 };
+
+#[derive(TypedBuilder)]
+pub struct GatewayDeployerServiceInternal<'a> {
+    state: &'a State,
+    gateway_patcher_channel_sender: mpsc::Sender<Operation<KubeGateway>>,
+    gateway_class_patcher_channel_sender: mpsc::Sender<Operation<GatewayClass>>,
+    controller_name: String,
+}
+
+impl<'a> GatewayDeployerServiceInternal<'a> {
+    pub async fn on_version_not_changed(&mut self, gateway_id: &ResourceKey, gateway_class_name: &str, resource: &Arc<KubeGateway>) {
+        let controller_name = &self.controller_name;
+        if let Some(status) = &resource.status {
+            if let Some(conditions) = &status.conditions {
+                if conditions.iter().any(|c| c.type_ == gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string()) {
+                    self.state.save_gateway(gateway_id.clone(), resource).expect("We expect the lock to work");
+                    common::add_finalizer_to_gateway_class(&self.gateway_class_patcher_channel_sender, gateway_class_name, controller_name)
+                        .instrument(Span::current().clone())
+                        .await;
+                    let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
+                        finalizers.iter().any(|f| f == controller_name)
+                    } else {
+                        false
+                    };
+
+                    if !has_finalizer {
+                        let () = common::add_finalizer(&self.gateway_patcher_channel_sender, gateway_id, controller_name)
+                            .instrument(Span::current().clone())
+                            .await;
+                    };
+                }
+            }
+        }
+    }
+}
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
@@ -30,44 +66,46 @@ const CONDITION_MESSAGE: &str = "Gateway updated by controller";
 pub struct GatewayDeployer<'a> {
     sender: Sender<BackendGatewayEvent>,
     gateway: common::Gateway,
-    kube_gateway: &'a Arc<Gateway>,
+    kube_gateway: KubeGateway,
     state: &'a State,
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
     controller_name: &'a str,
+    gateway_class_name: String,
 }
 impl<'a> GatewayDeployer<'a> {
-    pub async fn deploy_gateway(&mut self) -> Result<Gateway> {
-        let mut updated_kube_gateway = (**self.kube_gateway).clone();
+    pub async fn deploy_gateway(self) -> Result<()> {
+        let mut updated_kube_gateway = self.kube_gateway;
         let mut backend_gateway = self.gateway.clone();
 
         Self::adjust_statuses(&mut backend_gateway);
         Self::resolve_listeners_statuses(&backend_gateway, &mut updated_kube_gateway);
         info!("Effective gateway {}-{} {:#?}", backend_gateway.name(), backend_gateway.namespace(), backend_gateway);
 
-        let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = BackendGatewayEvent::GatewayChanged(
+        let listener_event = BackendGatewayEvent::Changed(
             ChangedContext::builder()
-                .response_sender(response_sender)
+                .kube_gateway(updated_kube_gateway.clone())
                 .gateway(backend_gateway)
+                .gateway_class_name(self.gateway_class_name)
                 .span(Span::current().clone())
                 .build(),
         );
         let _ = self.sender.send(listener_event).await;
-        let response = response_receiver.await;
+        Ok(())
+        //let response = response_receiver.await;
 
-        if let Ok(GatewayResponse::GatewayProcessed(effective_gateway)) = response {
-            let gateway_event_handler = GatewayProcessedHandler {
-                effective_gateway,
-                gateway: updated_kube_gateway,
-                state: self.state,
-                route_patcher: self.http_route_patcher.clone(),
-                controller_name: self.controller_name.to_owned(),
-            };
-            gateway_event_handler.deploy_gateway().instrument(Span::current().clone()).await
-        } else {
-            warn!("{response:?} ... Problem {response:?}");
-            Err(ControllerError::BackendError)
-        }
+        // if let Ok(BackendGatewayResponse::Processed(effective_gateway)) = response {
+        //     let gateway_event_handler = super::GatewayProcessedHandler {
+        //         effective_gateway,
+        //         gateway: updated_kube_gateway,
+        //         state: self.state,
+        //         route_patcher: self.http_route_patcher.clone(),
+        //         controller_name: self.controller_name.to_owned(),
+        //     };
+        //     gateway_event_handler.deploy_gateway().instrument(Span::current().clone()).await
+        // } else {
+        //     warn!("{response:?} ... Problem {response:?}");
+        //     Err(ControllerError::BackendError)
+        // }
     }
 
     fn adjust_statuses(gateway: &mut common::Gateway) {
@@ -113,7 +151,7 @@ impl<'a> GatewayDeployer<'a> {
         });
     }
 
-    fn resolve_listeners_statuses(gateway: &common::Gateway, kube_gateway: &mut Gateway) {
+    fn resolve_listeners_statuses(gateway: &common::Gateway, kube_gateway: &mut KubeGateway) {
         let mut status = kube_gateway.status.clone().unwrap_or_default();
         let mut listeners_statuses = vec![];
         let generation = kube_gateway.metadata.generation;

@@ -20,13 +20,13 @@ use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use super::{
-    resource_handler::ResourceHandler,
+    handlers::ResourceHandler,
     utils::{ResourceCheckerArgs, ResourceState, RouteListenerMatcher},
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, ReferenceResolveRequest, RequestContext, ResourceKey, Route, RouteRefKey, VerifiyItems},
-    patchers::{DeleteContext, FinalizerContext, Operation},
+    common::{self, ReferenceValidateRequest, RequestContext, ResourceKey, Route, RouteRefKey, VerifiyItems},
+    services::patchers::{DeleteContext, FinalizerContext, Operation},
     state::State,
 };
 
@@ -39,7 +39,7 @@ pub struct HttpRouteControllerContext {
     client: Client,
     state: State,
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
-    resolve_references_channel_sender: mpsc::Sender<ReferenceResolveRequest>,
+    validate_references_channel_sender: mpsc::Sender<ReferenceValidateRequest>,
 }
 
 #[derive(TypedBuilder)]
@@ -89,7 +89,7 @@ impl HttpRouteController {
             .controller_name(controller_name)
             .resource(resource)
             .http_route_patcher(http_route_patcher)
-            .resolve_references_channel_sender(ctx.resolve_references_channel_sender.clone())
+            .validate_references_channel_sender(ctx.validate_references_channel_sender.clone())
             .version(version)
             .build();
 
@@ -122,7 +122,7 @@ struct HTTPRouteHandler<R> {
     controller_name: String,
     resource: Arc<R>,
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
-    resolve_references_channel_sender: mpsc::Sender<ReferenceResolveRequest>,
+    validate_references_channel_sender: mpsc::Sender<ReferenceValidateRequest>,
     version: Option<String>,
 }
 
@@ -172,11 +172,6 @@ impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
 }
 
 impl HTTPRouteHandler<HTTPRoute> {
-    /// * on new route we need to find all the relevant data such as gateways based on parent refs
-    /// * send all necessary information to the backend
-    /// * backend should return information whether the route was attached to the gateway or not and to which listener/listeners
-    /// * we should update gatway's if the route count has changed for a listener
-    /// * we shoudl update the route's status
     async fn on_new_or_changed(&self, route_key: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
         let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
             return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
@@ -219,12 +214,12 @@ impl HTTPRouteHandler<HTTPRoute> {
                 }
                 gateway_class_name.clone()
             };
-
+            let kube_gateway = (*kube_gateway).clone();
             let _ = self
-                .resolve_references_channel_sender
-                .send(ReferenceResolveRequest::New(
+                .validate_references_channel_sender
+                .send(ReferenceValidateRequest::New(
                     RequestContext::builder()
-                        .gateway(common::Gateway::try_from(&*kube_gateway).expect("We expect the lock to work"))
+                        .gateway(common::Gateway::try_from(&kube_gateway).expect("We expect the lock to work"))
                         .kube_gateway(kube_gateway)
                         .gateway_class_name(gateway_class_name)
                         .span(Span::current())
@@ -289,11 +284,13 @@ impl HTTPRouteHandler<HTTPRoute> {
                 gateway_class_name.clone()
             };
 
+            let kube_gateway = (*kube_gateway).clone();
+
             let _ = self
-                .resolve_references_channel_sender
-                .send(ReferenceResolveRequest::New(
+                .validate_references_channel_sender
+                .send(ReferenceValidateRequest::New(
                     RequestContext::builder()
-                        .gateway(common::Gateway::try_from(&*kube_gateway).expect("We expect the lock to work"))
+                        .gateway(common::Gateway::try_from(&kube_gateway).expect("We expect the lock to work"))
                         .kube_gateway(kube_gateway)
                         .gateway_class_name(gateway_class_name)
                         .span(Span::current())

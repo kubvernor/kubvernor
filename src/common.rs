@@ -3,7 +3,6 @@ use std::{
     collections::{btree_map, BTreeMap, BTreeSet, HashMap},
     fmt::Display,
     net::IpAddr,
-    sync::Arc,
 };
 
 use gateway_api::apis::standard::{
@@ -24,7 +23,7 @@ use uuid::Uuid;
 
 use crate::{
     controllers::ControllerError,
-    patchers::{FinalizerContext, Operation},
+    services::patchers::{FinalizerContext, Operation},
 };
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
@@ -178,6 +177,12 @@ impl Listener {
     }
 
     pub fn data_mut(&mut self) -> &mut ListenerData {
+        match self {
+            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => listener_data,
+        }
+    }
+
+    pub fn data(&self) -> &ListenerData {
         match self {
             Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => listener_data,
         }
@@ -933,27 +938,22 @@ pub struct DeployedGatewayStatus {
 }
 
 #[derive(Debug)]
-pub struct RouteProcessedPayload {
-    pub route_status: RouteStatus,
-    pub deployed_gateway_status: DeployedGatewayStatus,
-}
-
-impl RouteProcessedPayload {
-    pub fn new(status: RouteStatus, gateway_status: DeployedGatewayStatus) -> Self {
-        Self {
-            route_status: status,
-            deployed_gateway_status: gateway_status,
-        }
-    }
+pub struct ProcessedContext {
+    pub gateway: Gateway,
+    pub kube_gateway: KubeGateway,
 }
 
 #[derive(Debug)]
-pub enum GatewayResponse {
-    GatewayProcessed(Gateway),
-    GatewayDeleted(Vec<RouteStatus>),
-    RouteProcessed(RouteProcessedPayload),
-    GatewayProcessingError,
-    RouteProcessingError,
+pub enum BackendGatewayResponse {
+    Processed(Gateway),
+    ProcessedWithContext {
+        gateway: Gateway,
+        kube_gateway: KubeGateway,
+        span: Span,
+        gateway_class_name: String,
+    },
+    Deleted(Vec<RouteStatus>),
+    ProcessingError,
 }
 
 #[derive(Debug, Clone)]
@@ -984,8 +984,9 @@ impl Display for RouteToListenersMapping {
 #[derive(Debug, TypedBuilder)]
 pub struct ChangedContext {
     pub span: Span,
-    pub response_sender: oneshot::Sender<GatewayResponse>,
     pub gateway: Gateway,
+    pub kube_gateway: KubeGateway,
+    pub gateway_class_name: String,
 }
 
 impl Display for ChangedContext {
@@ -997,39 +998,30 @@ impl Display for ChangedContext {
 #[derive(Debug, TypedBuilder)]
 pub struct DeletedContext {
     pub span: Span,
-    pub response_sender: oneshot::Sender<GatewayResponse>,
+    pub response_sender: oneshot::Sender<BackendGatewayResponse>,
     pub gateway: Gateway,
 }
 
 #[derive(Debug)]
 pub enum BackendGatewayEvent {
-    GatewayChanged(ChangedContext),
-    GatewayDeleted(DeletedContext),
-    RouteChanged(ChangedContext),
+    Changed(ChangedContext),
+    Deleted(DeletedContext),
 }
 
 impl Display for BackendGatewayEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BackendGatewayEvent::GatewayChanged(ctx) => write!(
+            BackendGatewayEvent::Changed(ctx) => write!(
                 f,
                 "GatewayEvent::GatewayChanged
                 {ctx}"
             ),
-            BackendGatewayEvent::GatewayDeleted(ctx) => {
+            BackendGatewayEvent::Deleted(ctx) => {
                 write!(
                     f,
                     "GatewayEvent::GatewayDeleted
                 gateway {:?}",
                     ctx.gateway
-                )
-            }
-
-            BackendGatewayEvent::RouteChanged(ctx) => {
-                write!(
-                    f,
-                    "GatewayEvent::RouteChanged                 
-                    {ctx}"
                 )
             }
         }
@@ -1050,15 +1042,6 @@ pub struct BackendResourceKey {
     namespace: Option<String>,
     pub name: String,
     pub kind: String,
-}
-impl BackendResourceKey {
-    pub fn namespace(&self) -> Option<&String> {
-        self.namespace.as_ref()
-    }
-
-    pub fn namespace_mut(&mut self) -> &mut Option<String> {
-        &mut self.namespace
-    }
 }
 
 #[allow(dead_code)]
@@ -1465,13 +1448,14 @@ pub fn calculate_attached_routes(mapped_routes: &[RouteToListenersMapping]) -> H
 #[derive(TypedBuilder)]
 pub struct RequestContext {
     pub gateway: Gateway,
-    pub kube_gateway: Arc<KubeGateway>,
+    pub kube_gateway: KubeGateway,
     pub gateway_class_name: String,
     pub span: Span,
 }
-pub enum ReferenceResolveRequest {
+
+pub enum ReferenceValidateRequest {
     New(RequestContext),
-    Remove(Gateway),
+    UpdatedGateways(BTreeSet<ResourceKey>),
 }
 
 pub enum GatewayDeployRequest {

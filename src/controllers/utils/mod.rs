@@ -1,6 +1,9 @@
 mod hostname_match_filter;
+mod references_resolver;
+
 mod route_listener_matcher;
 mod routes_resolver;
+
 mod tls_config_validator;
 
 use std::{collections::BTreeMap, sync::Arc};
@@ -16,6 +19,7 @@ use kube::{
     Api, Client, Resource, ResourceExt,
 };
 use kube_core::{PartialObjectMeta, PartialObjectMetaExt};
+pub use references_resolver::{BackendReferenceResolver, SecretsResolver};
 pub(crate) use route_listener_matcher::RouteListenerMatcher;
 use routes_resolver::RouteResolver;
 pub use routes_resolver::RoutesResolver;
@@ -138,8 +142,18 @@ pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route>
         .unwrap_or_default()
 }
 
-pub async fn resolve_route_backends(gateway_namespace: &str, client: Client, routes: Vec<Route>) -> Vec<Route> {
-    let futures: Vec<_> = routes.into_iter().map(|route| RouteResolver::new(gateway_namespace, route, client.clone()).resolve()).collect();
+pub async fn resolve_route_backends(gateway_namespace: &str, backend_reference_resolver: BackendReferenceResolver, routes: Vec<Route>) -> Vec<Route> {
+    let futures: Vec<_> = routes
+        .into_iter()
+        .map(|route| {
+            RouteResolver::builder()
+                .gateway_namespace(gateway_namespace)
+                .route(route)
+                .backend_reference_resolver(backend_reference_resolver.clone())
+                .build()
+                .resolve()
+        })
+        .collect();
     let routes = futures::future::join_all(futures);
     routes.await
 }
@@ -160,61 +174,3 @@ pub async fn resolve_namespaces(client: Client) -> BTreeMap<String, BTreeMap<Str
     };
     namespace_map
 }
-
-// pub struct ListenerStatusesMerger {
-//     all_listeners_statuses: Vec<GatewayStatusListeners>,
-// }
-// impl ListenerStatusesMerger {
-//     pub fn new(all_listeners_statuses: Vec<GatewayStatusListeners>) -> Self {
-//         Self { all_listeners_statuses }
-//     }
-//     pub fn merge(mut self, mut deployed_listeners_statuses: Vec<GatewayStatusListeners>) -> Vec<GatewayStatusListeners> {
-//         #[derive(Debug)]
-//         struct ListenerConditionHolder {
-//             type_: String,
-//             condition: Condition,
-//         }
-
-//         impl Eq for ListenerConditionHolder {}
-
-//         impl Ord for ListenerConditionHolder {
-//             fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-//                 self.type_.cmp(&other.type_)
-//             }
-//         }
-//         impl PartialOrd for ListenerConditionHolder {
-//             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-//                 Some(self.type_.cmp(&other.type_))
-//             }
-//         }
-//         impl PartialEq for ListenerConditionHolder {
-//             fn eq(&self, other: &Self) -> bool {
-//                 self.type_ == other.type_
-//             }
-//         }
-
-//         for listener in &mut self.all_listeners_statuses {
-//             if let Some(deployed_listener) = deployed_listeners_statuses.iter_mut().find(|f| f.name == listener.name) {
-//                 let mut listener_conditions = listener
-//                     .conditions
-//                     .iter()
-//                     .map(|c| ListenerConditionHolder {
-//                         type_: c.type_.clone(),
-//                         condition: c.clone(),
-//                     })
-//                     .collect::<BTreeSet<_>>();
-//                 let deployed_conditions = deployed_listener.conditions.iter().map(|c| ListenerConditionHolder {
-//                     type_: c.type_.clone(),
-//                     condition: c.clone(),
-//                 });
-//                 for c in deployed_conditions {
-//                     let _ = listener_conditions.replace(c);
-//                 }
-
-//                 listener.conditions = listener_conditions.into_iter().map(|c| c.condition).collect();
-//                 listener.attached_routes = deployed_listener.attached_routes;
-//             }
-//         }
-//         self.all_listeners_statuses
-//     }
-// }

@@ -13,7 +13,7 @@ use tracing::{debug, info, warn, Instrument, Span};
 use crate::{
     common::{self, GatewayAddress, NotResolvedReason, ResolutionStatus, ResourceKey, Route},
     controllers::ControllerError,
-    patchers::{Operation, PatchContext},
+    services::patchers::{Operation, PatchContext},
     state::State,
 };
 
@@ -172,27 +172,24 @@ impl<'a> GatewayProcessedHandler<'a> {
         self.update_route_parents(
             attached_route,
             gateway_id,
-            (
-                "Accepted",
-                vec![
-                    Condition {
-                        last_transition_time: Time(Utc::now()),
-                        message: ROUTE_CONDITION_MESSAGE.to_owned(),
-                        observed_generation: None,
-                        reason: "Accepted".to_owned(),
-                        status: "True".to_owned(),
-                        type_: "Accepted".to_owned(),
-                    },
-                    Condition {
-                        last_transition_time: Time(Utc::now()),
-                        message: ROUTE_CONDITION_MESSAGE.to_owned(),
-                        observed_generation: None,
-                        reason: "ResolvedRefs".to_owned(),
-                        status: "True".to_owned(),
-                        type_: "ResolvedRefs".to_owned(),
-                    },
-                ],
-            ),
+            vec![
+                Condition {
+                    last_transition_time: Time(Utc::now()),
+                    message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                    observed_generation: None,
+                    reason: "Accepted".to_owned(),
+                    status: "True".to_owned(),
+                    type_: "Accepted".to_owned(),
+                },
+                Condition {
+                    last_transition_time: Time(Utc::now()),
+                    message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                    observed_generation: None,
+                    reason: "ResolvedRefs".to_owned(),
+                    status: "True".to_owned(),
+                    type_: "ResolvedRefs".to_owned(),
+                },
+            ],
         )
     }
 
@@ -328,7 +325,7 @@ impl<'a> GatewayProcessedHandler<'a> {
                 }
             },
         };
-        self.update_route_parents(rejected_route, gateway_id, ("Rejected", conditions))
+        self.update_route_parents(rejected_route, gateway_id, conditions)
     }
 
     fn update_non_attached_route_parents(&self, non_attached_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
@@ -470,10 +467,10 @@ impl<'a> GatewayProcessedHandler<'a> {
                 }
             },
         };
-        self.update_route_parents(non_attached_route, gateway_id, ("Rejected", conditions))
+        self.update_route_parents(non_attached_route, gateway_id, conditions)
     }
 
-    fn update_route_parents(&self, route: &Route, gateway_id: &ResourceKey, (new_condition_name, mut new_conditions): (&'static str, Vec<Condition>)) -> Option<HTTPRoute> {
+    fn update_route_parents(&self, route: &Route, gateway_id: &ResourceKey, mut new_conditions: Vec<Condition>) -> Option<HTTPRoute> {
         let kube_routes = self.state.get_http_routes_attached_to_gateway(gateway_id).expect("We expect the lock to work");
 
         if let Some(kube_routes) = kube_routes {
@@ -485,10 +482,13 @@ impl<'a> GatewayProcessedHandler<'a> {
                 new_conditions.iter_mut().for_each(|f| f.observed_generation = kube_route.meta().generation);
 
                 let mut status = if let Some(status) = kube_route.status { status } else { HTTPRouteStatus { parents: vec![] } };
-
-                status
-                    .parents
-                    .retain(|p| !(p.controller_name == self.controller_name && p.parent_ref.namespace == self.gateway.meta().namespace && self.gateway.meta().name == Some(p.parent_ref.name.clone())));
+                status.parents.retain(|p| {
+                    if p.parent_ref.namespace.is_some() {
+                        !(p.controller_name == self.controller_name && p.parent_ref.namespace == self.gateway.meta().namespace && self.gateway.meta().name == Some(p.parent_ref.name.clone()))
+                    } else {
+                        !(p.controller_name == self.controller_name && Some("default".to_owned()) == self.gateway.meta().namespace && self.gateway.meta().name == Some(p.parent_ref.name.clone()))
+                    }
+                });
 
                 for kube_parent in kube_route.spec.parent_refs.clone().unwrap_or_default() {
                     let route_parents = HTTPRouteStatusParents {

@@ -2,10 +2,8 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use clap::Parser;
 use futures::FutureExt;
-use gateway_deployer::GatewayDeployerService;
 use kube::Client;
-use patchers::{GatewayClassPatcherService, GatewayPatcherService, HttpRoutePatcherService, Patcher};
-use reference_resolver::ReferenceResolverService;
+use services::{GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService};
 use state::State;
 use tokio::{
     sync::mpsc::{self},
@@ -16,19 +14,20 @@ use tracing::info;
 pub mod backends;
 mod common;
 mod controllers;
-mod gateway_deployer;
-mod patchers;
-mod reference_resolver;
+
+mod services;
+
 mod state;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 
-use backends::envoy_deployer::EnvoyDeployerChannelHandlerService;
+use backends::envoy_backend::EnvoyDeployerChannelHandlerService;
 use controllers::{
     gateway::{self, GatewayController},
     gateway_class::GatewayClassController,
     http_route::{self, HttpRouteController},
+    BackendReferenceResolver, SecretsResolver,
 };
 use typed_builder::TypedBuilder;
 
@@ -44,18 +43,26 @@ pub async fn start(args: Args) -> Result<()> {
     info!("Kubvernor started");
     let state = State::new();
     let client = Client::try_default().await?;
-    //let (gateway_channel_sender, mut gateway_deployer_channel_handler) = GatewayDeployerChannelHandler::new();
 
     let (gateway_deployer_channel_sender, gateway_deployer_channel_receiver) = mpsc::channel(1024);
-    let (resolve_references_channel_sender, resolve_referemces_channel_receiver) = mpsc::channel(1024);
+    let (reference_validate_channel_sender, reference_validate_channel_receiver) = mpsc::channel(1024);
     let (gateway_patcher_channel_sender, gateway_patcher_channel_receiver) = mpsc::channel(1024);
     let (gateway_class_patcher_channel_sender, gateway_class_patcher_channel_receiver) = mpsc::channel(1024);
     let (http_route_patcher_channel_sender, http_route_patcher_channel_receiver) = mpsc::channel(1024);
     let (backend_deployer_channel_sender, backend_deployer_channel_receiver) = mpsc::channel(1024);
+    let (backend_response_channel_sender, backend_response_channel_receiver) = mpsc::channel(1024);
+
+    let secrets_resolver = SecretsResolver::builder().reference_resolver(client.clone(), reference_validate_channel_sender.clone()).build();
+
+    let backend_references_resolver = BackendReferenceResolver::builder()
+        .state(state.clone())
+        .reference_resolver(client.clone(), reference_validate_channel_sender.clone())
+        .build();
 
     let gateway_deployer_service = GatewayDeployerService::builder()
         .gateway_deployer_channel_receiver(gateway_deployer_channel_receiver)
         .backend_deployer_channel_sender(backend_deployer_channel_sender.clone())
+        .backend_response_channel_receiver(backend_response_channel_receiver)
         .state(state.clone())
         .gateway_patcher_channel_sender(gateway_patcher_channel_sender.clone())
         .gateway_class_patcher_channel_sender(gateway_class_patcher_channel_sender.clone())
@@ -63,11 +70,13 @@ pub async fn start(args: Args) -> Result<()> {
         .controller_name(args.controller_name.clone())
         .build();
 
-    let resolver_service = ReferenceResolverService::builder()
+    let resolver_service = ReferenceValidatorService::builder()
         .client(client.clone())
-        .resolve_channel_receiver(resolve_referemces_channel_receiver)
+        .reference_validate_channel_receiver(reference_validate_channel_receiver)
         .gateway_deployer_channel_sender(gateway_deployer_channel_sender.clone())
         .state(state.clone())
+        .secrets_resolver(secrets_resolver.clone())
+        .backend_references_resolver(backend_references_resolver.clone())
         .build();
 
     let mut gateway_patcher_service = GatewayPatcherService::builder().client(client.clone()).receiver(gateway_patcher_channel_receiver).build();
@@ -77,7 +86,8 @@ pub async fn start(args: Args) -> Result<()> {
     let mut envoy_deployer_service = EnvoyDeployerChannelHandlerService::builder()
         .client(client.clone())
         .controller_name(args.controller_name.clone())
-        .receiver(backend_deployer_channel_receiver)
+        .backend_deploy_request_channel_receiver(backend_deployer_channel_receiver)
+        .backend_response_channel_sender(backend_response_channel_sender)
         .build();
 
     let gateway_class_controller = GatewayClassController::new(args.controller_name.clone(), &client, state.clone(), gateway_class_patcher_channel_sender.clone());
@@ -90,7 +100,7 @@ pub async fn start(args: Args) -> Result<()> {
                 .gateway_class_patcher(gateway_class_patcher_channel_sender)
                 .state(state.clone())
                 .gateway_patcher(gateway_patcher_channel_sender.clone())
-                .resolve_references_channel_sender(resolve_references_channel_sender.clone())
+                .validate_references_channel_sender(reference_validate_channel_sender.clone())
                 .build(),
         ))
         .build();
@@ -102,7 +112,7 @@ pub async fn start(args: Args) -> Result<()> {
                 .controller_name(args.controller_name.clone())
                 .state(state.clone())
                 .http_route_patcher(http_route_patcher_channel_sender.clone())
-                .resolve_references_channel_sender(resolve_references_channel_sender)
+                .validate_references_channel_sender(reference_validate_channel_sender)
                 .build(),
         ))
         .build();
@@ -131,7 +141,12 @@ pub async fn start(args: Args) -> Result<()> {
         http_route_controller.get_controller().await;
         info!("Route controller...stopped");
     };
+
+    let secret_resolver_service = async move { secrets_resolver.resolve().await }.boxed();
+    let backend_references_resolver_service = async move { backend_references_resolver.resolve().await }.boxed();
     futures::future::join_all(vec![
+        backend_references_resolver_service,
+        secret_resolver_service,
         gateway_deployer_service,
         resolver_service,
         gateway_class_patcher_service,

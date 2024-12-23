@@ -1,4 +1,4 @@
-use clap::Parser;
+pub(crate) use clap::Parser;
 use kubvernor::{start, Args};
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::WithExportConfig;

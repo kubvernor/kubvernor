@@ -16,13 +16,13 @@ use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use super::{
-    resource_handler::ResourceHandler,
+    handlers::ResourceHandler,
     utils::{ResourceCheckerArgs, ResourceState},
     ControllerError, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, BackendGatewayEvent, DeletedContext, ReferenceResolveRequest, RequestContext, ResourceKey},
-    patchers::{DeleteContext, Operation},
+    common::{self, BackendGatewayEvent, DeletedContext, ReferenceValidateRequest, RequestContext, ResourceKey},
+    services::patchers::{DeleteContext, Operation},
     state::State,
 };
 
@@ -36,7 +36,7 @@ pub struct GatewayControllerContext {
     state: State,
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
     gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
-    resolve_references_channel_sender: mpsc::Sender<ReferenceResolveRequest>,
+    validate_references_channel_sender: mpsc::Sender<ReferenceValidateRequest>,
 }
 
 #[derive(TypedBuilder)]
@@ -116,7 +116,7 @@ impl GatewayController {
             .gateway_channel_sender(ctx.gateway_channel_sender.clone())
             .gateway_patcher(gateway_patcher)
             .gateway_class_patcher(gateway_class_patcher)
-            .resolve_references_channel_sender(ctx.resolve_references_channel_sender.clone())
+            .validate_references_channel_sender(ctx.validate_references_channel_sender.clone())
             .build();
 
         handler.process(maybe_stored_gateway_class, Self::check_spec_changed, Self::check_status_changed).await
@@ -152,7 +152,7 @@ struct GatewayResourceHandler<R> {
     gateway_channel_sender: mpsc::Sender<BackendGatewayEvent>,
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
     gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
-    resolve_references_channel_sender: mpsc::Sender<ReferenceResolveRequest>,
+    validate_references_channel_sender: mpsc::Sender<ReferenceValidateRequest>,
 }
 
 #[async_trait]
@@ -224,7 +224,7 @@ impl GatewayResourceHandler<Gateway> {
         };
 
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = BackendGatewayEvent::GatewayDeleted(
+        let listener_event = BackendGatewayEvent::Deleted(
             DeletedContext::builder()
                 .response_sender(response_sender)
                 .gateway(backend_gateway)
@@ -243,13 +243,14 @@ impl GatewayResourceHandler<Gateway> {
             warn!("Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
+        let kube_gateway = (**kube_gateway).clone();
 
         let _ = self
-            .resolve_references_channel_sender
-            .send(ReferenceResolveRequest::New(
+            .validate_references_channel_sender
+            .send(ReferenceValidateRequest::New(
                 RequestContext::builder()
                     .gateway(backend_gateway)
-                    .kube_gateway(Arc::clone(kube_gateway))
+                    .kube_gateway(kube_gateway)
                     .gateway_class_name(self.gateway_class_name.clone())
                     .span(Span::current())
                     .build(),

@@ -4,10 +4,7 @@ use async_trait::async_trait;
 use kube::{runtime::controller::Action, Resource, ResourceExt};
 use tracing::{info, instrument, span, Instrument, Level};
 
-use super::{
-    utils::{ResourceChecker, ResourceState, ResourceStateChecker},
-    ControllerError,
-};
+use super::{ControllerError, ResourceChecker, ResourceState, ResourceStateChecker};
 use crate::{common::ResourceKey, state::State};
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;

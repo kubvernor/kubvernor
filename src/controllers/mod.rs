@@ -1,13 +1,12 @@
 use std::time::Duration;
 pub mod gateway;
 pub mod gateway_class;
-mod gateway_deployer;
-mod gateway_processed_handler;
+mod handlers;
 pub mod http_route;
-mod resource_handler;
+
 mod utils;
-pub use gateway_deployer::GatewayDeployer;
-pub use utils::{FinalizerPatcher, HostnameMatchFilter, ListenerTlsConfigValidator, ResourceFinalizer, RoutesResolver};
+
+pub use utils::{find_linked_routes, BackendReferenceResolver, FinalizerPatcher, HostnameMatchFilter, ListenerTlsConfigValidator, ResourceFinalizer, RoutesResolver, SecretsResolver};
 
 #[allow(dead_code)]
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]

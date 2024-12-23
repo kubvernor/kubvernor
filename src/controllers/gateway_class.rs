@@ -22,8 +22,8 @@ use super::{
 };
 use crate::{
     common::ResourceKey,
-    controllers::{resource_handler::ResourceHandler, RECONCILE_LONG_WAIT},
-    patchers::{DeleteContext, Operation, PatchContext},
+    controllers::{handlers::ResourceHandler, RECONCILE_LONG_WAIT},
+    services::patchers::{DeleteContext, Operation, PatchContext},
     state::State,
 };
 type Result<T, E = ControllerError> = std::result::Result<T, E>;

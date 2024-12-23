@@ -2,19 +2,22 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use gateway_api::apis::standard::gateways::Gateway;
 use k8s_openapi::api::core::v1::Service;
-use kube::{Api, Client};
+use kube::Client;
 use tracing::{debug, warn, Instrument, Span};
+use typed_builder::TypedBuilder;
 
+use super::BackendReferenceResolver;
 use crate::{
     common::{self, calculate_attached_routes, Backend, NotResolvedReason, ResolutionStatus, KUBERNETES_NONE},
     controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };
 
+#[derive(TypedBuilder)]
 pub struct RouteResolver<'a> {
     gateway_namespace: &'a str,
     route: common::Route,
-    client: Client,
+    backend_reference_resolver: BackendReferenceResolver,
 }
 struct PermittedBackends(String);
 impl PermittedBackends {
@@ -24,10 +27,6 @@ impl PermittedBackends {
 }
 
 impl<'a> RouteResolver<'a> {
-    pub fn new(gateway_namespace: &'a str, route: common::Route, client: Client) -> Self {
-        Self { gateway_namespace, route, client }
-    }
-
     pub async fn resolve(self) -> common::Route {
         let mut route = self.route;
         let route_namespace = route.namespace().to_owned();
@@ -36,14 +35,13 @@ impl<'a> RouteResolver<'a> {
         for rule in &mut route_config.routing_rules {
             let mut new_backends = vec![];
             for backend in rule.backends.clone() {
-                let client = self.client.clone();
                 match backend {
                     Backend::Maybe(mut backend_service_config) => {
                         let backend_namespace = &backend_service_config.resource_key.namespace;
-                        let backend_name = &backend_service_config.resource_key.name;
-                        let service_api: Api<Service> = Api::namespaced(client, backend_namespace);
-                        let maybe_service = service_api.get(backend_name).await;
-                        if let Ok(service) = maybe_service {
+
+                        let maybe_service = self.backend_reference_resolver.get_reference(&backend_service_config.resource_key).await;
+
+                        if let Some(service) = maybe_service {
                             if PermittedBackends(self.gateway_namespace.to_owned()).is_permitted(&route_namespace, backend_namespace) {
                                 backend_service_config.effective_port = Self::backend_remap_port(backend_service_config.port, service);
                                 new_backends.push(Backend::Resolved(backend_service_config));
@@ -106,23 +104,21 @@ impl<'a> RouteResolver<'a> {
     }
 }
 
+#[derive(TypedBuilder)]
 pub struct RoutesResolver<'a> {
     gateway: common::Gateway,
-    client: Client,
     state: &'a State,
-    kube_gateway: &'a Arc<Gateway>,
+    kube_gateway: &'a Gateway,
+    client: Client,
+    backend_reference_resolver: &'a BackendReferenceResolver,
 }
 
 impl<'a> RoutesResolver<'a> {
-    pub fn new(gateway: common::Gateway, client: Client, state: &'a State, kube_gateway: &'a Arc<Gateway>) -> Self {
-        Self { gateway, client, state, kube_gateway }
-    }
-
     pub async fn validate(mut self) -> common::Gateway {
         debug!("Validating routes");
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
-        let linked_routes = utils::resolve_route_backends(&gateway_resource_key.namespace, self.client.clone(), linked_routes)
+        let linked_routes = utils::resolve_route_backends(&gateway_resource_key.namespace, self.backend_reference_resolver.clone(), linked_routes)
             .instrument(Span::current().clone())
             .await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;

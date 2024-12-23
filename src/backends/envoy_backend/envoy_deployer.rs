@@ -19,16 +19,13 @@ use kube::{
 use kube_core::ObjectMeta;
 use lazy_static::lazy_static;
 use tera::Tera;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{debug, info, span, warn, Instrument, Level};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use super::xds_generator::{self, RdsData};
-use crate::{
-    backends::xds_generator::XdsData,
-    common::{BackendGatewayEvent, Certificate, ChangedContext, DeletedContext, Gateway, GatewayAddress, GatewayResponse, Listener, ResourceKey, TlsType},
-};
+use crate::common::{BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, DeletedContext, Gateway, GatewayAddress, Listener, ResourceKey, TlsType};
 
 lazy_static! {
     pub static ref TEMPLATES: Tera = {
@@ -46,7 +43,8 @@ lazy_static! {
 pub struct EnvoyDeployerChannelHandlerService {
     controller_name: String,
     client: Client,
-    receiver: Receiver<BackendGatewayEvent>,
+    backend_deploy_request_channel_receiver: Receiver<BackendGatewayEvent>,
+    backend_response_channel_sender: Sender<BackendGatewayResponse>,
 }
 
 impl EnvoyDeployerChannelHandlerService {
@@ -54,40 +52,28 @@ impl EnvoyDeployerChannelHandlerService {
         info!("Gateways handler started");
         loop {
             tokio::select! {
-                    Some(event) = self.receiver.recv() => {
+                    Some(event) = self.backend_deploy_request_channel_receiver.recv() => {
                         info!("Backend got event {event:#}");
                         match event{
-                            BackendGatewayEvent::GatewayChanged(ChangedContext{ response_sender, mut gateway, span }) => {
-                                let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="GatewayChanged", id = %gateway.key());
+                            BackendGatewayEvent::Changed(ChangedContext{ mut gateway, kube_gateway, span: parent_span, gateway_class_name }) => {
+                                let span = span!(parent: &parent_span, Level::INFO, "EnvoyDeployerService", event="GatewayChanged", id = %gateway.key());
                                 let _entered = span.enter();
                                 let maybe_service = self.deploy_envoy(&gateway).instrument(span.clone()).await;
                                 if let Ok(service) = maybe_service{
                                     Self::update_addresses(&mut gateway, &service);
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(gateway));
+                                    let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::ProcessedWithContext{gateway: gateway.clone(), kube_gateway, span: parent_span, gateway_class_name});
                                 }else{
                                     warn!("Problem {maybe_service:?}");
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessingError);
+                                    let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(gateway.clone()));
                                 }
                             }
 
-                            BackendGatewayEvent::GatewayDeleted(DeletedContext{ response_sender, gateway, span }) => {
+                            BackendGatewayEvent::Deleted(DeletedContext{ response_sender, gateway, span }) => {
                                 let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="GatewayDeleted", id = %gateway.key());
                                 let _entered = span.enter();
                                 self.delete_envoy(&gateway).instrument(span.clone()).await;
-                                let _res = response_sender.send(GatewayResponse::GatewayDeleted(vec![]));
-                            }
-
-                            BackendGatewayEvent::RouteChanged(ChangedContext{ response_sender, mut gateway, span }) => {
-                                let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="RouteChanged", id = %gateway.key());
-                                let _entered = span.enter();
-                                let maybe_service = self.deploy_envoy(&gateway).instrument(span.clone()).await;
-                                if let Ok(service) = maybe_service{
-                                    Self::update_addresses(&mut gateway, &service);
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(gateway));
-                                }else{
-                                    warn!("Problem {maybe_service:?}");
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessingError);
-                                };
+                                let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Deleted(vec![]));
+                                let _res = response_sender.send(BackendGatewayResponse::Deleted(vec![]));
                             }
 
                         }
@@ -121,7 +107,7 @@ impl EnvoyDeployerChannelHandlerService {
 
         let maybe_templates = xds_generator::EnvoyXDSGenerator::new(gateway).generate_xds();
 
-        if let Ok(XdsData {
+        if let Ok(xds_generator::XdsData {
             bootstrap_content,
             lds_content,
             rds_content,
@@ -204,7 +190,7 @@ impl EnvoyDeployerChannelHandlerService {
         let _res = futures::future::join_all(futures).await;
     }
 
-    fn find_gateway_addresses(service: &Service) -> Vec<String> {
+    fn find_gateway_addresses(service: &Service) -> Option<Vec<String>> {
         let mut ips = vec![];
         if let Some(status) = &service.status {
             if let Some(load_balancer) = &status.load_balancer {
@@ -215,7 +201,12 @@ impl EnvoyDeployerChannelHandlerService {
                 }
             }
         };
-        ips.into_iter().flatten().collect::<Vec<_>>()
+        let ips = ips.into_iter().flatten().collect::<Vec<_>>();
+        if ips.is_empty() {
+            None
+        } else {
+            Some(ips)
+        }
     }
 
     fn create_envoy_xds_config_map(name: &str, gateway: &Gateway, lds: String, routes: Vec<RdsData>, cds: String) -> ConfigMap {
@@ -388,13 +379,14 @@ impl EnvoyDeployerChannelHandlerService {
     }
 
     fn update_addresses(gateway: &mut Gateway, service: &Service) {
-        let attached_addresses = Self::find_gateway_addresses(service);
-        gateway.addresses_mut().append(
-            &mut attached_addresses
-                .into_iter()
-                .filter_map(|a| if let Ok(addr) = a.parse() { Some(GatewayAddress::IPAddress(addr)) } else { None })
-                .collect(),
-        );
+        if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
+            gateway.addresses_mut().append(
+                &mut attached_addresses
+                    .into_iter()
+                    .filter_map(|a| if let Ok(addr) = a.parse() { Some(GatewayAddress::IPAddress(addr)) } else { None })
+                    .collect(),
+            );
+        }
     }
 
     fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
