@@ -54,7 +54,7 @@ impl<'a> RouteListenerMatcher<'a> {
         if let Some(route_parents) = route_parents {
             for route_parent in route_parents {
                 let route_parent_key = RouteRefKey::from((route_parent, route_key.namespace.clone()));
-                let gateway_key = ResourceKey::from(&*self.gateway);
+                let gateway_key = ResourceKey::from(self.gateway);
                 if route_parent_key.as_ref().name == gateway_key.name && route_parent_key.as_ref().namespace == gateway_key.namespace {
                     let matching_gateway_listeners = self.filter_listeners_by_namespace(self.gateway.spec.listeners.clone().into_iter(), gateway_key, route_key);
                     let matching_gateway_listeners = matching_gateway_listeners.collect::<Vec<_>>();

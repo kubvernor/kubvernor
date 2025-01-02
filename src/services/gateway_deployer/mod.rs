@@ -36,19 +36,12 @@ impl GatewayDeployerService {
         loop {
             tokio::select! {
                 Some(GatewayDeployRequest::Deploy(RequestContext{ gateway, kube_gateway, gateway_class_name, span })) = resolve_receiver.recv() => {
-
                     let span = span!(parent: &span, Level::INFO, "GatewayDeployerService", id = %gateway.key());
                     let _entered = span.enter();
-                    let gateway_id = gateway.key();
-
-
-                    let mut deployer = GatewayDeployer::builder()
+                    let deployer = GatewayDeployer::builder()
                         .sender(self.backend_deployer_channel_sender.clone())
                         .gateway(gateway.clone())
                         .kube_gateway(kube_gateway)
-                        .state(&self.state)
-                        .http_route_patcher(self.http_route_patcher_channel_sender.clone())
-                        .controller_name(&self.controller_name)
                         .gateway_class_name(gateway_class_name)
                         .build();
                     let _ = deployer.deploy_gateway().instrument(span.clone()).await;

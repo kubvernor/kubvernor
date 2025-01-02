@@ -6,7 +6,7 @@ pub mod http_route;
 
 mod utils;
 
-pub use utils::{find_linked_routes, BackendReferenceResolver, FinalizerPatcher, HostnameMatchFilter, ListenerTlsConfigValidator, ResourceFinalizer, RoutesResolver, SecretsResolver};
+pub use utils::{find_linked_routes, FinalizerPatcher, HostnameMatchFilter, ListenerTlsConfigValidator, ResourceFinalizer, RoutesResolver};
 
 #[allow(dead_code)]
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]

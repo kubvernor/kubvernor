@@ -1,6 +1,7 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use clap::Parser;
+use common::{BackendReferenceResolver, SecretsResolver};
 use futures::FutureExt;
 use kube::Client;
 use services::{GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService};
@@ -27,7 +28,6 @@ use controllers::{
     gateway::{self, GatewayController},
     gateway_class::GatewayClassController,
     http_route::{self, HttpRouteController},
-    BackendReferenceResolver, SecretsResolver,
 };
 use typed_builder::TypedBuilder;
 

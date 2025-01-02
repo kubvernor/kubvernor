@@ -1,13 +1,11 @@
-use std::sync::Arc;
-
 use gateway_api::apis::standard::gateways::Gateway;
 use kube::Client;
 use tracing::{info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{self, GatewayDeployRequest, ReferenceValidateRequest, RequestContext},
-    controllers::{BackendReferenceResolver, ListenerTlsConfigValidator, RoutesResolver, SecretsResolver},
+    common::{self, BackendReferenceResolver, GatewayDeployRequest, ReferenceValidateRequest, RequestContext, SecretsResolver},
+    controllers::{ListenerTlsConfigValidator, RoutesResolver},
     state::State,
 };
 

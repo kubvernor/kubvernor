@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::collections::{BTreeSet, HashMap};
 
 use gateway_api::apis::standard::gateways::Gateway;
 use k8s_openapi::api::core::v1::Service;
@@ -8,7 +8,7 @@ use typed_builder::TypedBuilder;
 
 use super::BackendReferenceResolver;
 use crate::{
-    common::{self, calculate_attached_routes, Backend, NotResolvedReason, ResolutionStatus, KUBERNETES_NONE},
+    common::{self, Backend, NotResolvedReason, ResolutionStatus, Route, RouteToListenersMapping, KUBERNETES_NONE},
     controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };
@@ -136,4 +136,21 @@ impl<'a> RoutesResolver<'a> {
 
         self.gateway
     }
+}
+
+pub fn calculate_attached_routes(mapped_routes: &[RouteToListenersMapping]) -> HashMap<String, BTreeSet<&Route>> {
+    let mut attached_routes: HashMap<String, BTreeSet<&Route>> = HashMap::new();
+
+    for mapping in mapped_routes {
+        mapping.listeners.iter().for_each(|l| {
+            if let Some(routes) = attached_routes.get_mut(&l.name) {
+                routes.insert(&mapping.route);
+            } else {
+                let mut routes = BTreeSet::new();
+                routes.insert(&mapping.route);
+                attached_routes.insert(l.name.clone(), routes);
+            }
+        });
+    }
+    attached_routes
 }

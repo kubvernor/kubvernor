@@ -1,8 +1,7 @@
 use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
 use tracing::debug;
 
-use super::SecretsResolver;
-use crate::common::{self, ListenerCondition, ProtocolType, ResolvedRefs, TlsType};
+use crate::common::{self, ListenerCondition, ProtocolType, ResolvedRefs, SecretsResolver, TlsType};
 pub struct ListenerTlsConfigValidator<'a> {
     gateway: common::Gateway,
     secrets_resolver: &'a SecretsResolver,

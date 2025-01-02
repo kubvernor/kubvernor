@@ -1,0 +1,298 @@
+mod gateway;
+mod listener;
+mod references_resolver;
+mod resource_key;
+mod route;
+#[cfg(test)]
+mod test;
+use std::{collections::BTreeSet, fmt::Display, net::IpAddr};
+
+pub use gateway::{ChangedContext, Gateway};
+use gateway_api::apis::standard::{
+    gatewayclasses::GatewayClass,
+    gateways::{Gateway as KubeGateway, GatewayListeners},
+};
+pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
+pub use references_resolver::{BackendReferenceResolver, SecretsResolver};
+pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE};
+pub use route::{EffectiveRoutingRule, HttpHeader, NotResolvedReason, ResolutionStatus, Route, RouteStatus};
+use tokio::sync::{mpsc, oneshot};
+use tracing::Span;
+use typed_builder::TypedBuilder;
+use uuid::Uuid;
+
+use crate::services::patchers::{FinalizerContext, Operation};
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
+pub enum Certificate {
+    Resolved(ResourceKey),
+    NotResolved(ResourceKey),
+    Invalid(ResourceKey),
+}
+
+impl Certificate {
+    pub fn resolve(self: &Certificate) -> Self {
+        let resource = match self {
+            Certificate::Resolved(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+        };
+        Certificate::Resolved(resource.clone())
+    }
+
+    pub fn not_resolved(self: &Certificate) -> Self {
+        let resource = match self {
+            Certificate::Resolved(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+        };
+        Certificate::NotResolved(resource.clone())
+    }
+
+    pub fn invalid(self: &Certificate) -> Self {
+        let resource = match self {
+            Certificate::Resolved(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+        };
+        Certificate::Invalid(resource.clone())
+    }
+
+    pub fn resouce_key(&self) -> &ResourceKey {
+        match self {
+            Certificate::Resolved(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub struct BackendServiceConfig {
+    pub resource_key: ResourceKey,
+    pub endpoint: String,
+    pub port: i32,
+    pub effective_port: i32,
+    pub weight: i32,
+}
+
+impl BackendServiceConfig {
+    pub fn cluster_name(&self) -> String {
+        self.resource_key.name.clone() + "." + &self.resource_key.namespace
+    }
+    pub fn weight(&self) -> i32 {
+        self.weight
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub enum Backend {
+    Resolved(BackendServiceConfig),
+    Unresolved(BackendServiceConfig),
+    NotAllowed(BackendServiceConfig),
+    Maybe(BackendServiceConfig),
+    Invalid(BackendServiceConfig),
+}
+
+impl Backend {
+    pub fn config(&self) -> &BackendServiceConfig {
+        match self {
+            Backend::Resolved(s) | Backend::Unresolved(s) | Backend::NotAllowed(s) | Backend::Maybe(s) | Backend::Invalid(s) => s,
+        }
+    }
+    pub fn cluster_name(&self) -> String {
+        self.config().cluster_name()
+    }
+
+    pub fn weight(&self) -> i32 {
+        self.config().weight()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub enum GatewayAddress {
+    Hostname(String),
+    IPAddress(IpAddr),
+    NamedAddress(String),
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub struct Label {
+    label: String,
+    value: String,
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub struct Annotation {
+    label: String,
+    value: String,
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub struct DeployedGatewayStatus {
+    pub id: Uuid,
+    pub name: String,
+    pub namespace: String,
+    pub attached_addresses: Vec<String>,
+}
+
+#[derive(Debug)]
+pub enum BackendGatewayResponse {
+    Processed(Gateway),
+    ProcessedWithContext {
+        gateway: Gateway,
+        kube_gateway: KubeGateway,
+        span: Span,
+        gateway_class_name: String,
+    },
+    Deleted(Vec<RouteStatus>),
+    ProcessingError,
+}
+
+#[derive(Debug, Clone)]
+pub struct RouteToListenersMapping {
+    pub route: Route,
+    pub listeners: Vec<GatewayListeners>,
+}
+
+impl RouteToListenersMapping {
+    pub fn new(route: Route, listeners: Vec<GatewayListeners>) -> Self {
+        Self { route, listeners }
+    }
+}
+
+impl Display for RouteToListenersMapping {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "route {} -> [{}]",
+            self.route.name(),
+            self.listeners
+                .iter()
+                .fold(String::new(), |acc, l| { acc + &format!("  Listener(name: {} port: {}), ", &l.name, l.port) })
+        )
+    }
+}
+
+#[derive(Debug, TypedBuilder)]
+pub struct DeletedContext {
+    pub span: Span,
+    pub response_sender: oneshot::Sender<BackendGatewayResponse>,
+    pub gateway: Gateway,
+}
+
+#[derive(Debug)]
+pub enum BackendGatewayEvent {
+    Changed(ChangedContext),
+    Deleted(DeletedContext),
+}
+
+impl Display for BackendGatewayEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BackendGatewayEvent::Changed(ctx) => write!(
+                f,
+                "GatewayEvent::GatewayChanged
+                {ctx}"
+            ),
+            BackendGatewayEvent::Deleted(ctx) => {
+                write!(
+                    f,
+                    "GatewayEvent::GatewayDeleted
+                gateway {:?}",
+                    ctx.gateway
+                )
+            }
+        }
+    }
+}
+
+pub struct VerifiyItems;
+
+impl VerifiyItems {
+    #[allow(clippy::unwrap_used)]
+    pub fn verify<I, E>(iter: impl Iterator<Item = std::result::Result<I, E>>) -> (Vec<I>, Vec<E>)
+    where
+        I: std::fmt::Debug,
+        E: std::fmt::Debug,
+    {
+        let (good, bad): (Vec<_>, Vec<_>) = iter.partition(std::result::Result::is_ok);
+        let good: Vec<_> = good.into_iter().map(|i| i.unwrap()).collect();
+        let bad: Vec<_> = bad.into_iter().map(|i| i.unwrap_err()).collect();
+        (good, bad)
+    }
+}
+
+#[derive(Clone, Debug)]
+#[repr(u8)]
+pub enum ResolvedRefs {
+    Resolved(Vec<String>),
+    ResolvedWithNotAllowedRoutes(Vec<String>),
+    InvalidAllowedRoutes,
+    InvalidCertificates(Vec<String>),
+    InvalidBackend(Vec<String>),
+}
+
+impl ResolvedRefs {
+    fn discriminant(&self) -> u8 {
+        unsafe { *<*const _>::from(self).cast::<u8>() }
+    }
+}
+
+impl PartialOrd for ResolvedRefs {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for ResolvedRefs {
+    fn eq(&self, other: &Self) -> bool {
+        let self_disc = self.discriminant();
+        let other_disc = other.discriminant();
+        self_disc == other_disc
+    }
+}
+
+impl Ord for ResolvedRefs {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let self_disc = self.discriminant();
+        let other_disc = other.discriminant();
+        self_disc.cmp(&other_disc)
+    }
+}
+
+impl Eq for ResolvedRefs {}
+
+#[derive(TypedBuilder)]
+pub struct RequestContext {
+    pub gateway: Gateway,
+    pub kube_gateway: KubeGateway,
+    pub gateway_class_name: String,
+    pub span: Span,
+}
+
+pub enum ReferenceValidateRequest {
+    New(RequestContext),
+    UpdatedGateways(BTreeSet<ResourceKey>),
+}
+
+pub enum GatewayDeployRequest {
+    Deploy(RequestContext),
+}
+
+pub async fn add_finalizer(sender: &mpsc::Sender<Operation<KubeGateway>>, gateway_id: &ResourceKey, controller_name: &str) {
+    let _ = sender
+        .send(Operation::PatchFinalizer(FinalizerContext {
+            resource_key: gateway_id.clone(),
+            controller_name: controller_name.to_owned(),
+            finalizer_name: controller_name.to_owned(),
+            span: Span::current().clone(),
+        }))
+        .await;
+}
+
+const GATEWAY_CLASS_FINALIZER_NAME: &str = "gateway-exists-finalizer.gateway.networking.k8s.io";
+
+pub async fn add_finalizer_to_gateway_class(sender: &mpsc::Sender<Operation<GatewayClass>>, gateway_class_name: &str, controller_name: &str) {
+    let key = ResourceKey::new(gateway_class_name);
+    let _ = sender
+        .send(Operation::PatchFinalizer(FinalizerContext {
+            resource_key: key,
+            controller_name: controller_name.to_owned(),
+            finalizer_name: GATEWAY_CLASS_FINALIZER_NAME.to_owned(),
+            span: Span::current().clone(),
+        }))
+        .await;
+}

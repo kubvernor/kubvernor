@@ -1,5 +1,4 @@
 mod hostname_match_filter;
-mod references_resolver;
 
 mod route_listener_matcher;
 mod routes_resolver;
@@ -19,7 +18,6 @@ use kube::{
     Api, Client, Resource, ResourceExt,
 };
 use kube_core::{PartialObjectMeta, PartialObjectMetaExt};
-pub use references_resolver::{BackendReferenceResolver, SecretsResolver};
 pub(crate) use route_listener_matcher::RouteListenerMatcher;
 use routes_resolver::RouteResolver;
 pub use routes_resolver::RoutesResolver;
@@ -28,7 +26,7 @@ pub use tls_config_validator::ListenerTlsConfigValidator;
 use tracing::{debug, warn};
 
 use crate::{
-    common::{ResourceKey, Route},
+    common::{BackendReferenceResolver, ResourceKey, Route},
     controllers::ControllerError,
     state::State,
 };

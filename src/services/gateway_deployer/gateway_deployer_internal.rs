@@ -3,21 +3,17 @@ use std::sync::Arc;
 use gateway_api::apis::standard::{
     gatewayclasses::GatewayClass,
     gateways::{Gateway as KubeGateway, GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
-    httproutes::HTTPRoute,
 };
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
 };
-use tokio::sync::{
-    mpsc::{self, Sender},
-    oneshot,
-};
-use tracing::{debug, error, info, warn, Instrument, Span};
+use tokio::sync::mpsc::{self, Sender};
+use tracing::{debug, error, info, Instrument, Span};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{self, BackendGatewayEvent, BackendGatewayResponse, ChangedContext, ListenerCondition, ResolvedRefs, ResourceKey},
+    common::{self, BackendGatewayEvent, ChangedContext, ListenerCondition, ResolvedRefs, ResourceKey},
     controllers::ControllerError,
     services::patchers::Operation,
     state::State,
@@ -63,16 +59,13 @@ type Result<T, E = ControllerError> = std::result::Result<T, E>;
 const CONDITION_MESSAGE: &str = "Gateway updated by controller";
 
 #[derive(TypedBuilder)]
-pub struct GatewayDeployer<'a> {
+pub struct GatewayDeployer {
     sender: Sender<BackendGatewayEvent>,
     gateway: common::Gateway,
     kube_gateway: KubeGateway,
-    state: &'a State,
-    http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
-    controller_name: &'a str,
     gateway_class_name: String,
 }
-impl<'a> GatewayDeployer<'a> {
+impl GatewayDeployer {
     pub async fn deploy_gateway(self) -> Result<()> {
         let mut updated_kube_gateway = self.kube_gateway;
         let mut backend_gateway = self.gateway.clone();
@@ -91,21 +84,6 @@ impl<'a> GatewayDeployer<'a> {
         );
         let _ = self.sender.send(listener_event).await;
         Ok(())
-        //let response = response_receiver.await;
-
-        // if let Ok(BackendGatewayResponse::Processed(effective_gateway)) = response {
-        //     let gateway_event_handler = super::GatewayProcessedHandler {
-        //         effective_gateway,
-        //         gateway: updated_kube_gateway,
-        //         state: self.state,
-        //         route_patcher: self.http_route_patcher.clone(),
-        //         controller_name: self.controller_name.to_owned(),
-        //     };
-        //     gateway_event_handler.deploy_gateway().instrument(Span::current().clone()).await
-        // } else {
-        //     warn!("{response:?} ... Problem {response:?}");
-        //     Err(ControllerError::BackendError)
-        // }
     }
 
     fn adjust_statuses(gateway: &mut common::Gateway) {
