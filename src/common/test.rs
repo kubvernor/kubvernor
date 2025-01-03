@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
-use gateway_api::apis::standard::httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesMatches, HTTPRouteRulesMatchesHeaders, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType};
-
-use crate::common::{EffectiveRoutingRule, ListenerCondition};
+use crate::common::{
+    gateway_api::httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesMatches, HTTPRouteRulesMatchesHeaders, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType},
+    EffectiveRoutingRule, ListenerCondition,
+};
 
 #[test]
 pub fn test_enums() {

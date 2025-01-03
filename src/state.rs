@@ -3,9 +3,10 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use gateway_api::apis::standard::{gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute};
-
-use crate::common::ResourceKey;
+use crate::common::{
+    gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute},
+    ResourceKey,
+};
 
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]
 pub enum StorageError {

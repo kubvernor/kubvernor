@@ -3,7 +3,6 @@ pub mod gateway_processed_handler;
 
 use std::sync::Arc;
 
-use gateway_api::apis::standard::{gatewayclasses::GatewayClass, gateways::Gateway as KubeGateway, httproutes::HTTPRoute};
 use gateway_deployer_internal::{GatewayDeployer, GatewayDeployerServiceInternal};
 pub(crate) use gateway_processed_handler::GatewayProcessedHandler;
 use tokio::sync::oneshot;
@@ -11,7 +10,10 @@ use tracing::{span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{BackendGatewayEvent, BackendGatewayResponse, GatewayDeployRequest, RequestContext},
+    common::{
+        gateway_api::{gatewayclasses::GatewayClass, httproutes::HTTPRoute},
+        BackendGatewayEvent, BackendGatewayResponse, GatewayDeployRequest, KubeGateway, RequestContext,
+    },
     services::patchers::{Operation, PatchContext},
     state::State,
 };

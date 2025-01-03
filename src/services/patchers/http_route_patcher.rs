@@ -1,4 +1,4 @@
-use gateway_api::apis::standard::httproutes::HTTPRoute;
+use crate::common::gateway_api::httproutes::HTTPRoute;
 use kube::{Api, Client};
 use tokio::sync::mpsc;
 use typed_builder::TypedBuilder;

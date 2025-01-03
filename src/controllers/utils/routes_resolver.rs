@@ -1,6 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
 
-use gateway_api::apis::standard::gateways::Gateway;
 use k8s_openapi::api::core::v1::Service;
 use kube::Client;
 use tracing::{debug, warn, Instrument, Span};
@@ -8,7 +7,7 @@ use typed_builder::TypedBuilder;
 
 use super::BackendReferenceResolver;
 use crate::{
-    common::{self, Backend, NotResolvedReason, ResolutionStatus, Route, RouteToListenersMapping, KUBERNETES_NONE},
+    common::{self, gateway_api::gateways::Gateway, Backend, NotResolvedReason, ResolutionStatus, Route, RouteToListenersMapping, KUBERNETES_NONE},
     controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };

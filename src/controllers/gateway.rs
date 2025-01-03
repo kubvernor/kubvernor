@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gateway_api::apis::standard::{gatewayclasses::GatewayClass, gateways::Gateway};
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource,
@@ -21,7 +20,11 @@ use super::{
     ControllerError, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, BackendGatewayEvent, DeletedContext, ReferenceValidateRequest, RequestContext, ResourceKey},
+    common::{
+        self,
+        gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway},
+        BackendGatewayEvent, DeletedContext, ReferenceValidateRequest, RequestContext, ResourceKey,
+    },
     services::patchers::{DeleteContext, Operation},
     state::State,
 };
@@ -227,10 +230,19 @@ impl GatewayResourceHandler<Gateway> {
         let listener_event = BackendGatewayEvent::Deleted(
             DeletedContext::builder()
                 .response_sender(response_sender)
-                .gateway(backend_gateway)
+                .gateway(backend_gateway.clone())
                 .span(Span::current().clone())
                 .build(),
         );
+
+        let _ = self
+            .validate_references_channel_sender
+            .send(ReferenceValidateRequest::DeleteGateway {
+                gateway: backend_gateway,
+                span: Span::current(),
+            })
+            .await;
+
         let _ = sender.send(listener_event).await;
         let _response = response_receiver.await;
         Ok((**kube_gateway).clone())
@@ -247,7 +259,7 @@ impl GatewayResourceHandler<Gateway> {
 
         let _ = self
             .validate_references_channel_sender
-            .send(ReferenceValidateRequest::New(
+            .send(ReferenceValidateRequest::AddGateway(
                 RequestContext::builder()
                     .gateway(backend_gateway)
                     .kube_gateway(kube_gateway)
@@ -265,7 +277,7 @@ impl GatewayResourceHandler<Gateway> {
         let gateway_class_name = &self.gateway_class_name;
         if let Some(status) = &resource.status {
             if let Some(conditions) = &status.conditions {
-                if conditions.iter().any(|c| c.type_ == gateway_api::apis::standard::constants::GatewayConditionType::Ready.to_string()) {
+                if conditions.iter().any(|c| c.type_ == crate::common::gateway_api::constants::GatewayConditionType::Ready.to_string()) {
                     let () = state.save_gateway(gateway_id.clone(), resource).expect("We expect the lock to work");
                     common::add_finalizer_to_gateway_class(&self.gateway_class_patcher, gateway_class_name, controller_name)
                         .instrument(Span::current().clone())

@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt,
     sync::Arc,
 };
 
@@ -19,9 +20,9 @@ pub use secrets_resolver::SecretsResolver;
 pub struct ReferencesResolver<R> {
     client: Client,
     #[builder(default)]
-    backend_references: Arc<tokio::sync::Mutex<BTreeMap<ResourceKey, BTreeSet<ResourceKey>>>>,
+    references: Arc<tokio::sync::Mutex<BTreeMap<ResourceKey, BTreeSet<ResourceKey>>>>,
     #[builder(default)]
-    resolved_backend_references: Arc<tokio::sync::Mutex<BTreeMap<ResourceKey, R>>>,
+    resolved_references: Arc<tokio::sync::Mutex<BTreeMap<ResourceKey, R>>>,
     reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>,
 }
 
@@ -33,16 +34,16 @@ where
     R: Send + Sync + 'static + std::cmp::PartialEq,
     R: Resource<Scope = kube_core::NamespaceResourceScope>,
 {
-    pub async fn add_references<F>(&self, gateway_key: &ResourceKey, references: F)
+    pub async fn add_references_for_gateway<F>(&self, gateway_key: &ResourceKey, references: F)
     where
         F: Fn() -> BTreeSet<ResourceKey>,
     {
-        let backend_reference_keys = references();
+        let reference_keys = references();
 
-        debug!("Adding new backend reference for Gateway {gateway_key} BackendRef {backend_reference_keys:?}");
-        let mut lock = self.backend_references.lock().await;
+        debug!("Adding new references for Gateway {gateway_key} BackendRef {reference_keys:?}");
+        let mut lock = self.references.lock().await;
 
-        for key in backend_reference_keys {
+        for key in reference_keys {
             lock.entry(key.clone())
                 .and_modify(|set| {
                     set.insert(gateway_key.clone());
@@ -55,8 +56,58 @@ where
         }
     }
 
+    pub async fn delete_references_for_gateway<F>(&self, gateway_key: &ResourceKey, references: F)
+    where
+        F: Fn() -> BTreeSet<ResourceKey>,
+    {
+        let reference_keys = references();
+
+        debug!("Deleting references for Gateway {gateway_key} Reference {reference_keys:?}");
+
+        let mut lock = self.references.lock().await;
+        for reference_key in &reference_keys {
+            if let Some(references) = lock.get_mut(reference_key) {
+                if references.remove(gateway_key) && references.is_empty() {
+                    lock.remove(reference_key);
+                    let mut reference_lock = self.resolved_references.lock().await;
+                    reference_lock.remove(reference_key);
+                }
+                debug!("Removed reference {reference_key} for Gateway {gateway_key}");
+            };
+        }
+    }
+
+    pub async fn add_references<'a, I>(&self, reference_keys: I)
+    where
+        I: Iterator<Item = &'a ResourceKey> + fmt::Debug,
+    {
+        debug!("Adding new references BackendRef {reference_keys:?}");
+        let mut lock = self.references.lock().await;
+
+        for key in reference_keys {
+            lock.entry(key.clone()).or_insert_with(BTreeSet::new);
+        }
+    }
+
+    pub async fn delete_references<'a, I>(&self, reference_keys: I) -> BTreeSet<ResourceKey>
+    where
+        I: Iterator<Item = &'a ResourceKey> + fmt::Debug,
+    {
+        debug!("Deleting all references {reference_keys:?}");
+        let mut affected_gateways = BTreeSet::new();
+        let mut lock = self.references.lock().await;
+        let mut resolved_lock = self.resolved_references.lock().await;
+        for reference_key in reference_keys {
+            if let Some(mut gateways) = lock.remove(reference_key) {
+                affected_gateways.append(&mut gateways);
+            }
+            let _ = resolved_lock.remove(reference_key);
+        }
+        affected_gateways
+    }
+
     pub async fn get_reference(&self, resource_key: &ResourceKey) -> Option<R> {
-        let resolved_backend_references = self.resolved_backend_references.lock().await;
+        let resolved_backend_references = self.resolved_references.lock().await;
         resolved_backend_references.get(resource_key).cloned()
     }
 
@@ -67,7 +118,7 @@ where
         loop {
             interval.tick().await;
             let secrets = {
-                let secrets = self.backend_references.lock().await;
+                let secrets = self.references.lock().await;
                 secrets.clone()
             };
 
@@ -82,7 +133,7 @@ where
                         if let Ok(service) = api.get(&key.name).await {
                             let mut update_gateway = false;
                             {
-                                let mut resolved_backend_references = myself.resolved_backend_references.lock().await;
+                                let mut resolved_backend_references = myself.resolved_references.lock().await;
                                 resolved_backend_references
                                     .entry(key.clone())
                                     .and_modify(|f| {
@@ -102,7 +153,7 @@ where
                             }
                         } else {
                             let resolved_secret = {
-                                let mut resolved_secrets = myself.resolved_backend_references.lock().await;
+                                let mut resolved_secrets = myself.resolved_references.lock().await;
                                 resolved_secrets.remove(&key).is_some()
                             };
 
@@ -118,9 +169,12 @@ where
     }
 
     async fn update_gateways(&self, key: &ResourceKey) {
-        let secrets = self.backend_references.lock().await;
+        let secrets = self.references.lock().await;
         let gateways = secrets.get(key).cloned().unwrap_or_default();
         debug!("Refernce changed... updating gateways {key} {gateways:#?}");
-        let _res = self.reference_validate_channel_sender.send(ReferenceValidateRequest::UpdatedGateways(gateways)).await;
+        let _res = self
+            .reference_validate_channel_sender
+            .send(ReferenceValidateRequest::UpdatedGateways { reference: key.clone(), gateways })
+            .await;
     }
 }

@@ -1,10 +1,12 @@
 use std::{cmp, collections::BTreeSet, fmt::Display};
 
-use gateway_api::apis::standard::gateways::{self, GatewayListeners};
 use thiserror::Error;
 
 use super::{Certificate, EffectiveRoutingRule, NotResolvedReason, ResolutionStatus, ResolvedRefs, ResourceKey, Route};
-use crate::controllers::ControllerError;
+use crate::{
+    common::gateway_api::gateways::{self, GatewayListeners},
+    controllers::ControllerError,
+};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Hash, Eq)]
 pub enum ProtocolType {
@@ -320,60 +322,60 @@ impl ListenerCondition {
         &self,
     ) -> (
         &'static str,
-        gateway_api::apis::standard::constants::ListenerConditionType,
-        gateway_api::apis::standard::constants::ListenerConditionReason,
+        crate::common::gateway_api::constants::ListenerConditionType,
+        crate::common::gateway_api::constants::ListenerConditionReason,
     ) {
         match self {
             ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes | ResolvedRefs::ResolvedWithNotAllowedRoutes(_)) => (
                 "False",
-                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
-                gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds,
+                crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,
+                crate::common::gateway_api::constants::ListenerConditionReason::InvalidRouteKinds,
             ),
 
             ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidBackend(_)) => (
                 "True",
-                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
-                gateway_api::apis::standard::constants::ListenerConditionReason::InvalidRouteKinds,
+                crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,
+                crate::common::gateway_api::constants::ListenerConditionReason::InvalidRouteKinds,
             ),
 
             ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(_)) => (
                 "True",
-                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
-                gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
+                crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,
+                crate::common::gateway_api::constants::ListenerConditionReason::ResolvedRefs,
             ),
 
             ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(_)) => (
                 "False",
-                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
-                gateway_api::apis::standard::constants::ListenerConditionReason::InvalidCertificateRef,
+                crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,
+                crate::common::gateway_api::constants::ListenerConditionReason::InvalidCertificateRef,
             ),
 
             ListenerCondition::UnresolvedRouteRefs => (
                 "False",
-                gateway_api::apis::standard::constants::ListenerConditionType::ResolvedRefs,
-                gateway_api::apis::standard::constants::ListenerConditionReason::ResolvedRefs,
+                crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,
+                crate::common::gateway_api::constants::ListenerConditionReason::ResolvedRefs,
             ),
 
             ListenerCondition::Accepted => (
                 "True",
-                gateway_api::apis::standard::constants::ListenerConditionType::Accepted,
-                gateway_api::apis::standard::constants::ListenerConditionReason::Accepted,
+                crate::common::gateway_api::constants::ListenerConditionType::Accepted,
+                crate::common::gateway_api::constants::ListenerConditionReason::Accepted,
             ),
             ListenerCondition::NotAccepted => (
                 "False",
-                gateway_api::apis::standard::constants::ListenerConditionType::Accepted,
-                gateway_api::apis::standard::constants::ListenerConditionReason::Accepted,
+                crate::common::gateway_api::constants::ListenerConditionType::Accepted,
+                crate::common::gateway_api::constants::ListenerConditionReason::Accepted,
             ),
             ListenerCondition::Programmed => (
                 "True",
-                gateway_api::apis::standard::constants::ListenerConditionType::Programmed,
-                gateway_api::apis::standard::constants::ListenerConditionReason::Programmed,
+                crate::common::gateway_api::constants::ListenerConditionType::Programmed,
+                crate::common::gateway_api::constants::ListenerConditionReason::Programmed,
             ),
 
             ListenerCondition::NotProgrammed => (
                 "False",
-                gateway_api::apis::standard::constants::ListenerConditionType::Programmed,
-                gateway_api::apis::standard::constants::ListenerConditionReason::Programmed,
+                crate::common::gateway_api::constants::ListenerConditionType::Programmed,
+                crate::common::gateway_api::constants::ListenerConditionReason::Programmed,
             ),
         }
     }

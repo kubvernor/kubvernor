@@ -4,13 +4,13 @@ use std::{
     fmt::Display,
 };
 
-use gateway_api::apis::standard::gateways::Gateway as KubeGateway;
 use thiserror::Error;
 use tracing::Span;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use super::{EffectiveRoutingRule, GatewayAddress, Listener, ResourceKey, Route, VerifiyItems};
+use crate::common::KubeGateway;
 
 #[derive(Clone, Debug)]
 pub struct Gateway {

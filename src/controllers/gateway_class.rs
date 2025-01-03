@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gateway_api::apis::standard::gatewayclasses::{GatewayClass, GatewayClassStatus};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
@@ -21,7 +20,10 @@ use super::{
     ControllerError, RECONCILE_ERROR_WAIT,
 };
 use crate::{
-    common::ResourceKey,
+    common::{
+        gateway_api::gatewayclasses::{GatewayClass, GatewayClassStatus},
+        ResourceKey,
+    },
     controllers::{handlers::ResourceHandler, RECONCILE_LONG_WAIT},
     services::patchers::{DeleteContext, Operation, PatchContext},
     state::State,
@@ -153,7 +155,23 @@ impl GatewayClassResourceHandler<GatewayClass> {
         };
 
         conditions.push(new_condition);
-        let new_status = GatewayClassStatus { conditions: Some(conditions) };
+
+        cfg_if::cfg_if! {
+            if #[cfg(feature="standard")] {
+                let new_status = GatewayClassStatus {
+                    conditions: Some(conditions),
+                };
+            } else if #[cfg(feature = "experimental")] {
+                let new_status = GatewayClassStatus {
+                    conditions: Some(conditions),
+                    supported_features: None,
+                };
+
+            } else {
+
+            }
+        }
+
         new_gateway_class.status = Some(new_status);
         new_gateway_class.metadata.managed_fields = None;
         new_gateway_class

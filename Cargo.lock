@@ -1347,6 +1347,7 @@ name = "kubvernor"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cfg-if",
  "clap",
  "clap_derive",
  "eater_domainmatcher",

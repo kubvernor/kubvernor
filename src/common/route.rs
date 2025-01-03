@@ -1,15 +1,17 @@
 use std::{cmp, net::IpAddr};
 
-use gateway_api::apis::standard::httproutes::{
-    HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesFilters, HTTPRouteRulesFiltersRequestHeaderModifierAdd, HTTPRouteRulesFiltersRequestHeaderModifierSet,
-    HTTPRouteRulesFiltersRequestRedirect, HTTPRouteRulesFiltersType, HTTPRouteRulesMatches,
-};
 use kube::ResourceExt;
 use thiserror::Error;
 use tracing::debug;
 
 use super::{Backend, BackendServiceConfig, ResourceKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME};
-use crate::controllers::ControllerError;
+use crate::{
+    common::gateway_api::httproutes::{
+        HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesFilters, HTTPRouteRulesFiltersRequestHeaderModifierAdd, HTTPRouteRulesFiltersRequestHeaderModifierSet,
+        HTTPRouteRulesFiltersRequestRedirect, HTTPRouteRulesFiltersType, HTTPRouteRulesMatches,
+    },
+    controllers::ControllerError,
+};
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum RouteStatus {

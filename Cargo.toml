@@ -32,10 +32,15 @@ tracing-opentelemetry = "0.28.0"
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
 opentelemetry = "0.27"
 opentelemetry-otlp = "0.27.0"
+cfg-if = "1.0"
 
 [dev-dependencies]
 serde_yaml = "0.9"
 
+[features]
+default = ["standard"]
+standard = []
+experimental = []
 
 [profile.release]
 codegen-units = 1

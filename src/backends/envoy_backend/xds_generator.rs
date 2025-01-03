@@ -327,8 +327,8 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         path: er.route_matcher.path.clone().map(|matcher| TeraPath {
                             path: matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v }),
                             match_type: matcher.r#type.map_or(String::new(), |f| match f {
-                                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
-                                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
+                                crate::common::gateway_api::httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
+                                crate::common::gateway_api::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
                                     if let Some(val) = matcher.value {
                                         if val == "/" {
                                             "prefix".to_owned()
@@ -339,7 +339,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                         "prefix".to_owned()
                                     }
                                 }
-                                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
+                                crate::common::gateway_api::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
                             }),
                         }),
                         headers: er.route_matcher.headers.clone().map(|headers| {

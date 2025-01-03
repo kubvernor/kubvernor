@@ -5,13 +5,28 @@ mod resource_key;
 mod route;
 #[cfg(test)]
 mod test;
-use std::{collections::BTreeSet, fmt::Display, net::IpAddr};
 
 pub use gateway::{ChangedContext, Gateway};
-use gateway_api::apis::standard::{
-    gatewayclasses::GatewayClass,
-    gateways::{Gateway as KubeGateway, GatewayListeners},
-};
+use std::{collections::BTreeSet, fmt::Display, net::IpAddr};
+
+cfg_if::cfg_if! {
+    if #[cfg(feature="standard")] {
+        pub use gateway_api::{
+            apis::standard as gateway_api,
+            gatewayclasses::GatewayClass,
+            gateways::{Gateway as KubeGateway, GatewayListeners},
+        };
+    } else if #[cfg(feature = "experimental")] {
+        pub use gateway_api::{
+            apis::experimental as gateway_api,
+            gatewayclasses::GatewayClass,
+            gateways::{Gateway as KubeGateway, GatewayListeners},
+        };
+    } else {
+
+    }
+}
+
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, SecretsResolver};
 pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE};
@@ -264,8 +279,11 @@ pub struct RequestContext {
 }
 
 pub enum ReferenceValidateRequest {
-    New(RequestContext),
-    UpdatedGateways(BTreeSet<ResourceKey>),
+    AddGateway(RequestContext),
+    AddRoute { references: BTreeSet<ResourceKey>, span: Span },
+    UpdatedGateways { reference: ResourceKey, gateways: BTreeSet<ResourceKey> },
+    DeleteRoute { references: BTreeSet<ResourceKey>, span: Span },
+    DeleteGateway { gateway: Gateway, span: Span },
 }
 
 pub enum GatewayDeployRequest {

@@ -19,8 +19,11 @@ use kube::{
 use kube_core::ObjectMeta;
 use lazy_static::lazy_static;
 use tera::Tera;
-use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::{debug, info, span, warn, Instrument, Level};
+use tokio::{
+    sync::mpsc::{Receiver, Sender},
+    time,
+};
+use tracing::{debug, info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -55,16 +58,16 @@ impl EnvoyDeployerChannelHandlerService {
                     Some(event) = self.backend_deploy_request_channel_receiver.recv() => {
                         info!("Backend got event {event:#}");
                         match event{
-                            BackendGatewayEvent::Changed(ChangedContext{ mut gateway, kube_gateway, span: parent_span, gateway_class_name }) => {
-                                let span = span!(parent: &parent_span, Level::INFO, "EnvoyDeployerService", event="GatewayChanged", id = %gateway.key());
+                            BackendGatewayEvent::Changed(ctx) => {
+                                let gateway = &ctx.gateway;
+                                let span = span!(parent: &ctx.span, Level::INFO, "EnvoyDeployerService", event="GatewayChanged", id = %gateway.key());
                                 let _entered = span.enter();
-                                let maybe_service = self.deploy_envoy(&gateway).instrument(span.clone()).await;
+                                let maybe_service = self.deploy_envoy(gateway).instrument(span.clone()).await;
                                 if let Ok(service) = maybe_service{
-                                    Self::update_addresses(&mut gateway, &service);
-                                    let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::ProcessedWithContext{gateway: gateway.clone(), kube_gateway, span: parent_span, gateway_class_name});
+                                    self.update_address_with_polling(&service, ctx, &span).await;
                                 }else{
                                     warn!("Problem {maybe_service:?}");
-                                    let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(gateway.clone()));
+                                    let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(gateway.clone())).await;
                                 }
                             }
 
@@ -378,13 +381,85 @@ impl EnvoyDeployerChannelHandlerService {
         }
     }
 
-    fn update_addresses(gateway: &mut Gateway, service: &Service) {
+    fn update_addresses(gateway: &mut Gateway, service: &Service) -> bool {
         if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
             gateway.addresses_mut().append(
                 &mut attached_addresses
                     .into_iter()
                     .filter_map(|a| if let Ok(addr) = a.parse() { Some(GatewayAddress::IPAddress(addr)) } else { None })
                     .collect(),
+            );
+            true
+        } else {
+            false
+        }
+    }
+
+    async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext, parent_span: &Span) {
+        if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
+            debug!("Got address address {attached_addresses:?}");
+            let ChangedContext {
+                span,
+                mut gateway,
+                kube_gateway,
+                gateway_class_name,
+            } = ctx;
+            gateway.addresses_mut().append(
+                &mut attached_addresses
+                    .into_iter()
+                    .filter_map(|a| if let Ok(addr) = a.parse() { Some(GatewayAddress::IPAddress(addr)) } else { None })
+                    .collect(),
+            );
+            let _res = self
+                .backend_response_channel_sender
+                .send(BackendGatewayResponse::ProcessedWithContext {
+                    gateway: gateway.clone(),
+                    kube_gateway,
+                    span,
+                    gateway_class_name,
+                })
+                .await;
+        } else {
+            warn!("No address");
+            let client = self.client.clone();
+            let resource_key = ResourceKey::from(&service.metadata);
+
+            let backend_response_channel_sender = self.backend_response_channel_sender.clone();
+            let span = span!(parent: parent_span, Level::INFO, "ServiceResolverTask");
+            let _handle = tokio::spawn(
+                async move {
+                    let api: Api<Service> = Api::namespaced(client, &resource_key.namespace);
+                    let ChangedContext {
+                        span,
+                        mut gateway,
+                        kube_gateway,
+                        gateway_class_name,
+                    } = ctx;
+                    let mut interval = time::interval(time::Duration::from_secs(1));
+                    loop {
+                        interval.tick().await;
+                        debug!("Resolving address for Service {}", resource_key);
+                        let maybe_service = api.get(&resource_key.name).await;
+                        if let Ok(service) = maybe_service {
+                            if Self::update_addresses(&mut gateway, &service) {
+                                let _res = backend_response_channel_sender
+                                    .send(BackendGatewayResponse::ProcessedWithContext {
+                                        gateway: gateway.clone(),
+                                        kube_gateway: kube_gateway.clone(),
+                                        span: span.clone(),
+                                        gateway_class_name: gateway_class_name.clone(),
+                                    })
+                                    .await;
+                                break;
+                            }
+                        } else {
+                            warn!("Problem {maybe_service:?}");
+                            let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(gateway.clone())).await;
+                        }
+                    }
+                    debug!("Task completed for gateway {} service {}", gateway.key(), resource_key);
+                }
+                .instrument(span),
             );
         }
     }

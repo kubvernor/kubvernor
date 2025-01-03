@@ -1,12 +1,13 @@
 use std::fmt::Display;
 
-use gateway_api::apis::standard::{
+use kube::{Resource, ResourceExt};
+use kube_core::ObjectMeta;
+
+use crate::common::gateway_api::{
     gatewayclasses::GatewayClass,
     gateways,
     httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRulesBackendRefs},
 };
-use kube::{Resource, ResourceExt};
-use kube_core::ObjectMeta;
 
 pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";
 pub const DEFAULT_NAMESPACE_NAME: &str = "default";

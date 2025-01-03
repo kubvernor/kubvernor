@@ -14,7 +14,7 @@ pub struct SecretsResolver {
 }
 
 impl SecretsResolver {
-    pub async fn add_secretes(&self, gateway: &Gateway) {
+    pub async fn add_secretes_by_gateway(&self, gateway: &Gateway) {
         let gateway_key = gateway.key();
 
         let references = || {
@@ -30,7 +30,25 @@ impl SecretsResolver {
             }
             keys
         };
-        self.reference_resolver.add_references(gateway_key, references).await;
+        self.reference_resolver.add_references_for_gateway(gateway_key, references).await;
+    }
+
+    pub async fn delete_secrets_by_gateway(&self, gateway: &Gateway) {
+        let gateway_key = gateway.key();
+        let references = || {
+            let mut keys = BTreeSet::new();
+            for listener in gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
+                let listener_data = listener.data();
+                if let Some(TlsType::Terminate(certificates)) = &listener_data.config.tls_type {
+                    for certificate in certificates {
+                        let certificate_key = certificate.resouce_key();
+                        keys.insert(certificate_key.clone());
+                    }
+                }
+            }
+            keys
+        };
+        self.reference_resolver.delete_references_for_gateway(gateway_key, references).await;
     }
 
     pub async fn get_reference(&self, resource_key: &ResourceKey) -> Option<Secret> {

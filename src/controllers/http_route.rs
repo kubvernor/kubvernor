@@ -1,11 +1,7 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gateway_api::apis::standard::{
-    gateways::Gateway,
-    httproutes::{self, HTTPRoute, HTTPRouteParentRefs, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
-};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
@@ -25,7 +21,14 @@ use super::{
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, ReferenceValidateRequest, RequestContext, ResourceKey, Route, RouteRefKey, VerifiyItems},
+    common::{
+        self,
+        gateway_api::{
+            gateways::Gateway,
+            httproutes::{self, HTTPRoute, HTTPRouteParentRefs, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
+        },
+        Backend, ReferenceValidateRequest, RequestContext, ResourceKey, Route, RouteRefKey, VerifiyItems,
+    },
     services::patchers::{DeleteContext, FinalizerContext, Operation},
     state::State,
 };
@@ -177,6 +180,9 @@ impl HTTPRouteHandler<HTTPRoute> {
             return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
         };
 
+        let mut http_route = (**resource).clone();
+        let route = Route::try_from(&http_route)?;
+
         let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
 
         let parent_gateway_refs = parent_gateway_refs_keys
@@ -190,9 +196,18 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let matching_gateways = RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
         let unknown_gateway_status = self.generate_status_for_unknown_gateways(&unknown_gateways, resource.metadata.generation);
-        let mut http_route = (**resource).clone();
+
         http_route.status = Some(HTTPRouteStatus { parents: unknown_gateway_status });
         let () = state.save_http_route(route_key.clone(), &Arc::new(http_route)).expect("We expect the lock to work");
+
+        let _ = self.add_finalizer(resource).await?;
+
+        let references = Self::extract_references(&route);
+
+        let _ = self
+            .validate_references_channel_sender
+            .send(ReferenceValidateRequest::AddRoute { references, span: Span::current() })
+            .await;
 
         for kube_gateway in matching_gateways {
             let gateway_class_name = {
@@ -217,7 +232,7 @@ impl HTTPRouteHandler<HTTPRoute> {
             let kube_gateway = (*kube_gateway).clone();
             let _ = self
                 .validate_references_channel_sender
-                .send(ReferenceValidateRequest::New(
+                .send(ReferenceValidateRequest::AddGateway(
                     RequestContext::builder()
                         .gateway(common::Gateway::try_from(&kube_gateway).expect("We expect the lock to work"))
                         .kube_gateway(kube_gateway)
@@ -232,7 +247,7 @@ impl HTTPRouteHandler<HTTPRoute> {
     }
 
     async fn on_deleted(&self, route_key: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
-        let _route = Route::try_from(&**resource)?;
+        let _ = Route::try_from(&**resource)?;
 
         let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
             return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
@@ -240,64 +255,32 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
 
-        let parent_gateway_refs = parent_gateway_refs_keys
-            .clone()
-            .map(|(parent_ref, key)| (parent_ref, state.get_gateway(key.as_ref()).expect("We expect the lock to work")))
-            .map(|i| if i.1.is_some() { Ok(i) } else { Err(i) });
-
-        let (resolved_gateways, _unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
         debug!("Parent keys = {parent_gateway_refs_keys:?}");
         parent_gateway_refs_keys.for_each(|(_ref, gateway_key)| state.detach_http_route_from_gateway(gateway_key.as_ref(), &route_key).expect("We expect the lock to work"));
-        let _ = state.delete_http_route(&route_key).expect("We expect the lock to work");
 
-        let matching_gateways = RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
+        let Some(route) = state.delete_http_route(&route_key).expect("We expect the lock to work") else {
+            return Err(ControllerError::InvalidPayload("Route doesn't exist".to_owned()));
+        };
+        let route = Route::try_from(&*route)?;
 
         let http_route = (**resource).clone();
         let resource_key = route_key;
         let _res = self
             .http_route_patcher
             .send(Operation::Delete(DeleteContext {
-                resource_key,
+                resource_key: resource_key.clone(),
                 resource: http_route,
                 controller_name: self.controller_name.clone(),
                 span: Span::current().clone(),
             }))
             .await;
 
-        for kube_gateway in matching_gateways {
-            let gateway_class_name = {
-                let gateway_class_name = &kube_gateway.spec.gateway_class_name;
+        let references = Self::extract_references(&route);
 
-                if !state
-                    .get_gateway_classes()
-                    .expect("We expect the lock to work")
-                    .into_iter()
-                    .any(|gc| gc.metadata.name == Some(gateway_class_name.to_string()))
-                {
-                    warn!(
-                        "reconcile_gateway: {} {:?} Unknown gateway class name {gateway_class_name}",
-                        &self.controller_name,
-                        kube_gateway.meta().name
-                    );
-                    return Err(ControllerError::UnknownGatewayClass(gateway_class_name.clone()));
-                }
-                gateway_class_name.clone()
-            };
-
-            let kube_gateway = (*kube_gateway).clone();
-
-            let _ = self
-                .validate_references_channel_sender
-                .send(ReferenceValidateRequest::New(
-                    RequestContext::builder()
-                        .gateway(common::Gateway::try_from(&kube_gateway).expect("We expect the lock to work"))
-                        .kube_gateway(kube_gateway)
-                        .gateway_class_name(gateway_class_name)
-                        .span(Span::current())
-                        .build(),
-                ))
-                .await;
-        }
+        let _ = self
+            .validate_references_channel_sender
+            .send(ReferenceValidateRequest::DeleteRoute { references, span: Span::current() })
+            .await;
 
         Ok(Action::await_change())
     }
@@ -328,34 +311,41 @@ impl HTTPRouteHandler<HTTPRoute> {
     }
 
     async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
-        let controller_name = &self.controller_name;
         let () = state.save_http_route(id, resource).expect("We expect the lock to work");
-        if let Some(status) = &resource.status {
-            let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
-                finalizers.iter().any(|f| f == controller_name)
-            } else {
-                false
-            };
-
-            if !status.parents.is_empty() && !has_finalizer {
-                let _res = self.add_finalizer(controller_name).await;
-                return Ok(Action::requeue(RECONCILE_LONG_WAIT));
-            }
-        }
-        Err(ControllerError::ResourceHasWrongStatus)
+        self.add_finalizer(resource).await
     }
 
-    async fn add_finalizer(&self, controller_name: &str) -> Result<Action> {
-        let _res = self
-            .http_route_patcher
-            .send(Operation::PatchFinalizer(FinalizerContext {
-                resource_key: self.resource_key.clone(),
-                controller_name: controller_name.to_owned(),
-                finalizer_name: controller_name.to_owned(),
-                span: Span::current().clone(),
-            }))
-            .await;
+    async fn add_finalizer(&self, resource: &Arc<HTTPRoute>) -> Result<Action> {
+        let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
+            finalizers.iter().any(|f| *f == self.controller_name)
+        } else {
+            false
+        };
 
+        if !has_finalizer {
+            let _res = self
+                .http_route_patcher
+                .send(Operation::PatchFinalizer(FinalizerContext {
+                    resource_key: self.resource_key.clone(),
+                    controller_name: self.controller_name.clone(),
+                    finalizer_name: self.controller_name.clone(),
+                    span: Span::current().clone(),
+                }))
+                .await;
+        };
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
+    }
+
+    fn extract_references(route: &Route) -> BTreeSet<ResourceKey> {
+        let route_config = route.config();
+        let mut backend_reference_keys = BTreeSet::new();
+        for rule in &route_config.routing_rules {
+            for backend in &rule.backends {
+                if let Backend::Maybe(backend_service_config) = backend {
+                    backend_reference_keys.insert(backend_service_config.resource_key.clone());
+                };
+            }
+        }
+        backend_reference_keys
     }
 }

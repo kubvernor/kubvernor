@@ -1,4 +1,4 @@
-use gateway_api::apis::standard::gateways::Gateway;
+use crate::common::gateway_api::gateways::Gateway;
 use kube::{Api, Client};
 use tokio::sync::mpsc;
 use typed_builder::TypedBuilder;
