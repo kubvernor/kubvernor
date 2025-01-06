@@ -125,11 +125,11 @@ func GetFeatureSupportLevel(feature features.FeatureName) SupportLevel {
 
 	return supportLevel
 }
-func TestGatewayAPIConformance(t *testing.T) {
+func TestKubvernorGatewayAPIConformance(t *testing.T) {
 	flag.Parse()
 	opts := conformance.DefaultOptions(t)
 	opts.TimeoutConfig = config.TimeoutConfig{
-		TestIsolation:                      120 * time.Second,
+		TestIsolation:                      1 * time.Second,
 		CreateTimeout:                      120 * time.Second,
 		DeleteTimeout:                      10 * time.Second,
 		GetTimeout:                         10 * time.Second,

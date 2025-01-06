@@ -1,9 +1,9 @@
-use crate::common::gateway_api::httproutes::HTTPRoute;
 use kube::{Api, Client};
 use tokio::sync::mpsc;
 use typed_builder::TypedBuilder;
 
 use super::patcher::{Operation, Patcher};
+use crate::common::gateway_api::httproutes::HTTPRoute;
 
 #[derive(TypedBuilder)]
 pub struct HttpRoutePatcherService {

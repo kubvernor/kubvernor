@@ -161,8 +161,8 @@ impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
         self.on_new_or_changed(id, resource, state).await
     }
 
-    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
-        self.on_status_changed(id, resource, state).await
+    async fn on_status_changed(&self, _id: ResourceKey, _resource: &Arc<HTTPRoute>, _state: &State) -> Result<Action> {
+        Ok(Action::await_change())
     }
 
     async fn on_spec_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
@@ -308,11 +308,6 @@ impl HTTPRouteHandler<HTTPRoute> {
                 },
             })
             .collect()
-    }
-
-    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
-        let () = state.save_http_route(id, resource).expect("We expect the lock to work");
-        self.add_finalizer(resource).await
     }
 
     async fn add_finalizer(&self, resource: &Arc<HTTPRoute>) -> Result<Action> {

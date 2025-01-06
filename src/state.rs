@@ -59,19 +59,6 @@ impl State {
         Ok(lock.get(id).cloned())
     }
 
-    pub fn maybe_save_http_route(&self, id: ResourceKey, route: &Arc<HTTPRoute>) -> Result<(), StorageError> {
-        let mut lock = self.http_routes.lock().map_err(|_| StorageError::LockingError)?;
-        if lock.contains_key(&id) {
-            lock.insert(id, Arc::clone(route));
-        };
-        Ok(())
-    }
-    pub fn save_http_route(&self, id: ResourceKey, route: &Arc<HTTPRoute>) -> Result<(), StorageError> {
-        let mut lock = self.http_routes.lock().map_err(|_| StorageError::LockingError)?;
-        lock.insert(id, Arc::clone(route));
-        Ok(())
-    }
-
     pub fn attach_http_route_to_gateway(&self, gateway_id: ResourceKey, route_id: ResourceKey) -> Result<(), StorageError> {
         let mut gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
         if let Some(routes) = gateways_with_routes.get_mut(&gateway_id) {
@@ -121,6 +108,19 @@ impl State {
         Ok(lock.remove(id))
     }
 
+    pub fn maybe_save_http_route(&self, id: ResourceKey, route: &Arc<HTTPRoute>) -> Result<(), StorageError> {
+        let mut lock = self.http_routes.lock().map_err(|_| StorageError::LockingError)?;
+        if lock.contains_key(&id) {
+            lock.insert(id, Arc::clone(route));
+        };
+        Ok(())
+    }
+    pub fn save_http_route(&self, id: ResourceKey, route: &Arc<HTTPRoute>) -> Result<(), StorageError> {
+        let mut lock = self.http_routes.lock().map_err(|_| StorageError::LockingError)?;
+        lock.insert(id, Arc::clone(route));
+        Ok(())
+    }
+
     pub fn delete_http_route(&self, id: &ResourceKey) -> Result<Option<Arc<HTTPRoute>>, StorageError> {
         let mut lock = self.http_routes.lock().map_err(|_| StorageError::LockingError)?;
         Ok(lock.remove(id))
@@ -134,10 +134,6 @@ impl State {
     pub fn get_gateways(&self) -> Result<Vec<Arc<Gateway>>, StorageError> {
         let lock = self.gateways.lock().map_err(|_| StorageError::LockingError)?;
         Ok(lock.values().cloned().collect())
-    }
-
-    pub fn http_routes(&self) -> Result<MutexGuard<'_, HashMap<ResourceKey, Arc<Gateway>>>, StorageError> {
-        self.gateways.lock().map_err(|_| StorageError::LockingError)
     }
 
     pub fn gateways_with_routes(&self) -> Result<MutexGuard<'_, HashMap<ResourceKey, BTreeSet<ResourceKey>>>, StorageError> {

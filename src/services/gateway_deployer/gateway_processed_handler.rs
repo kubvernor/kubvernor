@@ -485,11 +485,14 @@ impl<'a> GatewayProcessedHandler<'a> {
                 new_conditions.iter_mut().for_each(|f| f.observed_generation = kube_route.meta().generation);
 
                 let mut status = if let Some(status) = kube_route.status { status } else { HTTPRouteStatus { parents: vec![] } };
+
                 status.parents.retain(|p| {
+                    let geteway_name = gateway_id.name.clone();
+                    let geteway_namespace = gateway_id.namespace.clone();
                     if p.parent_ref.namespace.is_some() {
-                        !(p.controller_name == self.controller_name && p.parent_ref.namespace == self.gateway.meta().namespace && self.gateway.meta().name == Some(p.parent_ref.name.clone()))
+                        !(p.controller_name == self.controller_name && p.parent_ref.namespace == Some(geteway_namespace) && Some(geteway_name) == Some(p.parent_ref.name.clone()))
                     } else {
-                        !(p.controller_name == self.controller_name && Some("default".to_owned()) == self.gateway.meta().namespace && self.gateway.meta().name == Some(p.parent_ref.name.clone()))
+                        !(p.controller_name == self.controller_name && Some(geteway_name) == Some(p.parent_ref.name.clone()))
                     }
                 });
 

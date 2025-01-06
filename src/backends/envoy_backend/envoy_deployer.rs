@@ -420,7 +420,6 @@ impl EnvoyDeployerChannelHandlerService {
                 })
                 .await;
         } else {
-            warn!("No address");
             let client = self.client.clone();
             let resource_key = ResourceKey::from(&service.metadata);
 

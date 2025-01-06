@@ -294,6 +294,11 @@ impl GatewayResourceHandler<Gateway> {
                     }
 
                     return Ok(Action::requeue(RECONCILE_LONG_WAIT));
+                } else if conditions.iter().any(|c| {
+                    c.type_ == crate::common::gateway_api::constants::GatewayConditionType::Programmed.to_string()
+                        && c.status == crate::common::gateway_api::constants::GatewayConditionReason::Pending.to_string()
+                }) {
+                    return self.on_new_or_changed(gateway_id, resource, state).await;
                 }
             }
         }

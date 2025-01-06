@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::HostnameMatchFilter;
 use crate::{
@@ -156,13 +156,12 @@ impl<'a> RouteListenerMatcher<'a> {
                     match selector_type {
                         GatewayListenersAllowedRoutesNamespacesFrom::All => {}
                         GatewayListenersAllowedRoutesNamespacesFrom::Selector => {
-                            // namespace selector
-                            warn!("Selector {selector:?}");
+                            debug!("Selector {selector:?}");
                             is_allowed = false;
                             if let Some(selector) = selector {
                                 if let Some(selector_labels) = &selector.match_labels {
                                     let resolved_namespaces = self.resolved_namespaces.get(&route_key.namespace);
-                                    warn!("Selector labales {resolved_namespaces:#?}");
+                                    debug!("Selector labels {resolved_namespaces:#?}");
                                     if let Some(labels) = resolved_namespaces {
                                         for (selector_k, selector_v) in selector_labels {
                                             if labels.get(selector_k) == Some(selector_v) {

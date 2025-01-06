@@ -6,8 +6,9 @@ mod route;
 #[cfg(test)]
 mod test;
 
-pub use gateway::{ChangedContext, Gateway};
 use std::{collections::BTreeSet, fmt::Display, net::IpAddr};
+
+pub use gateway::{ChangedContext, Gateway};
 
 cfg_if::cfg_if! {
     if #[cfg(feature="standard")] {

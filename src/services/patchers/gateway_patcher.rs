@@ -1,9 +1,9 @@
-use crate::common::gateway_api::gateways::Gateway;
 use kube::{Api, Client};
 use tokio::sync::mpsc;
 use typed_builder::TypedBuilder;
 
 use super::patcher::{Operation, Patcher};
+use crate::common::gateway_api::gateways::Gateway;
 
 #[derive(TypedBuilder)]
 pub struct GatewayPatcherService {

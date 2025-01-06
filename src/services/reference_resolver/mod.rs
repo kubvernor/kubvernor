@@ -1,5 +1,5 @@
 use kube::Client;
-use tracing::{info, span, warn, Instrument, Level, Span};
+use tracing::{debug, info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -93,7 +93,7 @@ impl ReferenceResolverHandler {
             ReferenceValidateRequest::AddRoute { references, span: parent_span } => {
                 let span = span!(parent: &parent_span, Level::INFO, "ReferenceResolverService", action = "AddRouteReferences");
                 let _entered = span.enter();
-                warn!("Adding route references {references:?}");
+                debug!("Adding route references {references:?}");
                 self.backend_references_resolver.add_references(references.iter()).await;
             }
 
