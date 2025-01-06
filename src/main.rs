@@ -1,30 +1,78 @@
-use clap::Parser;
+pub(crate) use clap::Parser;
 use kubvernor::{start, Args};
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer, Registry};
+pub enum Guard {
+    Appender(WorkerGuard),
+}
 
-fn init_logging() -> WorkerGuard {
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+pub struct CommandArgs {
+    #[arg(short, long)]
+    controller_name: String,
+    #[arg(short, long)]
+    with_opentelemetry: Option<bool>,
+}
+
+impl From<CommandArgs> for Args {
+    fn from(value: CommandArgs) -> Self {
+        Args::builder().controller_name(value.controller_name).build()
+    }
+}
+
+fn init_logging(args: &CommandArgs) -> Guard {
+    let registry = Registry::default();
+    let controller_name = args.controller_name.clone();
     let file_appender = tracing_appender::rolling::never(".", "kubvernor.log");
     let (non_blocking_appender, guard) = tracing_appender::non_blocking(file_appender);
-    let filter1 = tracing_subscriber::EnvFilter::new(std::env::var("RUST_FILE_LOG").unwrap_or_else(|_| "debug".to_owned()));
-    let filter2 = tracing_subscriber::EnvFilter::new(std::env::var("RUST_LOG").unwrap_or_else(|_| "debug".to_owned()));
+    let file_filter = tracing_subscriber::EnvFilter::new(std::env::var("RUST_FILE_LOG").unwrap_or_else(|_| "debug".to_owned()));
+    let console_filter = tracing_subscriber::EnvFilter::new(std::env::var("RUST_LOG").unwrap_or_else(|_| "debug".to_owned()));
+    let tracing_filter = tracing_subscriber::EnvFilter::new(std::env::var("RUST_TRACE_LOG").unwrap_or_else(|_| "info".to_owned()));
 
-    Registry::default()
-        .with(fmt::layer().with_writer(non_blocking_appender).with_ansi(false).with_filter(filter1))
-        .with(fmt::layer().with_filter(filter2))
-        .init();
-    guard
+    if let Some(true) = args.with_opentelemetry {
+        if let Ok(exporter) = opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint("http://127.0.0.1:4317")
+            .with_timeout(std::time::Duration::from_secs(3))
+            .build()
+        {
+            let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
+                .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+                .with_id_generator(RandomIdGenerator::default())
+                .with_sampler(Sampler::AlwaysOn)
+                .with_resource(opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new("service.name", controller_name.clone())]))
+                .build();
+
+            let tracer = tracer_provider.tracer(controller_name);
+            let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
+            registry
+                .with(telemetry.with_filter(tracing_filter))
+                .with(fmt::layer().with_writer(non_blocking_appender).with_ansi(false).with_filter(file_filter))
+                .with(fmt::layer().with_filter(console_filter))
+                .init();
+
+            Guard::Appender(guard)
+        } else {
+            panic!("Can't do tracing");
+        }
+    } else {
+        registry
+            .with(fmt::layer().with_writer(non_blocking_appender).with_ansi(false).with_filter(file_filter))
+            .with(fmt::layer().with_filter(console_filter))
+            .init();
+        Guard::Appender(guard)
+    }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> kubvernor::Result<()> {
-    let args = Args::parse();
-    let _guard = init_logging();
+    let args = CommandArgs::parse();
+    let _guard = init_logging(&args);
+    let args = Args::from(args);
     start(args).await
 }
-
-// async fn reconcile_crd(crd: Arc<CustomResourceDefinition>, ctx: Arc<Context>) -> Result<Action> {
-//     println!("reconcile crd request: {:?}", crd.metadata.name);
-//     println!("reconcile crd request status: {:?}", crd.status);
-//     Ok(Action::requeue(Duration::from_secs(3600)))
-// }

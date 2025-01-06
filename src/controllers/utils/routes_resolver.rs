@@ -1,22 +1,22 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::collections::{BTreeSet, HashMap};
 
-use gateway_api::apis::standard::gateways::Gateway;
 use k8s_openapi::api::core::v1::Service;
+use kube::Client;
+use tracing::{debug, warn, Instrument, Span};
+use typed_builder::TypedBuilder;
 
-use kube::{Api, Client};
-use tracing::{debug, warn};
-
+use super::BackendReferenceResolver;
 use crate::{
-    common::{self, calculate_attached_routes, Backend, NotResolvedReason, ResolutionStatus, KUBERNETES_NONE},
+    common::{self, gateway_api::gateways::Gateway, Backend, NotResolvedReason, ResolutionStatus, Route, RouteToListenersMapping, KUBERNETES_NONE},
     controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };
 
+#[derive(TypedBuilder)]
 pub struct RouteResolver<'a> {
     gateway_namespace: &'a str,
     route: common::Route,
-    client: Client,
-    log_context: &'a str,
+    backend_reference_resolver: BackendReferenceResolver,
 }
 struct PermittedBackends(String);
 impl PermittedBackends {
@@ -26,15 +26,6 @@ impl PermittedBackends {
 }
 
 impl<'a> RouteResolver<'a> {
-    pub fn new(gateway_namespace: &'a str, route: common::Route, client: Client, log_context: &'a str) -> Self {
-        Self {
-            gateway_namespace,
-            route,
-            client,
-            log_context,
-        }
-    }
-
     pub async fn resolve(self) -> common::Route {
         let mut route = self.route;
         let route_namespace = route.namespace().to_owned();
@@ -43,14 +34,13 @@ impl<'a> RouteResolver<'a> {
         for rule in &mut route_config.routing_rules {
             let mut new_backends = vec![];
             for backend in rule.backends.clone() {
-                let client = self.client.clone();
                 match backend {
                     Backend::Maybe(mut backend_service_config) => {
                         let backend_namespace = &backend_service_config.resource_key.namespace;
-                        let backend_name = &backend_service_config.resource_key.name;
-                        let service_api: Api<Service> = Api::namespaced(client, backend_namespace);
-                        let maybe_service = service_api.get(backend_name).await;
-                        if let Ok(service) = maybe_service {
+
+                        let maybe_service = self.backend_reference_resolver.get_reference(&backend_service_config.resource_key).await;
+
+                        if let Some(service) = maybe_service {
                             if PermittedBackends(self.gateway_namespace.to_owned()).is_permitted(&route_namespace, backend_namespace) {
                                 backend_service_config.effective_port = Self::backend_remap_port(backend_service_config.port, service);
                                 new_backends.push(Backend::Resolved(backend_service_config));
@@ -63,7 +53,10 @@ impl<'a> RouteResolver<'a> {
                                 route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted);
                             }
                         } else {
-                            debug!("{} can't resolve {:?} {:?}", self.log_context, &backend_service_config.resource_key, maybe_service);
+                            debug!(
+                                "can't resolve {}-{} {:?}",
+                                &backend_service_config.resource_key.name, &backend_service_config.resource_key.namespace, maybe_service
+                            );
                             new_backends.push(Backend::Unresolved(backend_service_config));
                             route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound);
                         }
@@ -110,31 +103,23 @@ impl<'a> RouteResolver<'a> {
     }
 }
 
+#[derive(TypedBuilder)]
 pub struct RoutesResolver<'a> {
     gateway: common::Gateway,
-    client: Client,
-    log_context: &'a str,
     state: &'a State,
-    kube_gateway: &'a Arc<Gateway>,
+    kube_gateway: &'a Gateway,
+    client: Client,
+    backend_reference_resolver: &'a BackendReferenceResolver,
 }
 
 impl<'a> RoutesResolver<'a> {
-    pub fn new(gateway: common::Gateway, client: Client, log_context: &'a str, state: &'a State, kube_gateway: &'a Arc<Gateway>) -> Self {
-        Self {
-            gateway,
-            client,
-            log_context,
-            state,
-            kube_gateway,
-        }
-    }
-
     pub async fn validate(mut self) -> common::Gateway {
-        let log_context = self.log_context;
-        debug!("{log_context} Validating routes");
+        debug!("Validating routes");
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
-        let linked_routes = utils::resolve_route_backends(&gateway_resource_key.namespace, self.client.clone(), linked_routes, log_context).await;
+        let linked_routes = utils::resolve_route_backends(&gateway_resource_key.namespace, self.backend_reference_resolver.clone(), linked_routes)
+            .instrument(Span::current().clone())
+            .await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
 
         let (route_to_listeners_mapping, routes_with_no_listeners) = RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();
@@ -150,4 +135,21 @@ impl<'a> RoutesResolver<'a> {
 
         self.gateway
     }
+}
+
+pub fn calculate_attached_routes(mapped_routes: &[RouteToListenersMapping]) -> HashMap<String, BTreeSet<&Route>> {
+    let mut attached_routes: HashMap<String, BTreeSet<&Route>> = HashMap::new();
+
+    for mapping in mapped_routes {
+        mapping.listeners.iter().for_each(|l| {
+            if let Some(routes) = attached_routes.get_mut(&l.name) {
+                routes.insert(&mapping.route);
+            } else {
+                let mut routes = BTreeSet::new();
+                routes.insert(&mapping.route);
+                attached_routes.insert(l.name.clone(), routes);
+            }
+        });
+    }
+    attached_routes
 }

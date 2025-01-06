@@ -1,18 +1,14 @@
 mod hostname_match_filter;
+
 mod route_listener_matcher;
 mod routes_resolver;
+
 mod tls_config_validator;
 
+use std::{collections::BTreeMap, sync::Arc};
+
 pub use hostname_match_filter::HostnameMatchFilter;
-pub(crate) use route_listener_matcher::RouteListenerMatcher;
-pub(crate) use routes_resolver::RoutesResolver;
-pub(crate) use tls_config_validator::ListenerTlsConfigValidator;
-
 use k8s_openapi::api::core::v1::Namespace;
-use std::{collections::BTreeMap, marker::PhantomData, sync::Arc};
-
-use gateway_api::apis::standard::gateways::Gateway;
-
 use kube::{
     api::{ListParams, Patch, PatchParams},
     runtime::{
@@ -22,13 +18,15 @@ use kube::{
     Api, Client, Resource, ResourceExt,
 };
 use kube_core::{PartialObjectMeta, PartialObjectMetaExt};
+pub(crate) use route_listener_matcher::RouteListenerMatcher;
 use routes_resolver::RouteResolver;
-
+pub use routes_resolver::RoutesResolver;
 use serde::Serialize;
+pub use tls_config_validator::ListenerTlsConfigValidator;
 use tracing::{debug, warn};
 
 use crate::{
-    common::{ResourceKey, Route},
+    common::{BackendReferenceResolver, ResourceKey, Route},
     controllers::ControllerError,
     state::State,
 };
@@ -137,14 +135,22 @@ impl ResourceFinalizer {
 pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route> {
     state
         .get_http_routes_attached_to_gateway(gateway_id)
-        .map(|routes| routes.iter().filter_map(|r| Route::try_from(&***r).ok()).collect())
+        .expect("We expect the lock to work")
+        .map(|routes| routes.iter().filter_map(|r| Route::try_from(&**r).ok()).collect())
         .unwrap_or_default()
 }
 
-pub async fn resolve_route_backends(gateway_namespace: &str, client: Client, routes: Vec<Route>, log_context: &str) -> Vec<Route> {
+pub async fn resolve_route_backends(gateway_namespace: &str, backend_reference_resolver: BackendReferenceResolver, routes: Vec<Route>) -> Vec<Route> {
     let futures: Vec<_> = routes
         .into_iter()
-        .map(|route| RouteResolver::new(gateway_namespace, route, client.clone(), log_context).resolve())
+        .map(|route| {
+            RouteResolver::builder()
+                .gateway_namespace(gateway_namespace)
+                .route(route)
+                .backend_reference_resolver(backend_reference_resolver.clone())
+                .build()
+                .resolve()
+        })
         .collect();
     let routes = futures::future::join_all(futures);
     routes.await
@@ -166,87 +172,3 @@ pub async fn resolve_namespaces(client: Client) -> BTreeMap<String, BTreeMap<Str
     };
     namespace_map
 }
-
-pub struct LogContext<'a, T> {
-    pub controller_name: &'a str,
-    pub resource_key: &'a ResourceKey,
-    pub version: Option<String>,
-    pub resource_type: PhantomData<T>,
-}
-
-impl<T> std::fmt::Display for LogContext<'_, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let resource = format!("{:?}", &self.resource_type);
-        let resource = &resource["PhantomData".len()..];
-        write!(f, "{}: resource_id: {},  version: {:?}", resource, self.resource_key, self.version)
-    }
-}
-
-impl<'a> LogContext<'a, Gateway> {
-    pub fn new(controller_name: &'a str, resource_key: &'a ResourceKey, version: Option<String>) -> Self {
-        Self {
-            controller_name,
-            resource_key,
-            version,
-            resource_type: std::marker::PhantomData,
-        }
-    }
-}
-
-// pub struct ListenerStatusesMerger {
-//     all_listeners_statuses: Vec<GatewayStatusListeners>,
-// }
-// impl ListenerStatusesMerger {
-//     pub fn new(all_listeners_statuses: Vec<GatewayStatusListeners>) -> Self {
-//         Self { all_listeners_statuses }
-//     }
-//     pub fn merge(mut self, mut deployed_listeners_statuses: Vec<GatewayStatusListeners>) -> Vec<GatewayStatusListeners> {
-//         #[derive(Debug)]
-//         struct ListenerConditionHolder {
-//             type_: String,
-//             condition: Condition,
-//         }
-
-//         impl Eq for ListenerConditionHolder {}
-
-//         impl Ord for ListenerConditionHolder {
-//             fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-//                 self.type_.cmp(&other.type_)
-//             }
-//         }
-//         impl PartialOrd for ListenerConditionHolder {
-//             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-//                 Some(self.type_.cmp(&other.type_))
-//             }
-//         }
-//         impl PartialEq for ListenerConditionHolder {
-//             fn eq(&self, other: &Self) -> bool {
-//                 self.type_ == other.type_
-//             }
-//         }
-
-//         for listener in &mut self.all_listeners_statuses {
-//             if let Some(deployed_listener) = deployed_listeners_statuses.iter_mut().find(|f| f.name == listener.name) {
-//                 let mut listener_conditions = listener
-//                     .conditions
-//                     .iter()
-//                     .map(|c| ListenerConditionHolder {
-//                         type_: c.type_.clone(),
-//                         condition: c.clone(),
-//                     })
-//                     .collect::<BTreeSet<_>>();
-//                 let deployed_conditions = deployed_listener.conditions.iter().map(|c| ListenerConditionHolder {
-//                     type_: c.type_.clone(),
-//                     condition: c.clone(),
-//                 });
-//                 for c in deployed_conditions {
-//                     let _ = listener_conditions.replace(c);
-//                 }
-
-//                 listener.conditions = listener_conditions.into_iter().map(|c| c.condition).collect();
-//                 listener.attached_routes = deployed_listener.attached_routes;
-//             }
-//         }
-//         self.all_listeners_statuses
-//     }
-// }

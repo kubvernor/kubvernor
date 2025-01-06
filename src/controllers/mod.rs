@@ -1,12 +1,12 @@
 use std::time::Duration;
 pub mod gateway;
 pub mod gateway_class;
-mod gateway_deployer;
-mod gateway_processed_handler;
+mod handlers;
 pub mod http_route;
-mod resource_handler;
+
 mod utils;
-pub use utils::{FinalizerPatcher, HostnameMatchFilter, LogContext, ResourceFinalizer};
+
+pub use utils::{find_linked_routes, FinalizerPatcher, HostnameMatchFilter, ListenerTlsConfigValidator, ResourceFinalizer, RoutesResolver};
 
 #[allow(dead_code)]
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]
@@ -25,8 +25,6 @@ pub enum ControllerError {
 
 const RECONCILE_LONG_WAIT: Duration = Duration::from_secs(3600);
 const RECONCILE_ERROR_WAIT: Duration = Duration::from_secs(100);
-
-const GATEWAY_CLASS_FINALIZER_NAME: &str = "gateway-exists-finalizer.gateway.networking.k8s.io";
 
 impl std::fmt::Display for ControllerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

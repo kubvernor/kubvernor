@@ -1,14 +1,14 @@
 use tokio::sync::mpsc::{self, Receiver};
 use tracing::{info, warn};
 
-use crate::common::{ChangedContext, DeletedContext, DeployedGatewayStatus, Gateway, GatewayEvent, GatewayResponse, RouteProcessedPayload, RouteStatus};
+use crate::common::{BackendGatewayEvent, ChangedContext, DeletedContext, DeployedGatewayStatus, Gateway, GatewayResponse, RouteProcessedPayload, RouteStatus};
 
 pub struct GatewayDeployerChannelHandler {
-    event_receiver: Receiver<GatewayEvent>,
+    event_receiver: Receiver<BackendGatewayEvent>,
 }
 
 impl GatewayDeployerChannelHandler {
-    pub fn new() -> (mpsc::Sender<GatewayEvent>, Self) {
+    pub fn new() -> (mpsc::Sender<BackendGatewayEvent>, Self) {
         let (sender, receiver) = mpsc::channel(1024);
         (sender, Self { event_receiver: receiver })
     }
@@ -19,7 +19,7 @@ impl GatewayDeployerChannelHandler {
                     Some(event) = self.event_receiver.recv() => {
                         info!("Backend got gateway {event:#}");
                          match event{
-                            GatewayEvent::GatewayChanged(ChangedContext{ response_sender, gateway }) => {
+                            BackendGatewayEvent::GatewayChanged(ChangedContext{ response_sender, gateway, span: _ }) => {
                                 deploy_gateway(&gateway);
                                 let sent = response_sender.send(GatewayResponse::GatewayProcessed(gateway));
                                 if let Err(e) = sent{
@@ -28,7 +28,7 @@ impl GatewayDeployerChannelHandler {
                                 }
                             }
 
-                            GatewayEvent::GatewayDeleted(DeletedContext{ response_sender, gateway: _  }) => {
+                            BackendGatewayEvent::GatewayDeleted(DeletedContext{ response_sender, gateway: _, span: _  }) => {
 
                                 let sent = response_sender.send(GatewayResponse::GatewayDeleted(vec![]));
                                 if let Err(e) = sent{
@@ -37,7 +37,7 @@ impl GatewayDeployerChannelHandler {
                                 }
                             }
 
-                            GatewayEvent::RouteChanged(ChangedContext{ response_sender, gateway}) =>{
+                            BackendGatewayEvent::RouteChanged(ChangedContext{ response_sender, gateway, span:_}) =>{
                                 let gateway_status = DeployedGatewayStatus{ id: *gateway.id(), name: gateway.name().to_owned(), namespace: gateway.namespace().to_owned(), attached_addresses: vec![]};
                                 let sent = response_sender.send(GatewayResponse::RouteProcessed(RouteProcessedPayload::new(RouteStatus::Attached, gateway_status)));
                                 if let Err(e) = sent{

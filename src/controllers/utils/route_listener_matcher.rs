@@ -1,25 +1,27 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use crate::{
-    common::{NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteRefKey, RouteToListenersMapping},
-    state::State,
-};
-use gateway_api::apis::standard::{
-    gateways::{self, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom},
-    httproutes::HTTPRouteParentRefs,
-};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::HostnameMatchFilter;
+use crate::{
+    common::{
+        gateway_api::{
+            gateways::{self, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom},
+            httproutes::HTTPRouteParentRefs,
+        },
+        NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteRefKey, RouteToListenersMapping,
+    },
+    state::State,
+};
 
 pub struct RouteListenerMatcher<'a> {
-    gateway: &'a Arc<gateways::Gateway>,
+    gateway: &'a gateways::Gateway,
     routes: Vec<Route>,
     resolved_namespaces: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl<'a> RouteListenerMatcher<'a> {
-    pub fn new(gateway: &'a Arc<gateways::Gateway>, routes: Vec<Route>, resolved_namespaces: BTreeMap<String, BTreeMap<String, String>>) -> Self {
+    pub fn new(gateway: &'a gateways::Gateway, routes: Vec<Route>, resolved_namespaces: BTreeMap<String, BTreeMap<String, String>>) -> Self {
         Self { gateway, routes, resolved_namespaces }
     }
 
@@ -54,7 +56,7 @@ impl<'a> RouteListenerMatcher<'a> {
         if let Some(route_parents) = route_parents {
             for route_parent in route_parents {
                 let route_parent_key = RouteRefKey::from((route_parent, route_key.namespace.clone()));
-                let gateway_key = ResourceKey::from(&**self.gateway);
+                let gateway_key = ResourceKey::from(self.gateway);
                 if route_parent_key.as_ref().name == gateway_key.name && route_parent_key.as_ref().namespace == gateway_key.namespace {
                     let matching_gateway_listeners = self.filter_listeners_by_namespace(self.gateway.spec.listeners.clone().into_iter(), gateway_key, route_key);
                     let matching_gateway_listeners = matching_gateway_listeners.collect::<Vec<_>>();
@@ -100,7 +102,7 @@ impl<'a> RouteListenerMatcher<'a> {
         (routes_and_listeners, route_resolution_status)
     }
 
-    pub fn filter_matching_gateways(state: &mut State, resolved_gateways: &[(&HTTPRouteParentRefs, Option<Arc<gateways::Gateway>>)]) -> Vec<Arc<gateways::Gateway>> {
+    pub fn filter_matching_gateways(state: &State, resolved_gateways: &[(&HTTPRouteParentRefs, Option<Arc<gateways::Gateway>>)]) -> Vec<Arc<gateways::Gateway>> {
         resolved_gateways
             .iter()
             .filter_map(|(parent_ref, maybe_gateway)| {
@@ -109,7 +111,7 @@ impl<'a> RouteListenerMatcher<'a> {
                     let parent_ref_key = RouteRefKey::from((&**parent_ref, gateway_key.namespace.clone()));
 
                     if *parent_ref_key.as_ref() == gateway_key {
-                        state.get_gateway(&gateway_key).cloned()
+                        state.get_gateway(&gateway_key).expect("We expect the lock to work")
                     } else {
                         None
                     }
@@ -154,13 +156,12 @@ impl<'a> RouteListenerMatcher<'a> {
                     match selector_type {
                         GatewayListenersAllowedRoutesNamespacesFrom::All => {}
                         GatewayListenersAllowedRoutesNamespacesFrom::Selector => {
-                            // namespace selector
-                            warn!("Selector {selector:?}");
+                            debug!("Selector {selector:?}");
                             is_allowed = false;
                             if let Some(selector) = selector {
                                 if let Some(selector_labels) = &selector.match_labels {
                                     let resolved_namespaces = self.resolved_namespaces.get(&route_key.namespace);
-                                    warn!("Selector labales {resolved_namespaces:#?}");
+                                    debug!("Selector labels {resolved_namespaces:#?}");
                                     if let Some(labels) = resolved_namespaces {
                                         for (selector_k, selector_v) in selector_labels {
                                             if labels.get(selector_k) == Some(selector_v) {

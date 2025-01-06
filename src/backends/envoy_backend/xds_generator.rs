@@ -3,9 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 use tracing::{debug, info, warn};
 
-use super::envoy_deployer::TEMPLATES;
+use super::envoy_deployer::{create_certificate_name, create_key_name, create_secret_name, TEMPLATES};
 use crate::{
-    backends::envoy_deployer::{create_certificate_name, create_key_name, create_secret_name},
     common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, TlsType, DEFAULT_ROUTE_HOSTNAME},
     controllers::HostnameMatchFilter,
 };
@@ -217,7 +216,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
 
         match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
             (true, false) => Vec::from_iter(routes_hostnames),
-            (_, _) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![hostname]),
+            (..) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![hostname]),
         }
     }
 
@@ -229,7 +228,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
 
         match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
             (true, false) => Vec::from_iter(routes_hostnames),
-            (_, _) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
+            (..) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
         }
     }
 
@@ -328,8 +327,8 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         path: er.route_matcher.path.clone().map(|matcher| TeraPath {
                             path: matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v }),
                             match_type: matcher.r#type.map_or(String::new(), |f| match f {
-                                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
-                                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
+                                crate::common::gateway_api::httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
+                                crate::common::gateway_api::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
                                     if let Some(val) = matcher.value {
                                         if val == "/" {
                                             "prefix".to_owned()
@@ -340,7 +339,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                         "prefix".to_owned()
                                     }
                                 }
-                                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
+                                crate::common::gateway_api::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
                             }),
                         }),
                         headers: er.route_matcher.headers.clone().map(|headers| {
@@ -466,11 +465,19 @@ impl<'a> EnvoyXDSGenerator<'a> {
             .iter()
             .filter_map(|l| {
                 if let Some(TlsType::Terminate(certificates)) = &l.tls_type {
-                    Some(certificates.iter().map(|certificate_key| TeraSecret {
-                        name: create_secret_name(certificate_key),
-                        certificate: create_certificate_name(certificate_key),
-                        key: create_key_name(certificate_key),
-                    }))
+                    Some(
+                        certificates
+                            .iter()
+                            .filter_map(|cert| match cert {
+                                common::Certificate::Resolved(resource_key) => Some(resource_key),
+                                common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) => None,
+                            })
+                            .map(|certificate_key| TeraSecret {
+                                name: create_secret_name(certificate_key),
+                                certificate: create_certificate_name(certificate_key),
+                                key: create_key_name(certificate_key),
+                            }),
+                    )
                 } else {
                     None
                 }
@@ -509,6 +516,10 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     Some(
                         certificates
                             .iter()
+                            .filter_map(|cert| match cert {
+                                common::Certificate::Resolved(resource_key) => Some(resource_key),
+                                common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) => None,
+                            })
                             .map(|certificate_key| TeraSecret {
                                 name: create_secret_name(certificate_key),
                             })
@@ -525,208 +536,3 @@ impl<'a> EnvoyXDSGenerator<'a> {
         Ok(lds)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    // use std::{fs::File, io::Write};
-
-    // use gateway_api::apis::standard::{gateways::Gateway, httproutes::HTTPRoute};
-
-    // use crate::{
-    //     backends::xds_generator::{EnvoyXDSGenerator, RdsData, XdsData},
-    //     common::{self, Route},
-    // };
-
-    // https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/refs/heads/main/conformance/tests/gateway-http-listener-isolation.yaml
-    #[allow(clippy::similar_names)]
-    #[test]
-    pub fn test1() {
-        todo!();
-    }
-}
-
-//     const GATEWAY_YAML: &str = r#"
-// apiVersion: gateway.networking.k8s.io/v1
-// kind: Gateway
-// metadata:
-//   name: http-listener-isolation
-//   namespace: gateway-conformance-infra
-// spec:
-//   gatewayClassName: my-class
-//   listeners:
-//   - name: empty-hostname
-//     port: 80
-//     protocol: HTTP
-//     allowedRoutes:
-//       namespaces:
-//         from: All
-//   - name: wildcard-example-com
-//     port: 80
-//     protocol: HTTP
-//     hostname: "*.example.com"
-//     allowedRoutes:
-//       namespaces:
-//         from: All
-//   - name: wildcard-foo-example-com
-//     port: 80
-//     protocol: HTTP
-//     hostname: "*.foo.example.com"
-//     allowedRoutes:
-//       namespaces:
-//         from: All
-//   - name: abc-foo-example-com
-//     port: 80
-//     protocol: HTTP
-//     hostname: "abc.foo.example.com"
-//     allowedRoutes:
-//       namespaces:
-//         from: All
-//   - name: empty-hostname-tcp
-//     port: 80
-//     protocol: TCP
-//     allowedRoutes:
-//       namespaces:
-//         from: All
-//   - name: wildcard-example-com-tcp
-//     port: 80
-//     protocol: TCP
-//     hostname: "*.example.com"
-//     allowedRoutes:
-//       namespaces:
-//         from: All
-//   - name: wildcard-foo-example-com-tcp
-//     port: 80
-//     protocol: TCP
-//     hostname: "*.foo.example.com"
-//     allowedRoutes:
-//       namespaces:
-//         from: All
-//   - name: abc-foo-example-com-tcp
-//     port: 80
-//     protocol: TCP
-//     hostname: "abc.foo.example.com"
-//     allowedRoutes:
-//       namespaces:
-//         from: All
-//   - name: empty-hostname-9090
-//     port: 9090
-//     protocol: HTTP
-//     allowedRoutes:
-//       namespaces:
-//         from: All
-//   - name: wildcard-example-com-9090
-//     port: 9090
-//     protocol: HTTP
-//     hostname: "*.example.com"
-//     allowedRoutes:
-//       namespaces:
-//         from: All
-//   - name: wildcard-foo-example-com-9090
-//     port: 9090
-//     protocol: HTTP
-//     hostname: "*.foo.example.com"
-//     allowedRoutes:
-//       namespaces:
-//         from: All
-//   - name: abc-foo-example-com-tcp-9090
-//     port: 9090
-//     protocol: HTTP
-//     hostname: "abc.foo.example.com"
-//     allowedRoutes:
-//       namespaces:
-//         from: All
-// "#;
-
-//     const ROUTE1_YAML: &str = r"
-// apiVersion: gateway.networking.k8s.io/v1
-// kind: HTTPRoute
-// metadata:
-//   name: attaches-to-empty-hostname
-//   namespace: gateway-conformance-infra
-// spec:
-//   parentRefs:
-//   - name: http-listener-isolation
-//     namespace: gateway-conformance-infra
-//     sectionName: empty-hostname
-//   - name: http-listener-isolation
-//     namespace: gateway-conformance-infra
-//     sectionName: empty-hostname-9090
-//   rules:
-//   - matches:
-//     - path:
-//         type: PathPrefix
-//         value: /empty-hostname
-//     - path:
-//         type: Exact
-//         value: /empty-hostname-2
-//     backendRefs:
-//     - name: infra-backend-v1
-//       port: 8080
-// ";
-
-//     const ROUTE2_YAML: &str = r"
-// apiVersion: gateway.networking.k8s.io/v1
-// kind: HTTPRoute
-// metadata:
-//   name: attaches-to-wildcard-example-com
-//   namespace: gateway-conformance-infra
-// spec:
-//   parentRefs:
-//   - name: http-listener-isolation
-//     namespace: gateway-conformance-infra
-//     sectionName: wildcard-example-com
-//   - name: http-listener-isolation
-//     namespace: gateway-conformance-infra
-//     sectionName: wildcard-example-com-9090
-//   rules:
-//   - matches:
-//     - path:
-//         type: PathPrefix
-//         value: /wildcard-example-com
-//     backendRefs:
-//     - name: infra-backend-v1
-//       port: 8080
-// ";
-
-//     const ROUTE3_YAML: &str = r"
-// apiVersion: gateway.networking.k8s.io/v1
-// kind: HTTPRoute
-// metadata:
-//   name: attaches-to-wildcard-foo-example-com
-//   namespace: gateway-conformance-infra
-// spec:
-//   parentRefs:
-//   - name: http-listener-isolation
-//     namespace: gateway-conformance-infra
-//     sectionName: wildcard-foo-example-com
-//   rules:
-//   - matches:
-//     - path:
-//         type: PathPrefix
-//         value: /wildcard-foo-example-com
-//     backendRefs:
-//     - name: infra-backend-v1
-//       port: 8080
-// ";
-
-//     const ROUTE4_YAML: &str = r"
-// apiVersion: gateway.networking.k8s.io/v1
-// kind: HTTPRoute
-// metadata:
-//   name: attaches-to-abc-foo-example-com
-//   namespace: gateway-conformance-infra
-// spec:
-//   parentRefs:
-//   - name: http-listener-isolation
-//     namespace: gateway-conformance-infra
-//     sectionName: abc-foo-example-com
-//   rules:
-//   - matches:
-//     - path:
-//         type: PathPrefix
-//         value: /abc-foo-example-com
-//     backendRefs:
-//     - name: infra-backend-v1
-//       port: 8080
-// ";
-// }

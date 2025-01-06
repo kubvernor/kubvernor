@@ -18,16 +18,17 @@ use kube::{
 };
 use kube_core::ObjectMeta;
 use lazy_static::lazy_static;
-
 use tera::Tera;
-use tokio::sync::mpsc::{self, Receiver};
-use tracing::{debug, info, warn};
+use tokio::{
+    sync::mpsc::{Receiver, Sender},
+    time,
+};
+use tracing::{debug, info, span, warn, Instrument, Level, Span};
+use typed_builder::TypedBuilder;
+use uuid::Uuid;
 
 use super::xds_generator::{self, RdsData};
-use crate::{
-    backends::xds_generator::XdsData,
-    common::{ChangedContext, DeletedContext, Gateway, GatewayAddress, GatewayEvent, GatewayResponse, Listener, ResourceKey, TlsType},
-};
+use crate::common::{BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, DeletedContext, Gateway, GatewayAddress, Listener, ResourceKey, TlsType};
 
 lazy_static! {
     pub static ref TEMPLATES: Tera = {
@@ -41,56 +42,41 @@ lazy_static! {
     };
 }
 
-pub struct EnvoyDeployerChannelHandler {
+#[derive(TypedBuilder)]
+pub struct EnvoyDeployerChannelHandlerService {
     controller_name: String,
     client: Client,
-    event_receiver: Receiver<GatewayEvent>,
+    backend_deploy_request_channel_receiver: Receiver<BackendGatewayEvent>,
+    backend_response_channel_sender: Sender<BackendGatewayResponse>,
 }
 
-impl EnvoyDeployerChannelHandler {
-    pub fn new(controller_name: &str, client: Client) -> (mpsc::Sender<GatewayEvent>, Self) {
-        let (sender, receiver) = mpsc::channel(1024);
-        (
-            sender,
-            Self {
-                controller_name: controller_name.to_owned(),
-                client,
-                event_receiver: receiver,
-            },
-        )
-    }
+impl EnvoyDeployerChannelHandlerService {
     pub async fn start(&mut self) {
         info!("Gateways handler started");
         loop {
             tokio::select! {
-                    Some(event) = self.event_receiver.recv() => {
+                    Some(event) = self.backend_deploy_request_channel_receiver.recv() => {
                         info!("Backend got event {event:#}");
-                         match event{
-                            GatewayEvent::GatewayChanged(ChangedContext{ response_sender, mut gateway }) => {
-                                let maybe_service = self.deploy_envoy(&gateway).await;
+                        match event{
+                            BackendGatewayEvent::Changed(ctx) => {
+                                let gateway = &ctx.gateway;
+                                let span = span!(parent: &ctx.span, Level::INFO, "EnvoyDeployerService", event="GatewayChanged", id = %gateway.key());
+                                let _entered = span.enter();
+                                let maybe_service = self.deploy_envoy(gateway).instrument(span.clone()).await;
                                 if let Ok(service) = maybe_service{
-                                    Self::update_addresses(&mut gateway, &service);
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(gateway));
+                                    self.update_address_with_polling(&service, ctx, &span).await;
                                 }else{
                                     warn!("Problem {maybe_service:?}");
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessingError);
+                                    let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(gateway.clone())).await;
                                 }
                             }
 
-                            GatewayEvent::GatewayDeleted(DeletedContext{ response_sender, gateway }) => {
-                                self.delete_envoy(&gateway).await;
-                                let _res = response_sender.send(GatewayResponse::GatewayDeleted(vec![]));
-                            }
-
-                            GatewayEvent::RouteChanged(ChangedContext{ response_sender, mut gateway }) => {
-                                let maybe_service = self.deploy_envoy(&gateway).await;
-                                if let Ok(service) = maybe_service{
-                                    Self::update_addresses(&mut gateway, &service);
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessed(gateway));
-                                }else{
-                                    warn!("Problem {maybe_service:?}");
-                                    let _res = response_sender.send(GatewayResponse::GatewayProcessingError);
-                                };
+                            BackendGatewayEvent::Deleted(DeletedContext{ response_sender, gateway, span }) => {
+                                let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="GatewayDeleted", id = %gateway.key());
+                                let _entered = span.enter();
+                                self.delete_envoy(&gateway).instrument(span.clone()).await;
+                                let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Deleted(vec![]));
+                                let _res = response_sender.send(BackendGatewayResponse::Deleted(vec![]));
                             }
 
                         }
@@ -124,7 +110,7 @@ impl EnvoyDeployerChannelHandler {
 
         let maybe_templates = xds_generator::EnvoyXDSGenerator::new(gateway).generate_xds();
 
-        if let Ok(XdsData {
+        if let Ok(xds_generator::XdsData {
             bootstrap_content,
             lds_content,
             rds_content,
@@ -207,7 +193,7 @@ impl EnvoyDeployerChannelHandler {
         let _res = futures::future::join_all(futures).await;
     }
 
-    fn find_gateway_addresses(service: &Service) -> Vec<String> {
+    fn find_gateway_addresses(service: &Service) -> Option<Vec<String>> {
         let mut ips = vec![];
         if let Some(status) = &service.status {
             if let Some(load_balancer) = &status.load_balancer {
@@ -218,7 +204,12 @@ impl EnvoyDeployerChannelHandler {
                 }
             }
         };
-        ips.into_iter().flatten().collect::<Vec<_>>()
+        let ips = ips.into_iter().flatten().collect::<Vec<_>>();
+        if ips.is_empty() {
+            None
+        } else {
+            Some(ips)
+        }
     }
 
     fn create_envoy_xds_config_map(name: &str, gateway: &Gateway, lds: String, routes: Vec<RdsData>, cds: String) -> ConfigMap {
@@ -230,6 +221,9 @@ impl EnvoyDeployerChannelHandler {
             map.insert(format!("{route_name}.yaml"), rds_content);
         }
 
+        let mut annotations = BTreeMap::new();
+        annotations.insert("gateway-version".to_owned(), Uuid::new_v4().to_string());
+
         ConfigMap {
             binary_data: None,
             data: Some(map),
@@ -237,6 +231,7 @@ impl EnvoyDeployerChannelHandler {
             metadata: ObjectMeta {
                 name: Some(name.to_owned()),
                 namespace: Some(gateway.namespace().to_owned()),
+                annotations: Some(annotations),
                 ..Default::default()
             },
         }
@@ -245,6 +240,8 @@ impl EnvoyDeployerChannelHandler {
     fn create_envoy_bootstrap_config_map(name: &str, gateway: &Gateway, boostrap_content: String) -> ConfigMap {
         let mut map = BTreeMap::new();
         map.insert("envoy-bootstrap.yaml".to_owned(), boostrap_content);
+        let mut annotations = BTreeMap::new();
+        annotations.insert("gateway-version".to_owned(), Uuid::new_v4().to_string());
         ConfigMap {
             binary_data: None,
             data: Some(map),
@@ -252,6 +249,7 @@ impl EnvoyDeployerChannelHandler {
             metadata: ObjectMeta {
                 name: Some(name.to_owned()),
                 namespace: Some(gateway.namespace().to_owned()),
+                annotations: Some(annotations),
                 ..Default::default()
             },
         }
@@ -300,9 +298,11 @@ impl EnvoyDeployerChannelHandler {
         default_volumes.append(&mut secret_volumes);
         pod_spec.volumes = Some(default_volumes);
 
+        let mut annotations = BTreeMap::new();
+        annotations.insert("gateway-version".to_owned(), Uuid::new_v4().to_string());
         Deployment {
             metadata: ObjectMeta {
-                //annotations: Some(annotations.clone()),
+                annotations: Some(annotations.clone()),
                 name: Some(gateway.name().to_owned()),
                 namespace: Some(gateway.namespace().to_owned()),
                 labels: Some(labels.clone()),
@@ -381,14 +381,86 @@ impl EnvoyDeployerChannelHandler {
         }
     }
 
-    fn update_addresses(gateway: &mut Gateway, service: &Service) {
-        let attached_addresses = Self::find_gateway_addresses(service);
-        gateway.addresses_mut().append(
-            &mut attached_addresses
-                .into_iter()
-                .filter_map(|a| if let Ok(addr) = a.parse() { Some(GatewayAddress::IPAddress(addr)) } else { None })
-                .collect(),
-        );
+    fn update_addresses(gateway: &mut Gateway, service: &Service) -> bool {
+        if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
+            gateway.addresses_mut().append(
+                &mut attached_addresses
+                    .into_iter()
+                    .filter_map(|a| if let Ok(addr) = a.parse() { Some(GatewayAddress::IPAddress(addr)) } else { None })
+                    .collect(),
+            );
+            true
+        } else {
+            false
+        }
+    }
+
+    async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext, parent_span: &Span) {
+        if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
+            debug!("Got address address {attached_addresses:?}");
+            let ChangedContext {
+                span,
+                mut gateway,
+                kube_gateway,
+                gateway_class_name,
+            } = ctx;
+            gateway.addresses_mut().append(
+                &mut attached_addresses
+                    .into_iter()
+                    .filter_map(|a| if let Ok(addr) = a.parse() { Some(GatewayAddress::IPAddress(addr)) } else { None })
+                    .collect(),
+            );
+            let _res = self
+                .backend_response_channel_sender
+                .send(BackendGatewayResponse::ProcessedWithContext {
+                    gateway: gateway.clone(),
+                    kube_gateway,
+                    span,
+                    gateway_class_name,
+                })
+                .await;
+        } else {
+            let client = self.client.clone();
+            let resource_key = ResourceKey::from(&service.metadata);
+
+            let backend_response_channel_sender = self.backend_response_channel_sender.clone();
+            let span = span!(parent: parent_span, Level::INFO, "ServiceResolverTask");
+            let _handle = tokio::spawn(
+                async move {
+                    let api: Api<Service> = Api::namespaced(client, &resource_key.namespace);
+                    let ChangedContext {
+                        span,
+                        mut gateway,
+                        kube_gateway,
+                        gateway_class_name,
+                    } = ctx;
+                    let mut interval = time::interval(time::Duration::from_secs(1));
+                    loop {
+                        interval.tick().await;
+                        debug!("Resolving address for Service {}", resource_key);
+                        let maybe_service = api.get(&resource_key.name).await;
+                        if let Ok(service) = maybe_service {
+                            if Self::update_addresses(&mut gateway, &service) {
+                                let _res = backend_response_channel_sender
+                                    .send(BackendGatewayResponse::ProcessedWithContext {
+                                        gateway: gateway.clone(),
+                                        kube_gateway: kube_gateway.clone(),
+                                        span: span.clone(),
+                                        gateway_class_name: gateway_class_name.clone(),
+                                    })
+                                    .await;
+                                break;
+                            }
+                        } else {
+                            warn!("Problem {maybe_service:?}");
+                            let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(gateway.clone())).await;
+                        }
+                    }
+                    debug!("Task completed for gateway {} service {}", gateway.key(), resource_key);
+                }
+                .instrument(span),
+            );
+        }
     }
 
     fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
@@ -405,6 +477,10 @@ impl EnvoyDeployerChannelHandler {
 
         let secrets = all_certificates
             .into_iter()
+            .filter_map(|c| match c {
+                Certificate::Resolved(resource_key) => Some(resource_key),
+                Certificate::NotResolved(_) | Certificate::Invalid(_) => None,
+            })
             .map(|resource_key| VolumeProjection {
                 secret: Some(SecretProjection {
                     name: resource_key.name.clone(),
