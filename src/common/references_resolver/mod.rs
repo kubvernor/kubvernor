@@ -39,6 +39,10 @@ where
         F: Fn() -> BTreeSet<ResourceKey>,
     {
         let reference_keys = references();
+        if reference_keys.is_empty() {
+            debug!("Can't add no references Gateway {gateway_key}");
+            return;
+        }
 
         debug!("Adding new references for Gateway {gateway_key} BackendRef {reference_keys:?}");
         let mut lock = self.references.lock().await;
@@ -128,7 +132,7 @@ where
                 let span = span!(Level::INFO, "BackendReferenceResolverTask", secret = %key);
                 tokio::spawn(
                     async move {
-                        debug!("Checkig backend reference  {key}");
+                        debug!("Checking backend reference  {key}");
                         let api: Api<R> = Api::namespaced(myself.client.clone(), &key.namespace);
                         if let Ok(service) = api.get(&key.name).await {
                             let mut update_gateway = false;

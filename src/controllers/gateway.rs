@@ -182,6 +182,7 @@ impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
     }
 
     async fn on_new(&self, resource_key: ResourceKey, resource: &Arc<Gateway>, state: &State) -> Result<Action> {
+        let () = state.save_gateway(resource_key.clone(), resource).expect("We expect the lock to work");
         self.on_new_or_changed(resource_key, resource, state).await
     }
 

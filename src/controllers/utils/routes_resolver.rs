@@ -121,7 +121,7 @@ impl<'a> RoutesResolver<'a> {
             .instrument(Span::current().clone())
             .await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
-
+        warn!("Resolved routes {linked_routes:#?}");
         let (route_to_listeners_mapping, routes_with_no_listeners) = RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();
         let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);
         let routes_with_no_listeners = BTreeSet::from_iter(routes_with_no_listeners);

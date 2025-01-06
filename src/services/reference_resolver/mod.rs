@@ -62,7 +62,7 @@ impl ReferenceResolverHandler {
             }) => {
                 let span = span!(parent: &span, Level::INFO, "ReferenceResolverService", action = "ReferenceValidateRequest", id = %gateway.key());
                 let _entered = span.enter();
-
+                info!("Processing gateway {}", gateway.key());
                 self.secrets_resolver.add_secretes_by_gateway(&gateway).await;
 
                 self.backend_references_resolver.add_references_by_gateway(&gateway).await;
@@ -93,7 +93,7 @@ impl ReferenceResolverHandler {
             ReferenceValidateRequest::AddRoute { references, span: parent_span } => {
                 let span = span!(parent: &parent_span, Level::INFO, "ReferenceResolverService", action = "AddRouteReferences");
                 let _entered = span.enter();
-
+                warn!("Adding route references {references:?}");
                 self.backend_references_resolver.add_references(references.iter()).await;
             }
 

@@ -73,29 +73,32 @@ impl State {
     }
 
     pub fn attach_http_route_to_gateway(&self, gateway_id: ResourceKey, route_id: ResourceKey) -> Result<(), StorageError> {
-        let mut lock = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
-        if let Some(routes) = lock.get_mut(&gateway_id) {
+        let mut gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
+        if let Some(routes) = gateways_with_routes.get_mut(&gateway_id) {
             routes.insert(route_id);
         } else {
             let mut routes = BTreeSet::new();
             routes.insert(route_id);
-            lock.insert(gateway_id, routes);
+            gateways_with_routes.insert(gateway_id, routes);
         }
         Ok(())
     }
 
     pub fn detach_http_route_from_gateway(&self, gateway_id: &ResourceKey, route_id: &ResourceKey) -> Result<(), StorageError> {
-        let mut lock = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
-        if let Some(routes) = lock.get_mut(gateway_id) {
+        let mut gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
+        if let Some(routes) = gateways_with_routes.get_mut(gateway_id) {
             routes.retain(|key| key != route_id);
         };
         Ok(())
     }
 
-    pub fn get_http_routes_attached_to_gateway(&self, resource_key: &ResourceKey) -> Result<Option<Vec<Arc<HTTPRoute>>>, StorageError> {
-        let lock = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
-        let routes_lock = self.http_routes.lock().map_err(|_| StorageError::LockingError)?;
-        Ok(lock.get(resource_key).cloned().map(|keys| keys.iter().filter_map(|k| routes_lock.get(k).cloned()).collect::<Vec<_>>()))
+    pub fn get_http_routes_attached_to_gateway(&self, gateway_key: &ResourceKey) -> Result<Option<Vec<Arc<HTTPRoute>>>, StorageError> {
+        let gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
+        let http_routes = self.http_routes.lock().map_err(|_| StorageError::LockingError)?;
+        Ok(gateways_with_routes
+            .get(gateway_key)
+            .cloned()
+            .map(|keys| keys.iter().filter_map(|k| http_routes.get(k).cloned()).collect::<Vec<_>>()))
     }
 
     pub fn save_gateway_class(&self, id: ResourceKey, gateway_class: &Arc<GatewayClass>) -> Result<Option<Arc<GatewayClass>>, StorageError> {
