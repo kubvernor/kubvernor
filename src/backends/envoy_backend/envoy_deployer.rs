@@ -309,7 +309,7 @@ impl EnvoyDeployerChannelHandlerService {
                 ..Default::default()
             },
             spec: Some(DeploymentSpec {
-                replicas: Some(2),
+                replicas: Some(1),
                 selector: LabelSelector {
                     match_expressions: None,
                     match_labels: Some(labels.clone()),
@@ -576,7 +576,7 @@ const ENVOY_POD_SPEC: &str = r#"
                 "/envoy-config/envoy-bootstrap.yaml",
                 "--service-cluster $(GATEWAY_NAMESPACE)",
                 "--service-node $(ENVOY_POD_NAME)",
-                "--log-level info"
+                "--log-level debug"
             ],
             "command": [
                 "envoy"

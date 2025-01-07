@@ -4,6 +4,7 @@ package conformance
 
 import (
 	"flag"
+	"os"
 	"testing"
 	"time"
 
@@ -13,6 +14,12 @@ import (
 	"sigs.k8s.io/gateway-api/conformance/utils/config"
 	"sigs.k8s.io/gateway-api/conformance/utils/suite"
 	"sigs.k8s.io/gateway-api/pkg/features"
+
+	zaplogfmt "github.com/sykesm/zap-logfmt"
+	uzap "go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 // SkipTests is a list of tests that are skipped in the conformance suite.
@@ -118,7 +125,6 @@ func GetTestSupportLevel(test suite.ConformanceTest) SupportLevel {
 // GetFeatureSupportLevel returns the SupportLevel for a feature.
 func GetFeatureSupportLevel(feature features.FeatureName) SupportLevel {
 	supportLevel := Core
-
 	if ExtendedFeatures.Has(feature) {
 		supportLevel = Extended
 	}
@@ -126,10 +132,29 @@ func GetFeatureSupportLevel(feature features.FeatureName) SupportLevel {
 	return supportLevel
 }
 func TestKubvernorGatewayAPIConformance(t *testing.T) {
+
+	leveler := uzap.LevelEnablerFunc(func(level zapcore.Level) bool {
+		// Set the level fairly high since it's so verbose
+		return level >= zapcore.DPanicLevel
+	})
+	stackTraceLeveler := uzap.LevelEnablerFunc(func(level zapcore.Level) bool {
+		// Attempt to suppress the stack traces in the logs since they are so verbose.
+		// The controller runtime seems to ignore this since the stack is still always printed.
+		return false
+	})
+	logfmtEncoder := zaplogfmt.NewEncoder(uzap.NewDevelopmentEncoderConfig())
+	logger := zap.New(
+		zap.Level(leveler),
+		zap.StacktraceLevel(stackTraceLeveler),
+		zap.UseDevMode(false),
+		zap.WriteTo(os.Stdout),
+		zap.Encoder(logfmtEncoder))
+	log.SetLogger(logger)
+
 	flag.Parse()
 	opts := conformance.DefaultOptions(t)
 	opts.TimeoutConfig = config.TimeoutConfig{
-		TestIsolation:                      1 * time.Second,
+		TestIsolation:                      120 * time.Second,
 		CreateTimeout:                      120 * time.Second,
 		DeleteTimeout:                      10 * time.Second,
 		GetTimeout:                         10 * time.Second,
