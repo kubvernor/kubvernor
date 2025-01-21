@@ -3,10 +3,13 @@ use std::fmt::Display;
 use kube::{Resource, ResourceExt};
 use kube_core::ObjectMeta;
 
-use crate::common::gateway_api::{
-    gatewayclasses::GatewayClass,
-    gateways,
-    httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRulesBackendRefs},
+use crate::common::{
+    create_id,
+    gateway_api::{
+        gatewayclasses::GatewayClass,
+        gateways,
+        httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRulesBackendRefs},
+    },
 };
 
 pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";
@@ -62,7 +65,7 @@ impl Default for ResourceKey {
 
 impl Display for ResourceKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}", self.namespace, self.name)
+        write!(f, "{}", create_id(&self.name, &self.namespace))
     }
 }
 

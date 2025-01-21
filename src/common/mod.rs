@@ -315,3 +315,7 @@ pub async fn add_finalizer_to_gateway_class(sender: &mpsc::Sender<Operation<Gate
         }))
         .await;
 }
+
+pub fn create_id(name: &str, namespace: &str) -> String {
+    namespace.to_owned() + "." + name
+}
