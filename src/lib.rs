@@ -23,8 +23,16 @@ mod state;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 
-use backends::envoy_cm_backend::EnvoyDeployerChannelHandlerService;
-use backends::envoy_xds_backend::EnvoyDeployerChannelHandlerService as EnvoyDeployerChannelHandlerServiceXDS;
+cfg_if::cfg_if! {
+    if #[cfg(feature="envoy_xds")] {
+        use backends::envoy_xds_backend::EnvoyDeployerChannelHandlerService;
+    } else if #[cfg(feature = "envoy_cm")] {
+        use backends::envoy_cm_backend::EnvoyDeployerChannelHandlerService;
+    } else {
+
+    }
+}
+
 use controllers::{
     gateway::{self, GatewayController},
     gateway_class::GatewayClassController,
@@ -84,14 +92,7 @@ pub async fn start(args: Args) -> Result<()> {
     let mut gateway_class_patcher_service = GatewayClassPatcherService::builder().client(client.clone()).receiver(gateway_class_patcher_channel_receiver).build();
     let mut http_route_patcher_service = HttpRoutePatcherService::builder().client(client.clone()).receiver(http_route_patcher_channel_receiver).build();
 
-    // let mut envoy_deployer_service = EnvoyDeployerChannelHandlerService::builder()
-    //     .client(client.clone())
-    //     .controller_name(args.controller_name.clone())
-    //     .backend_deploy_request_channel_receiver(backend_deployer_channel_receiver)
-    //     .backend_response_channel_sender(backend_response_channel_sender)
-    //     .build();
-
-    let mut envoy_deployer_service = EnvoyDeployerChannelHandlerServiceXDS::builder()
+    let mut envoy_deployer_service = EnvoyDeployerChannelHandlerService::builder()
         .client(client.clone())
         .controller_name(args.controller_name.clone())
         .backend_deploy_request_channel_receiver(backend_deployer_channel_receiver)

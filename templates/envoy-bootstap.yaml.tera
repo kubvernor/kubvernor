@@ -24,4 +24,3 @@ static_resources:
           filename: ./envoy-secrets/{{secret.certificate}}          
         private_key: 
           filename: ./envoy-secrets/{{secret.key}}{% endfor %}{% endif %}
-

@@ -1,5 +1,7 @@
 use std::collections::{btree_map::Values, BTreeMap, BTreeSet};
 
+use envoy_api::envoy::config::listener::v3::ListenerFilter;
+use envoy_api::envoy::extensions::filters::listener::tls_inspector::v3::TlsInspector;
 use envoy_api::{
     envoy::{
         config::{
@@ -16,9 +18,12 @@ use envoy_api::{
             },
         },
         extensions::{
-            filters::network::http_connection_manager::v3::{
-                http_connection_manager::{CodecType, RouteSpecifier},
-                HttpConnectionManager,
+            filters::{
+                http::router::v3::Router,
+                network::http_connection_manager::v3::{
+                    http_connection_manager::{CodecType, RouteSpecifier},
+                    HttpConnectionManager, HttpFilter,
+                },
             },
             transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig},
         },
@@ -40,23 +45,28 @@ use k8s_openapi::{
     apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
 };
 use kube::{
-    api::{Patch, PatchParams},
+    api::{DeleteParams, Patch, PatchParams},
     Api, Client,
 };
 use kube_core::ObjectMeta;
 use lazy_static::lazy_static;
 use tera::Tera;
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::{
+    sync::mpsc::{self, Receiver, Sender},
+    time,
+};
 
-use tracing::{debug, info, span, warn, Instrument, Level};
+use tracing::{debug, info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
+use crate::backends;
+use crate::backends::common::ResourceGenerator;
 use crate::{
     backends::envoy_xds_backend::resources,
     common::{
-        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, DeletedContext, EffectiveRoutingRule, Gateway, Listener, ProtocolType, ResourceKey, Route,
-        TlsType, DEFAULT_ROUTE_HOSTNAME,
+        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, DeletedContext, EffectiveRoutingRule, Gateway, GatewayAddress, Listener,
+        ProtocolType, ResourceKey, Route, TlsType, DEFAULT_ROUTE_HOSTNAME,
     },
     controllers::HostnameMatchFilter,
     Error,
@@ -107,7 +117,7 @@ impl EnvoyDeployerChannelHandlerService {
 
                                     let maybe_service = deploy_envoy(&controller_name, client.clone(), gateway, &secrets).instrument(span.clone()).await;
                                     if let Ok(service) = maybe_service{
-                                        warn!("Service deployed {service:?} listeners {} clusters {}", listeners.len(), clusters.len());
+                                        info!("Service deployed {service:?} listeners {} clusters {}", listeners.len(), clusters.len());
 
                                         // let cluster1 = resources::create_cluster_with_endpoints("some_cluster1", "127.0.0.1:9080".parse().expect("should work"), 1, false);
                                         // let cluster2 = resources::create_cluster_with_endpoints("some_cluster2", "127.0.0.1:9080".parse().expect("should work"), 1, false);
@@ -124,7 +134,7 @@ impl EnvoyDeployerChannelHandlerService {
 
                                         let _ = stream_resource_sender.send(ServerAction::UpdateListeners{gateway_id: gateway.key().clone(), resources: listeners}).await;
 
-                                        //self.update_address_with_polling(&service, ctx, &span).await;
+                                        self.update_address_with_polling(&service, ctx, &span).await;
                                     }else{
                                         warn!("Problem {maybe_service:?}");
                                         let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(gateway.clone())).await;
@@ -134,7 +144,7 @@ impl EnvoyDeployerChannelHandlerService {
                                 BackendGatewayEvent::Deleted(DeletedContext{ response_sender, gateway, span }) => {
                                     let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="GatewayDeleted", id = %gateway.key());
                                     let _entered = span.enter();
-                                    //self.delete_envoy(&gateway).instrument(span.clone()).await;
+                                    self.delete_envoy(&gateway).instrument(span.clone()).await;
                                     let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Deleted(vec![]));
                                     let _res = response_sender.send(BackendGatewayResponse::Deleted(vec![]));
                                 }
@@ -152,6 +162,160 @@ impl EnvoyDeployerChannelHandlerService {
         let server_socket = "192.168.1.10:50051".parse().expect("Expect this to work");
         let xds_service = start_aggregate_server(server_socket, stream_resource_receiver).boxed();
         futures::future::join_all(vec![envoy_deployer_service, xds_service]).await;
+    }
+
+    async fn delete_envoy(&self, gateway: &Gateway) {
+        debug!("Deleting Envoy {gateway:?}");
+        let service_api: Api<Service> = Api::namespaced(self.client.clone(), gateway.namespace());
+        let deployment_api: Api<Deployment> = Api::namespaced(self.client.clone(), gateway.namespace());
+        let config_map_api: Api<ConfigMap> = Api::namespaced(self.client.clone(), gateway.namespace());
+        let service_account_api: Api<ServiceAccount> = Api::namespaced(self.client.clone(), gateway.namespace());
+        let dp = DeleteParams { ..Default::default() };
+        let (xds_cm, bootstrap_cm) = config_map_names(gateway);
+        let futures = [
+            service_account_api
+                .delete(gateway.name(), &dp)
+                .map(|f| {
+                    if f.is_err() {
+                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
+                    }
+                })
+                .boxed(),
+            service_api
+                .delete(gateway.name(), &dp)
+                .map(|f| {
+                    if f.is_err() {
+                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
+                    }
+                })
+                .boxed(),
+            deployment_api
+                .delete(gateway.name(), &dp)
+                .map(|f| {
+                    if f.is_err() {
+                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
+                    }
+                })
+                .boxed(),
+            config_map_api
+                .delete(&xds_cm, &dp)
+                .map(|f| {
+                    if f.is_err() {
+                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
+                    }
+                })
+                .boxed(),
+            config_map_api
+                .delete(&bootstrap_cm, &dp)
+                .map(|f| {
+                    if f.is_err() {
+                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
+                    }
+                })
+                .boxed(),
+        ];
+        let _res = futures::future::join_all(futures).await;
+    }
+
+    async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext, parent_span: &Span) {
+        if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
+            debug!("Got address address {attached_addresses:?}");
+            let ChangedContext {
+                span,
+                mut gateway,
+                kube_gateway,
+                gateway_class_name,
+            } = ctx;
+            gateway.addresses_mut().append(
+                &mut attached_addresses
+                    .into_iter()
+                    .filter_map(|a| if let Ok(addr) = a.parse() { Some(GatewayAddress::IPAddress(addr)) } else { None })
+                    .collect(),
+            );
+            let _res = self
+                .backend_response_channel_sender
+                .send(BackendGatewayResponse::ProcessedWithContext {
+                    gateway: gateway.clone(),
+                    kube_gateway,
+                    span,
+                    gateway_class_name,
+                })
+                .await;
+        } else {
+            let client = self.client.clone();
+            let resource_key = ResourceKey::from(&service.metadata);
+
+            let backend_response_channel_sender = self.backend_response_channel_sender.clone();
+            let span = span!(parent: parent_span, Level::INFO, "ServiceResolverTask");
+            let _handle = tokio::spawn(
+                async move {
+                    let api: Api<Service> = Api::namespaced(client, &resource_key.namespace);
+                    let ChangedContext {
+                        span,
+                        mut gateway,
+                        kube_gateway,
+                        gateway_class_name,
+                    } = ctx;
+                    let mut interval = time::interval(time::Duration::from_secs(1));
+                    loop {
+                        interval.tick().await;
+                        debug!("Resolving address for Service {}", resource_key);
+                        let maybe_service = api.get(&resource_key.name).await;
+                        if let Ok(service) = maybe_service {
+                            if Self::update_addresses(&mut gateway, &service) {
+                                let _res = backend_response_channel_sender
+                                    .send(BackendGatewayResponse::ProcessedWithContext {
+                                        gateway: gateway.clone(),
+                                        kube_gateway: kube_gateway.clone(),
+                                        span: span.clone(),
+                                        gateway_class_name: gateway_class_name.clone(),
+                                    })
+                                    .await;
+                                break;
+                            }
+                        } else {
+                            warn!("Problem {maybe_service:?}");
+                            let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(gateway.clone())).await;
+                        }
+                    }
+                    debug!("Task completed for gateway {} service {}", gateway.key(), resource_key);
+                }
+                .instrument(span),
+            );
+        }
+    }
+
+    fn find_gateway_addresses(service: &Service) -> Option<Vec<String>> {
+        let mut ips = vec![];
+        if let Some(status) = &service.status {
+            if let Some(load_balancer) = &status.load_balancer {
+                if let Some(ingress) = &load_balancer.ingress {
+                    for i in ingress {
+                        ips.push(i.ip.clone());
+                    }
+                }
+            }
+        };
+        let ips = ips.into_iter().flatten().collect::<Vec<_>>();
+        if ips.is_empty() {
+            None
+        } else {
+            Some(ips)
+        }
+    }
+
+    fn update_addresses(gateway: &mut Gateway, service: &Service) -> bool {
+        if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
+            gateway.addresses_mut().append(
+                &mut attached_addresses
+                    .into_iter()
+                    .filter_map(|a| if let Ok(addr) = a.parse() { Some(GatewayAddress::IPAddress(addr)) } else { None })
+                    .collect(),
+            );
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -172,7 +336,7 @@ async fn deploy_envoy(controller_name: &str, client: Client, gateway: &Gateway, 
         field_manager: Some(controller_name.to_owned()),
         ..Default::default()
     };
-    let bootstrap_content = if let Ok(bootstrap_content) = dynamic_bootstrap_content(secrets) {
+    let bootstrap_content = if let Ok(bootstrap_content) = bootstrap_content_with_secrets(secrets) {
         bootstrap_content
     } else {
         bootstrap_content().to_owned()
@@ -206,115 +370,251 @@ struct Resources {
 
 fn create_resources(gateway: &Gateway) -> Resources {
     let mut listener_resources = vec![];
-    let mut cluster_resources = vec![];
     let mut secret_resources = vec![];
 
-    for listener in gateway.listeners() {
-        match listener {
-            Listener::Http(listener_data) | Listener::Https(listener_data) => {
-                let listener_name = &listener_data.config.name;
+    let resources = ResourceGenerator::new(gateway).generate_resources();
+    let listeners = resources.values();
 
-                let virtual_hosts = generate_virtual_hosts(listener);
-                let http_connection_manager = HttpConnectionManager {
-                    stat_prefix: listener_name.to_owned(),
-                    codec_type: CodecType::Auto.into(),
-                    route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
-                        name: format!("{listener_name}-route"),
-                        virtual_hosts,
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                };
+    for listener in listeners {
+        let router = Router { ..Default::default() };
+        let listener_name = listener.name.clone();
+        let http_connection_manager_router_filter_any = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.router.v3.Router".to_owned(), &router));
 
-                let http_connection_manager_any = converters::AnyTypeConverter::from((
-                    "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager".to_owned(),
-                    &http_connection_manager,
-                ));
+        let router_filter = HttpFilter {
+            name: format!("{listener_name}-http-connection-manager-route-filter"),
+            is_optional: false,
+            disabled: false,
+            config_type: Some(envoy_api::envoy::extensions::filters::network::http_connection_manager::v3::http_filter::ConfigType::TypedConfig(
+                http_connection_manager_router_filter_any,
+            )),
+        };
 
-                let http_connection_manager_filter = Filter {
-                    name: "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager".to_owned(),
-                    config_type: Some(envoy_api::envoy::config::listener::v3::filter::ConfigType::TypedConfig(http_connection_manager_any)),
-                };
+        let virtual_hosts = generate_virtual_hosts_from_xds(&listener.http_listener_map);
+        let http_connection_manager = HttpConnectionManager {
+            stat_prefix: listener_name.clone(),
+            codec_type: CodecType::Auto.into(),
+            http_filters: vec![router_filter],
+            route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
+                name: format!("{listener_name}-route"),
+                virtual_hosts,
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
 
-                let (transport_socket, mut secrets) = if let Some(TlsType::Terminate(secrets)) = listener_data.config.tls_type.as_ref() {
-                    let secrets: Vec<ResourceKey> = secrets
+        let http_connection_manager_any = converters::AnyTypeConverter::from((
+            "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager".to_owned(),
+            &http_connection_manager,
+        ));
+
+        let http_connection_manager_filter = Filter {
+            name: format!("{listener_name}-http-connection-manager"),
+            config_type: Some(envoy_api::envoy::config::listener::v3::filter::ConfigType::TypedConfig(http_connection_manager_any)),
+        };
+
+        let (transport_socket, mut secrets) = if let Some(TlsType::Terminate(secrets)) = listener.tls_type.as_ref() {
+            let secrets: Vec<ResourceKey> = secrets
+                .iter()
+                .cloned()
+                .filter_map(|cert| match cert {
+                    common::Certificate::Resolved(resource_key) => Some(resource_key),
+                    common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) => None,
+                })
+                .collect();
+
+            let downstream_context = DownstreamTlsContext {
+                require_client_certificate: Some(BoolValue { value: false }),
+                full_scan_certs_on_sni_mismatch: Some(BoolValue { value: true }),
+                common_tls_context: Some(CommonTlsContext {
+                    tls_certificate_sds_secret_configs: secrets
                         .iter()
-                        .cloned()
-                        .filter_map(|cert| match cert {
-                            common::Certificate::Resolved(resource_key) => Some(resource_key),
-                            common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) => None,
-                        })
-                        .collect();
-
-                    let downstream_context = DownstreamTlsContext {
-                        require_client_certificate: Some(BoolValue { value: false }),
-                        full_scan_certs_on_sni_mismatch: Some(BoolValue { value: true }),
-                        common_tls_context: Some(CommonTlsContext {
-                            tls_certificate_sds_secret_configs: secrets
-                                .iter()
-                                .map(|s| SdsSecretConfig {
-                                    name: create_secret_name(s),
-                                    ..Default::default()
-                                })
-                                .collect(),
+                        .map(|s| SdsSecretConfig {
+                            name: create_secret_name(s),
                             ..Default::default()
-                        }),
-                        ..Default::default()
-                    };
-
-                    let downstream_context_any = converters::AnyTypeConverter::from((
-                        "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager".to_owned(),
-                        &downstream_context,
-                    ));
-
-                    (
-                        Some(TransportSocket {
-                            config_type: Some(envoy_api::envoy::config::core::v3::transport_socket::ConfigType::TypedConfig(downstream_context_any)),
-                            name: "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager".to_owned(),
-                        }),
-                        secrets,
-                    )
-                } else {
-                    (None, vec![])
-                };
-
-                let envoy_listener = EnvoyListener {
-                    name: listener_name.to_owned(),
-                    address: Some(SocketAddressFactory::from(listener)),
-                    filter_chains: vec![FilterChain {
-                        transport_socket,
-                        filters: vec![http_connection_manager_filter],
-                        ..Default::default()
-                    }],
-
+                        })
+                        .collect(),
                     ..Default::default()
-                };
-                listener_resources.push(resources::create_listener_resource(&envoy_listener));
+                }),
+                ..Default::default()
+            };
 
-                cluster_resources = generate_clusters(listener).iter().map(resources::create_cluster_resource).collect();
-                secret_resources.append(&mut secrets);
-            }
-            _ => warn!("Not implemenented for other listeners"),
-        }
+            let downstream_context_any = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext".to_owned(), &downstream_context));
+
+            (
+                Some(TransportSocket {
+                    config_type: Some(envoy_api::envoy::config::core::v3::transport_socket::ConfigType::TypedConfig(downstream_context_any)),
+                    name: format!("{listener_name}-downstream-tls-context"),
+                }),
+                secrets,
+            )
+        } else {
+            (None, vec![])
+        };
+        let tls_inspector = TlsInspector::default();
+
+        let tls_inspector_listener_filter = ListenerFilter {
+            name: format!("{listener_name}-tls-inspector"),
+            config_type: Some(envoy_api::envoy::config::listener::v3::listener_filter::ConfigType::TypedConfig(converters::AnyTypeConverter::from((
+                "type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector".to_owned(),
+                &tls_inspector,
+            )))),
+            ..Default::default()
+        };
+
+        let envoy_listener = EnvoyListener {
+            name: listener_name.clone(),
+            address: Some(SocketAddressFactory::from(listener)),
+            listener_filters: vec![tls_inspector_listener_filter],
+            filter_chains: vec![FilterChain {
+                transport_socket,
+                filters: vec![http_connection_manager_filter],
+                ..Default::default()
+            }],
+
+            ..Default::default()
+        };
+        listener_resources.push(resources::create_listener_resource(&envoy_listener));
+        secret_resources.append(&mut secrets);
     }
+
+    let cluster_resources = generate_clusters(resources.values()).iter().map(resources::create_cluster_resource).collect();
+
     secret_resources.dedup_by_key(|k| k.name.clone());
     Resources {
         listeners: listener_resources,
         clusters: cluster_resources,
         secrets: secret_resources,
     }
+
+    // for listener in gateway.listeners() {
+    //     match listener {
+    //         Listener::Http(listener_data) | Listener::Https(listener_data) => {
+    //             let listener_name = &listener_data.config.name;
+
+    //             let router = Router { ..Default::default() };
+
+    //             let http_connection_manager_router_filter_any = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.router.v3.Router".to_owned(), &router));
+
+    //             let router_filter = HttpFilter {
+    //                 name: format!("{listener_name}-http-connection-manager-route-filter"),
+    //                 is_optional: false,
+    //                 disabled: false,
+    //                 config_type: Some(envoy_api::envoy::extensions::filters::network::http_connection_manager::v3::http_filter::ConfigType::TypedConfig(
+    //                     http_connection_manager_router_filter_any,
+    //                 )),
+    //             };
+
+    //             let virtual_hosts = generate_virtual_hosts_from_xds(listener);
+    //             let http_connection_manager = HttpConnectionManager {
+    //                 stat_prefix: listener_name.to_owned(),
+    //                 codec_type: CodecType::Auto.into(),
+    //                 http_filters: vec![router_filter],
+    //                 route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
+    //                     name: format!("{listener_name}-route"),
+    //                     virtual_hosts,
+    //                     ..Default::default()
+    //                 })),
+    //                 ..Default::default()
+    //             };
+
+    //             let http_connection_manager_any = converters::AnyTypeConverter::from((
+    //                 "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager".to_owned(),
+    //                 &http_connection_manager,
+    //             ));
+
+    //             let http_connection_manager_filter = Filter {
+    //                 name: format!("{listener_name}-http-connection-manager"),
+    //                 config_type: Some(envoy_api::envoy::config::listener::v3::filter::ConfigType::TypedConfig(http_connection_manager_any)),
+    //             };
+
+    //             let (transport_socket, mut secrets) = if let Some(TlsType::Terminate(secrets)) = listener_data.config.tls_type.as_ref() {
+    //                 let secrets: Vec<ResourceKey> = secrets
+    //                     .iter()
+    //                     .cloned()
+    //                     .filter_map(|cert| match cert {
+    //                         common::Certificate::Resolved(resource_key) => Some(resource_key),
+    //                         common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) => None,
+    //                     })
+    //                     .collect();
+
+    //                 let downstream_context = DownstreamTlsContext {
+    //                     require_client_certificate: Some(BoolValue { value: false }),
+    //                     full_scan_certs_on_sni_mismatch: Some(BoolValue { value: true }),
+    //                     common_tls_context: Some(CommonTlsContext {
+    //                         tls_certificate_sds_secret_configs: secrets
+    //                             .iter()
+    //                             .map(|s| SdsSecretConfig {
+    //                                 name: create_secret_name(s),
+    //                                 ..Default::default()
+    //                             })
+    //                             .collect(),
+    //                         ..Default::default()
+    //                     }),
+    //                     ..Default::default()
+    //                 };
+
+    //                 let downstream_context_any =
+    //                     converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext".to_owned(), &downstream_context));
+
+    //                 (
+    //                     Some(TransportSocket {
+    //                         config_type: Some(envoy_api::envoy::config::core::v3::transport_socket::ConfigType::TypedConfig(downstream_context_any)),
+    //                         name: format!("{listener_name}-downstream-tls-context"),
+    //                     }),
+    //                     secrets,
+    //                 )
+    //             } else {
+    //                 (None, vec![])
+    //             };
+    //             let tls_inspector = TlsInspector::default();
+
+    //             let tls_inspector_listener_filter = ListenerFilter {
+    //                 name: format!("{listener_name}-tls-inspector"),
+    //                 config_type: Some(envoy_api::envoy::config::listener::v3::listener_filter::ConfigType::TypedConfig(converters::AnyTypeConverter::from((
+    //                     "type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector".to_owned(),
+    //                     &tls_inspector,
+    //                 )))),
+    //                 ..Default::default()
+    //             };
+
+    //             let envoy_listener = EnvoyListener {
+    //                 name: listener_name.to_owned(),
+    //                 address: Some(SocketAddressFactory::from(listener)),
+    //                 listener_filters: vec![tls_inspector_listener_filter],
+    //                 filter_chains: vec![FilterChain {
+    //                     transport_socket,
+    //                     filters: vec![http_connection_manager_filter],
+    //                     ..Default::default()
+    //                 }],
+
+    //                 ..Default::default()
+    //             };
+    //             listener_resources.push(resources::create_listener_resource(&envoy_listener));
+
+    //             cluster_resources = generate_clusters(listener).iter().map(resources::create_cluster_resource).collect();
+    //             secret_resources.append(&mut secrets);
+    //         }
+    //         _ => warn!("Not implemenented for other listeners"),
+    //     }
+    // }
+    // secret_resources.dedup_by_key(|k| k.name.clone());
+    // Resources {
+    //     listeners: listener_resources,
+    //     clusters: cluster_resources,
+    //     secrets: secret_resources,
+    // }
 }
 
 enum SocketAddressFactory {}
 impl SocketAddressFactory {
-    fn from(listener: &Listener) -> envoy_api::envoy::config::core::v3::Address {
+    fn from(listener: &backends::common::EnvoyListener) -> envoy_api::envoy::config::core::v3::Address {
         Address {
             address: Some(address::Address::SocketAddress(SocketAddress {
-                protocol: i32::from(listener.protocol()),
                 address: "0.0.0.0".to_owned(),
-                port_specifier: Some(PortSpecifier::PortValue(listener.port().try_into().expect("For time being we expect this to work"))),
+                port_specifier: Some(PortSpecifier::PortValue(listener.port.try_into().expect("For time being we expect this to work"))),
                 resolver_name: String::new(),
                 ipv4_compat: false,
+                ..Default::default()
             })),
         }
     }
@@ -341,13 +641,13 @@ enum DurationConverter {}
 impl DurationConverter {
     fn from(val: std::time::Duration) -> Duration {
         Duration {
-            nanos: val.as_secs().try_into().expect("At the moment we expect this to work"),
-            seconds: val.subsec_nanos().into(),
+            nanos: val.subsec_nanos().try_into().expect("At the moment we expect this to work"),
+            seconds: val.as_secs().try_into().expect("At the moment we expect this to work"),
         }
     }
 }
 
-fn dynamic_bootstrap_content(secrets: &[ResourceKey]) -> Result<String, Error> {
+fn bootstrap_content_with_secrets(secrets: &[ResourceKey]) -> Result<String, Error> {
     use serde::Serialize;
     #[derive(Serialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
     pub struct TeraSecret {
@@ -368,7 +668,7 @@ fn dynamic_bootstrap_content(secrets: &[ResourceKey]) -> Result<String, Error> {
         tera_context.insert("secrets", &tera_secrets);
     }
 
-    Ok(TEMPLATES.render("envoy-bootstrap.yaml.tera", &tera_context)?)
+    Ok(TEMPLATES.render("envoy-bootstrap-dynamic.yaml.tera", &tera_context)?)
 }
 
 fn bootstrap_content() -> &'static str {
@@ -599,6 +899,18 @@ fn generate_virtual_hosts(listener: &Listener) -> Vec<VirtualHost> {
     virtual_hosts
 }
 
+fn generate_virtual_hosts_from_xds(virtual_hosts: &BTreeSet<backends::common::EnvoyVirtualHost>) -> Vec<VirtualHost> {
+    virtual_hosts
+        .iter()
+        .map(|vh| VirtualHost {
+            name: vh.name.clone(),
+            domains: vh.effective_hostnames.clone(),
+            routes: vh.effective_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
+            ..Default::default()
+        })
+        .collect()
+}
+
 struct ClusterHolder {
     name: String,
     cluster: EnvoyCluster,
@@ -622,57 +934,108 @@ impl Ord for ClusterHolder {
     }
 }
 
-fn generate_clusters(listener: &Listener) -> Vec<EnvoyCluster> {
-    let (resolved_routes, unresolved_routes) = listener.routes();
-    let all_routes = resolved_routes.iter().chain(unresolved_routes.iter()).filter(|r| match r {
-        Route::Http(_) => true,
-        Route::Grpc(_) => false,
-    });
+fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) -> Vec<EnvoyCluster> {
+    let clusters: BTreeSet<ClusterHolder> = listeners
+        .flat_map(|listener| {
+            listener.http_listener_map.iter().flat_map(|evc| {
+                evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
+                    r.routing_rules().iter().flat_map(|rr| {
+                        rr.backends
+                            .iter()
+                            .filter(|b| b.weight() > 0)
+                            .filter_map(|b| match b {
+                                Backend::Resolved(backend_service_config) => Some(backend_service_config),
+                                _ => None,
+                            })
+                            .map(|r| ClusterHolder {
+                                name: r.cluster_name(),
+                                cluster: EnvoyCluster {
+                                    name: r.cluster_name(),
+                                    cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::StrictDns.into())),
+                                    lb_policy: LbPolicy::RoundRobin.into(),
+                                    connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
+                                    load_assignment: Some(ClusterLoadAssignment {
+                                        cluster_name: r.cluster_name(),
+                                        endpoints: vec![LocalityLbEndpoints {
+                                            lb_endpoints: vec![LbEndpoint {
+                                                host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
+                                                    address: Some(SocketAddressFactory::from_backend(r)),
+                                                    ..Default::default()
+                                                })),
+                                                load_balancing_weight: Some(UInt32Value {
+                                                    value: r.weight.try_into().expect("For time being we expect this to work"),
+                                                }),
 
-    all_routes
-        .flat_map(|route| {
-            route.routing_rules().iter().flat_map(|rr| {
-                rr.backends
-                    .iter()
-                    .filter(|b| b.weight() > 0)
-                    .filter_map(|b| match b {
-                        Backend::Resolved(backend_service_config) => Some(backend_service_config),
-                        _ => None,
-                    })
-                    .map(|r| ClusterHolder {
-                        name: r.cluster_name(),
-                        cluster: EnvoyCluster {
-                            name: r.cluster_name(),
-                            cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::StrictDns.into())),
-                            lb_policy: LbPolicy::RoundRobin.into(),
-                            connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
-                            load_assignment: Some(ClusterLoadAssignment {
-                                cluster_name: r.cluster_name(),
-                                endpoints: vec![LocalityLbEndpoints {
-                                    lb_endpoints: vec![LbEndpoint {
-                                        host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
-                                            address: Some(SocketAddressFactory::from_backend(r)),
+                                                ..Default::default()
+                                            }],
                                             ..Default::default()
-                                        })),
-                                        load_balancing_weight: Some(UInt32Value {
-                                            value: r.weight.try_into().expect("For time being we expect this to work"),
-                                        }),
-
+                                        }],
                                         ..Default::default()
-                                    }],
-                                    ..Default::default()
-                                }],
-                                ..Default::default()
-                            }),
+                                    }),
 
-                            ..Default::default()
-                        },
+                                    ..Default::default()
+                                },
+                            })
                     })
+                })
             })
         })
-        .map(|h| h.cluster)
-        .collect()
+        .collect();
+
+    clusters.into_iter().map(|c| c.cluster).collect::<Vec<_>>()
 }
+
+// fn generate_clusters(listener: &Listener) -> Vec<EnvoyCluster> {
+//     let (resolved_routes, unresolved_routes) = listener.routes();
+//     let all_routes = resolved_routes.iter().chain(unresolved_routes.iter()).filter(|r| match r {
+//         Route::Http(_) => true,
+//         Route::Grpc(_) => false,
+//     });
+
+//     all_routes
+//         .flat_map(|route| {
+//             route.routing_rules().iter().flat_map(|rr| {
+//                 rr.backends
+//                     .iter()
+//                     .filter(|b| b.weight() > 0)
+//                     .filter_map(|b| match b {
+//                         Backend::Resolved(backend_service_config) => Some(backend_service_config),
+//                         _ => None,
+//                     })
+//                     .map(|r| ClusterHolder {
+//                         name: r.cluster_name(),
+//                         cluster: EnvoyCluster {
+//                             name: r.cluster_name(),
+//                             cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::StrictDns.into())),
+//                             lb_policy: LbPolicy::RoundRobin.into(),
+//                             connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
+//                             load_assignment: Some(ClusterLoadAssignment {
+//                                 cluster_name: r.cluster_name(),
+//                                 endpoints: vec![LocalityLbEndpoints {
+//                                     lb_endpoints: vec![LbEndpoint {
+//                                         host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
+//                                             address: Some(SocketAddressFactory::from_backend(r)),
+//                                             ..Default::default()
+//                                         })),
+//                                         load_balancing_weight: Some(UInt32Value {
+//                                             value: r.weight.try_into().expect("For time being we expect this to work"),
+//                                         }),
+
+//                                         ..Default::default()
+//                                     }],
+//                                     ..Default::default()
+//                                 }],
+//                                 ..Default::default()
+//                             }),
+
+//                             ..Default::default()
+//                         },
+//                     })
+//             })
+//         })
+//         .map(|h| h.cluster)
+//         .collect()
+// }
 
 fn calculate_potential_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
     let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {

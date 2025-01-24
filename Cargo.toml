@@ -44,9 +44,11 @@ serde_yaml = "0.9"
 
 
 [features]
-default = ["standard"]
+default = ["standard", "envoy_xds"]
 standard = []
 experimental = []
+envoy_xds = []
+envoy_cm = []
 
 [profile.release]
 codegen-units = 1
