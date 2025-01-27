@@ -38,8 +38,8 @@ pub enum ServerAction {
 impl Display for ServerAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ServerAction::UpdateClusters { gateway_id, resources: _ } => write!(f, "UpdateClusters {{{gateway_id}}}"),
-            ServerAction::UpdateListeners { gateway_id, resources: _ } => write!(f, "UpdateListeners {{{gateway_id}}}"),
+            ServerAction::UpdateClusters { gateway_id, resources } => write!(f, "ServerAction::UpdateClusters {{gateway_id: {gateway_id}, resources: {} }}", resources.len()),
+            ServerAction::UpdateListeners { gateway_id, resources } => write!(f, "ServerAction::UpdateListeners {{gateway_id: {gateway_id}, resources: {} }}", resources.len()),
         }
     }
 }
@@ -175,11 +175,11 @@ impl AggregateServerService {
         loop {
             tokio::select! {
                     Some(event) = stream_resources_rx.recv() => {
-                        info!("Aggregated service got event {event}");
+                        info!("{event}");
                         match event{
                             ServerAction::UpdateClusters{ gateway_id: gateway_key, resources } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
-                                info!("Got envoy cluster {gateway_key} {gateway_id}");
+
 
                                 {
                                     let mut channels = ads_channels.lock().expect("We expect lock to work");
@@ -204,7 +204,7 @@ impl AggregateServerService {
                             },
                             ServerAction::UpdateListeners{ gateway_id: gateway_key, resources } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
-                                info!("Got envoy listener {gateway_key} {gateway_id}");
+
 
                                 {
                                     let mut channels = ads_channels.lock().expect("We expect lock to work");
@@ -267,8 +267,14 @@ impl AggregatedDiscoveryService for AggregateServer {
 
             while let Some(item) = incoming_stream.next().await {
                 if let Ok(request) = item {
-                    if let Some(error) = request.error_detail {
-                        warn!("Got error... skipping  {error:?}");
+                    if let Some(status) = request.error_detail {
+                        warn!("Got error... skipping  {status:?}");
+                        // if status.code == 13 {
+                        //     info!("Got warning... {status:?}");
+                        // } else {
+                        //     warn!("Got error... skipping  {status:?}");
+                        //     continue;
+                        // }
                         continue;
                     }
                     let Some(node) = request.node.as_ref() else {

@@ -1,6 +1,5 @@
-use std::collections::{btree_map::Values, BTreeMap, BTreeSet};
-
 use envoy_api::envoy::config::listener::v3::ListenerFilter;
+use envoy_api::envoy::config::route::v3::route_action;
 use envoy_api::envoy::extensions::filters::listener::tls_inspector::v3::TlsInspector;
 use envoy_api::{
     envoy::{
@@ -44,12 +43,14 @@ use k8s_openapi::{
     },
     apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
 };
+
 use kube::{
     api::{DeleteParams, Patch, PatchParams},
     Api, Client,
 };
 use kube_core::ObjectMeta;
 use lazy_static::lazy_static;
+use std::collections::{btree_map::Values, BTreeMap, BTreeSet};
 use tera::Tera;
 use tokio::{
     sync::mpsc::{self, Receiver, Sender},
@@ -117,7 +118,7 @@ impl EnvoyDeployerChannelHandlerService {
 
                                     let maybe_service = deploy_envoy(&controller_name, client.clone(), gateway, &secrets).instrument(span.clone()).await;
                                     if let Ok(service) = maybe_service{
-                                        info!("Service deployed {service:?} listeners {} clusters {}", listeners.len(), clusters.len());
+                                        info!("Service deployed {:?} listeners {} clusters {}", service.metadata.name, listeners.len(), clusters.len());
 
                                         // let cluster1 = resources::create_cluster_with_endpoints("some_cluster1", "127.0.0.1:9080".parse().expect("should work"), 1, false);
                                         // let cluster2 = resources::create_cluster_with_endpoints("some_cluster2", "127.0.0.1:9080".parse().expect("should work"), 1, false);
@@ -130,7 +131,6 @@ impl EnvoyDeployerChannelHandlerService {
                                         // let listener2 = resources::create_listener("some_listener2", "0.0.0.0:10001".parse().expect("should work"),CodecType::Auto, vec!["*".to_owned()], vec![("some_cluster2".to_owned(),100)]);
                                         // let listener_resource1 = resources::create_listener_resource(listener1);
                                         // let listener_resource2 = resources::create_listener_resource(listener2);
-
 
                                         let _ = stream_resource_sender.send(ServerAction::UpdateListeners{gateway_id: gateway.key().clone(), resources: listeners}).await;
 
@@ -397,6 +397,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
             route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
                 name: format!("{listener_name}-route"),
                 virtual_hosts,
+                validate_clusters: Some(BoolValue { value: false }),
                 ..Default::default()
             })),
             ..Default::default()
@@ -473,6 +474,8 @@ fn create_resources(gateway: &Gateway) -> Resources {
 
             ..Default::default()
         };
+
+        warn!("Creating listener {envoy_listener:#?}");
         listener_resources.push(resources::create_listener_resource(&envoy_listener));
         secret_resources.append(&mut secrets);
     }
@@ -1127,7 +1130,7 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
 
         let request_headers_to_remove = request_filter_headers.remove;
 
-        let mut cluster_names: Vec<_> = effective_routing_rule
+        let cluster_names: Vec<_> = effective_routing_rule
             .backends
             .iter()
             .filter(|b| b.weight() > 0)
@@ -1139,21 +1142,31 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
                 ..Default::default()
             })
             .collect();
-
-        let cluster_action = if cluster_names.len() == 1 {
-            let cluster_name = cluster_names.remove(0).name;
-            RouteAction {
-                cluster_specifier: Some(ClusterSpecifier::Cluster(cluster_name)),
+        let cluster_action = RouteAction {
+            cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
+            cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
+                clusters: cluster_names,
                 ..Default::default()
-            }
-        } else {
-            let clusters: Vec<_> = cluster_names;
-
-            RouteAction {
-                cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster { clusters, ..Default::default() })),
-                ..Default::default()
-            }
+            })),
+            ..Default::default()
         };
+
+        // let cluster_action = if cluster_names.len() == 1 {
+        //     let cluster_name = cluster_names.remove(0).name;
+        //     RouteAction {
+        //         cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
+        //         cluster_specifier: Some(ClusterSpecifier::Cluster(cluster_name)),
+        //         ..Default::default()
+        //     }
+        // } else {
+        //     let clusters: Vec<_> = cluster_names;
+
+        //     RouteAction {
+        //         cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
+        //         cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster { clusters, ..Default::default() })),
+        //         ..Default::default()
+        //     }
+        // };
 
         let action: Action = if let Some(redirect_action) = effective_routing_rule.redirect_filter.clone().map(|f| RedirectAction {
             host_redirect: f.hostname.unwrap_or_default(),
@@ -1206,7 +1219,7 @@ const ENVOY_POD_SPEC: &str = r#"
                 "/envoy-config/envoy-bootstrap.yaml",
                 "--service-cluster $(GATEWAY_NAMESPACE)",
                 "--service-node $(ENVOY_POD_NAME)",
-                "--log-level debug"
+                "--log-level info"
             ],
             "command": [
                 "envoy"
