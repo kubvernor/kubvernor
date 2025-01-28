@@ -51,7 +51,7 @@ pub struct EnvoyDeployerChannelHandlerService {
 }
 
 impl EnvoyDeployerChannelHandlerService {
-    pub async fn start(&mut self) {
+    pub async fn start(&mut self) -> crate::Result<()> {
         info!("Gateways handler started");
         loop {
             tokio::select! {
@@ -86,6 +86,7 @@ impl EnvoyDeployerChannelHandlerService {
                     }
             }
         }
+        crate::Result::<()>::Ok(())
     }
 
     async fn deploy_envoy(&self, gateway: &Gateway) -> std::result::Result<Service, kube::Error> {

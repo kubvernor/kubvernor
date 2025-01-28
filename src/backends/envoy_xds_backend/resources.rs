@@ -1,8 +1,9 @@
-use envoy_api::prost::{self, Message};
-
-use envoy_api::envoy::{
-    config::{cluster::v3::Cluster, listener::v3::Listener},
-    service::discovery::v3::Resource,
+use envoy_api::{
+    envoy::{
+        config::{cluster::v3::Cluster, listener::v3::Listener},
+        service::discovery::v3::Resource,
+    },
+    prost::{self, Message},
 };
 
 use super::{converters, model::TypeUrl};

@@ -1,20 +1,25 @@
-use envoy_api::envoy::config::core::v3::Node as EnvoyNode;
-use futures::FutureExt;
-
 use std::{
+    collections::BTreeMap,
     fmt::Display,
     net::SocketAddr,
+    ops::AddAssign,
     pin::Pin,
     sync::{Arc, Mutex},
 };
 
-use envoy_api::envoy::service::discovery::v3::{
-    aggregated_discovery_service_server::{AggregatedDiscoveryService, AggregatedDiscoveryServiceServer},
-    DeltaDiscoveryRequest, DeltaDiscoveryResponse, DiscoveryRequest, DiscoveryResponse, Resource,
+use envoy_api::{
+    envoy::{
+        config::core::v3::Node as EnvoyNode,
+        service::discovery::v3::{
+            aggregated_discovery_service_server::{AggregatedDiscoveryService, AggregatedDiscoveryServiceServer},
+            DeltaDiscoveryRequest, DeltaDiscoveryResponse, DiscoveryRequest, DiscoveryResponse, Resource,
+        },
+    },
+    tonic::{transport::Server, IntoStreamingRequest, Response, Status},
 };
-use envoy_api::tonic::{transport::Server, IntoStreamingRequest, Response, Status};
-
-use multimap::MultiMap;
+use futures::FutureExt;
+use k8s_openapi::api::core::v1::Pod;
+use kube::Api;
 use tokio::{
     net::TcpListener,
     sync::mpsc::{self, Receiver},
@@ -31,23 +36,51 @@ use crate::{
 };
 
 pub enum ServerAction {
-    UpdateClusters { gateway_id: ResourceKey, resources: Vec<Resource> },
-    UpdateListeners { gateway_id: ResourceKey, resources: Vec<Resource> },
+    UpdateClusters { gateway_id: ResourceKey, resources: Vec<Resource>, ack_version: u32 },
+    UpdateListeners { gateway_id: ResourceKey, resources: Vec<Resource>, ack_version: u32 },
 }
 
 impl Display for ServerAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ServerAction::UpdateClusters { gateway_id, resources } => write!(f, "ServerAction::UpdateClusters {{gateway_id: {gateway_id}, resources: {} }}", resources.len()),
-            ServerAction::UpdateListeners { gateway_id, resources } => write!(f, "ServerAction::UpdateListeners {{gateway_id: {gateway_id}, resources: {} }}", resources.len()),
+            ServerAction::UpdateClusters { gateway_id, resources, ack_version } => write!(
+                f,
+                "ServerAction::UpdateClusters {{gateway_id: {gateway_id}, resources: {}, ack_version: {ack_version} }}",
+                resources.len()
+            ),
+            ServerAction::UpdateListeners { gateway_id, resources, ack_version } => write!(
+                f,
+                "ServerAction::UpdateListeners {{gateway_id: {gateway_id}, resources: {}, ack_version: {ack_version} }}",
+                resources.len()
+            ),
         }
     }
 }
 
 #[derive(Debug, Clone, Default)]
-struct AckVersions {
+pub struct AckVersions {
     cluster: u32,
     listener: u32,
+}
+
+impl AddAssign<u32> for AckVersions {
+    fn add_assign(&mut self, rhs: u32) {
+        self.cluster += rhs;
+        self.listener += rhs;
+    }
+}
+
+impl AckVersions {
+    pub fn inc(&mut self) {
+        *self += 1;
+    }
+    pub fn listener(&self) -> u32 {
+        self.listener
+    }
+
+    pub fn cluster(&self) -> u32 {
+        self.cluster
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +112,7 @@ impl AdsClient {
     fn versions_mut(&mut self) -> &mut AckVersions {
         &mut self.ack_versions
     }
+
     fn set_gateway_id(&mut self, gateway_id: &str) {
         self.gateway_id = Some(gateway_id.to_owned());
     }
@@ -86,8 +120,8 @@ impl AdsClient {
 
 #[derive(Debug, Default)]
 struct ResourcesMapping {
-    cluster: MultiMap<String, Vec<Resource>>,
-    listener: MultiMap<String, Vec<Resource>>,
+    cluster: BTreeMap<String, Vec<Resource>>,
+    listener: BTreeMap<String, Vec<Resource>>,
     // route: MultiMap<String, Resource>,
 }
 
@@ -141,8 +175,9 @@ impl AdsClients {
 }
 
 pub type ResourceAction = ServerAction;
-#[derive(Debug)]
+
 pub struct AggregateServer {
+    kube_client: kube::Client,
     ads_channels: Arc<Mutex<ResourcesMapping>>,
     ads_clients: AdsClients,
 }
@@ -155,8 +190,12 @@ pub struct AggregateServerService {
 }
 
 impl AggregateServer {
-    fn new(ads_channels: Arc<Mutex<ResourcesMapping>>, ads_clients: AdsClients) -> Self {
-        Self { ads_channels, ads_clients }
+    fn new(kube_client: kube::Client, ads_channels: Arc<Mutex<ResourcesMapping>>, ads_clients: AdsClients) -> Self {
+        Self {
+            kube_client,
+            ads_channels,
+            ads_clients,
+        }
     }
 }
 impl AggregateServerService {
@@ -177,7 +216,7 @@ impl AggregateServerService {
                     Some(event) = stream_resources_rx.recv() => {
                         info!("{event}");
                         match event{
-                            ServerAction::UpdateClusters{ gateway_id: gateway_key, resources } => {
+                            ServerAction::UpdateClusters{ gateway_id: gateway_key, resources, ack_version } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
 
 
@@ -194,15 +233,15 @@ impl AggregateServerService {
                                         type_url: TypeUrl::Cluster.to_string(),
                                         resources: resources.iter().map(|resource| resource.resource.clone().expect("We expect this to work")).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
-                                        version_info: client.versions().cluster.to_string(),
+                                        version_info: ack_version.to_string(),
                                         ..Default::default()
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                    client.versions_mut().cluster+=1;
+                                    client.versions_mut().cluster = ack_version;
                                     ads_clients.update_client(client);
                                 }
                             },
-                            ServerAction::UpdateListeners{ gateway_id: gateway_key, resources } => {
+                            ServerAction::UpdateListeners{ gateway_id: gateway_key, resources, ack_version } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
 
 
@@ -219,11 +258,11 @@ impl AggregateServerService {
                                         type_url: TypeUrl::Listener.to_string(),
                                         resources: resources.iter().map(|resource| resource.resource.clone().expect("We expect this to work")).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
-                                        version_info: client.versions().listener.to_string(),
+                                        version_info: ack_version.to_string(),
                                         ..Default::default()
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                    client.versions_mut().listener+=1;
+                                    client.versions_mut().listener = ack_version;
                                     ads_clients.update_client(client);
                                 }
                             },
@@ -255,7 +294,7 @@ impl AggregatedDiscoveryService for AggregateServer {
         };
 
         let (tx, rx) = mpsc::channel(128);
-
+        let kube_client = self.kube_client.clone();
         let ads_channels = Arc::clone(&self.ads_channels);
         self.ads_clients.replace_client(AdsClient::new(client_ip, tx.clone()));
 
@@ -264,24 +303,18 @@ impl AggregatedDiscoveryService for AggregateServer {
 
         tokio::spawn(async move {
             let tx = tx.clone();
-
             while let Some(item) = incoming_stream.next().await {
                 if let Ok(request) = item {
                     if let Some(status) = request.error_detail {
                         warn!("Got error... skipping  {status:?}");
-                        // if status.code == 13 {
-                        //     info!("Got warning... {status:?}");
-                        // } else {
-                        //     warn!("Got error... skipping  {status:?}");
-                        //     continue;
-                        // }
                         continue;
                     }
                     let Some(node) = request.node.as_ref() else {
                         warn!("Node is empty");
                         continue;
                     };
-                    let Some(gateway_id) = create_gateway_id_from_node_id(node) else {
+
+                    let Some(gateway_id) = fetch_gateway_id_by_node_id(kube_client.clone(), node).await else {
                         warn!("Node id is invalid {:?}", node.id);
                         continue;
                     };
@@ -316,8 +349,8 @@ impl AggregatedDiscoveryService for AggregateServer {
                                 debug!("Versions match... ignoring");
                             } else {
                                 let resources = {
-                                    let channels = ads_channels.lock().expect("We expect the lock to work");
-                                    channels.cluster.get_vec(&gateway_id).cloned()
+                                    let resource_mappings = ads_channels.lock().expect("We expect the lock to work");
+                                    resource_mappings.cluster.get(&gateway_id).cloned()
                                 };
 
                                 info!(
@@ -327,21 +360,19 @@ impl AggregatedDiscoveryService for AggregateServer {
 
                                 if let Some(resources) = resources {
                                     if !resources.is_empty() {
-                                        ads_client.versions_mut().cluster += 1;
+                                        //ads_client.versions_mut().cluster += 1;
                                         ads_clients.update_client(&ads_client);
                                     }
                                     let ack_version = ads_client.ack_versions.cluster;
-                                    for any_channels in resources {
-                                        let response = DiscoveryResponse {
-                                            type_url: TypeUrl::Cluster.to_string(),
-                                            resources: any_channels.iter().map(|resource| resource.resource.clone().expect("We would expect this to work")).collect(),
-                                            nonce: uuid::Uuid::new_v4().to_string(),
-                                            version_info: ack_version.to_string(),
+                                    let response = DiscoveryResponse {
+                                        type_url: TypeUrl::Cluster.to_string(),
+                                        resources: resources.iter().map(|resource| resource.resource.clone().expect("We would expect this to work")).collect(),
+                                        nonce: uuid::Uuid::new_v4().to_string(),
+                                        version_info: ack_version.to_string(),
 
-                                            ..Default::default()
-                                        };
-                                        let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                    }
+                                        ..Default::default()
+                                    };
+                                    let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
                                 };
                             }
                         }
@@ -352,7 +383,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                             } else {
                                 let resources = {
                                     let channels = ads_channels.lock().expect("We expect the lock to work");
-                                    channels.listener.get_vec(&gateway_id).cloned()
+                                    channels.listener.get(&gateway_id).cloned()
                                 };
 
                                 info!(
@@ -360,24 +391,28 @@ impl AggregatedDiscoveryService for AggregateServer {
                                     resources.as_ref().map(std::vec::Vec::len)
                                 );
 
+                                if let Some(resources) = &resources {
+                                    for v in resources {
+                                        debug!("Updating resource {} {:?}", v.name, v.resource_name);
+                                    }
+                                }
+
                                 if let Some(resources) = resources {
                                     if !resources.is_empty() {
-                                        ads_client.versions_mut().listener += 1;
+                                        //ads_client.versions_mut().listener += 1;
                                         ads_clients.update_client(&ads_client);
                                     }
                                     let ack_version = ads_client.ack_versions.listener;
 
-                                    for any_channels in resources {
-                                        let response = DiscoveryResponse {
-                                            type_url: TypeUrl::Listener.to_string(),
-                                            resources: any_channels.iter().map(|resource| resource.resource.clone().expect("We expect this to work")).collect(),
-                                            nonce: uuid::Uuid::new_v4().to_string(),
-                                            version_info: ack_version.to_string(),
+                                    let response = DiscoveryResponse {
+                                        type_url: TypeUrl::Listener.to_string(),
+                                        resources: resources.iter().map(|resource| resource.resource.clone().expect("We expect this to work")).collect(),
+                                        nonce: uuid::Uuid::new_v4().to_string(),
+                                        version_info: ack_version.to_string(),
 
-                                            ..Default::default()
-                                        };
-                                        let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                    }
+                                        ..Default::default()
+                                    };
+                                    let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
                                 };
                             }
                         }
@@ -390,7 +425,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                 }
             }
 
-            info!("Server side closed... we should clean up the resources");
+            info!("Server side closed... removing client {client_ip}");
             ads_clients.remove_client(client_ip);
         });
 
@@ -411,12 +446,12 @@ impl AggregatedDiscoveryService for AggregateServer {
     }
 }
 
-pub async fn start_aggregate_server(server_address: SocketAddr, stream_resources_rx: Receiver<ResourceAction>) {
-    let stream = TcpListenerStream::new(TcpListener::bind(server_address).await.expect("Expect this to work "));
+pub async fn start_aggregate_server(kube_client: kube::Client, server_address: SocketAddr, stream_resources_rx: Receiver<ResourceAction>) -> crate::Result<()> {
+    let stream = TcpListenerStream::new(TcpListener::bind(server_address).await?);
     let channels = Arc::new(Mutex::new(ResourcesMapping::default()));
     let ads_clients = AdsClients::new();
     let service = AggregateServerService::new(stream_resources_rx, Arc::clone(&channels), ads_clients.clone());
-    let server = AggregateServer::new(channels, ads_clients);
+    let server = AggregateServer::new(kube_client, channels, ads_clients);
     let aggregate_server = AggregatedDiscoveryServiceServer::new(server);
     let server = Server::builder()
         .concurrency_limit_per_connection(256)
@@ -435,19 +470,22 @@ pub async fn start_aggregate_server(server_address: SocketAddr, stream_resources
     .boxed();
     //info!("Server exited {server:?}");
     futures::future::join_all(vec![server, service]).await;
+    Ok(())
 }
 
-const POSTFIX_LENGTH: usize = 17;
-// for example id is gateway-one-74dd5dbc59-6jmmw
-// and postfix is -74dd5dbc59-6jmmw
-fn create_gateway_id_from_node_id(node: &EnvoyNode) -> Option<String> {
+async fn fetch_gateway_id_by_node_id(client: kube::Client, node: &EnvoyNode) -> Option<String> {
     let id = &node.id;
     let namespace = &node.cluster;
-
-    (id.len() > POSTFIX_LENGTH).then(|| {
-        let len = id.len() - POSTFIX_LENGTH;
-        create_id(&id[..len], namespace)
-    })
+    let api_client: kube::api::Api<Pod> = Api::namespaced(client, namespace);
+    if let Ok(pod) = api_client.get(id).await {
+        if let Some(labels) = pod.metadata.labels {
+            if let Some(gateway_id) = labels.get("app") {
+                debug!("create_gateway_id_from_node_id:: Node id {id} {gateway_id:?}");
+                return Some(create_id(gateway_id, namespace));
+            }
+        }
+    }
+    None
 }
 
 fn create_gateway_id(gateway_id: &ResourceKey) -> String {

@@ -6,43 +6,12 @@ use crate::{
     common::{self, EffectiveRoutingRule, Listener, ProtocolType, Route, TlsType, DEFAULT_ROUTE_HOSTNAME},
     controllers::HostnameMatchFilter,
 };
-#[derive(Debug)]
-pub struct RdsData {
-    pub route_name: String,
-    pub rds_content: String,
-}
-impl RdsData {
-    pub fn new(route_name: String, rds_content: String) -> Self {
-        Self { route_name, rds_content }
-    }
-}
-
-#[allow(clippy::struct_field_names)]
-#[derive(Debug)]
-pub struct XdsData {
-    pub bootstrap_content: String,
-    pub lds_content: String,
-    pub rds_content: Vec<RdsData>,
-    pub cds_content: String,
-}
-
-impl XdsData {
-    pub fn new(bootstrap_content: String, lds_content: String, rds_content: Vec<RdsData>, cds_content: String) -> Self {
-        Self {
-            bootstrap_content,
-            lds_content,
-            rds_content,
-            cds_content,
-        }
-    }
-}
 
 type ListenerNameToHostname = (String, Option<String>);
 
 #[derive(Debug, Clone)]
 pub struct EnvoyVirtualHost {
     pub name: String,
-    pub hostname: Option<String>,
     pub effective_hostnames: Vec<String>,
     pub resolved_routes: Vec<Route>,
     pub unresolved_routes: Vec<Route>,
@@ -77,8 +46,6 @@ pub struct EnvoyListener {
     pub tcp_listener_map: BTreeSet<ListenerNameToHostname>,
     pub tls_type: Option<TlsType>,
 }
-
-type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 pub struct ResourceGenerator<'a> {
     effective_gateway: &'a common::Gateway,
@@ -170,7 +137,6 @@ impl<'a> ResourceGenerator<'a> {
             listener_map.insert(EnvoyVirtualHost {
                 effective_matching_rules,
                 name: listener.name().to_owned() + "-" + &potential_hostname,
-                hostname: listener.hostname().cloned(),
                 effective_hostnames: Self::calculate_effective_hostnames(&resolved, Some(potential_hostname)),
                 resolved_routes: resolved.iter().map(|r| (**r).clone()).collect(),
                 unresolved_routes: unresolved.iter().map(|r| (**r).clone()).collect(),

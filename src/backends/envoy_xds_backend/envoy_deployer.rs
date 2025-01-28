@@ -1,6 +1,5 @@
-use envoy_api::envoy::config::listener::v3::ListenerFilter;
-use envoy_api::envoy::config::route::v3::route_action;
-use envoy_api::envoy::extensions::filters::listener::tls_inspector::v3::TlsInspector;
+use std::collections::{btree_map::Values, BTreeMap, BTreeSet};
+
 use envoy_api::{
     envoy::{
         config::{
@@ -10,15 +9,16 @@ use envoy_api::{
             },
             core::v3::{address, header_value_option::HeaderAppendAction, socket_address::PortSpecifier, Address, HeaderValue, HeaderValueOption, SocketAddress, TransportSocket},
             endpoint::v3::{lb_endpoint::HostIdentifier, ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints},
-            listener::v3::{Filter, FilterChain, Listener as EnvoyListener},
+            listener::v3::{Filter, FilterChain, Listener as EnvoyListener, ListenerFilter},
             route::v3::{
-                header_matcher::HeaderMatchSpecifier, route::Action, route_action::ClusterSpecifier, route_match::PathSpecifier, weighted_cluster::ClusterWeight, HeaderMatcher, RedirectAction,
-                Route as EnvoyRoute, RouteAction, RouteConfiguration, RouteMatch, VirtualHost, WeightedCluster,
+                header_matcher::HeaderMatchSpecifier, redirect_action, route::Action, route_action, route_action::ClusterSpecifier, route_match::PathSpecifier, weighted_cluster::ClusterWeight,
+                HeaderMatcher, RedirectAction, Route as EnvoyRoute, RouteAction, RouteConfiguration, RouteMatch, VirtualHost, WeightedCluster,
             },
         },
         extensions::{
             filters::{
                 http::router::v3::Router,
+                listener::tls_inspector::v3::TlsInspector,
                 network::http_connection_manager::v3::{
                     http_connection_manager::{CodecType, RouteSpecifier},
                     HttpConnectionManager, HttpFilter,
@@ -26,7 +26,7 @@ use envoy_api::{
             },
             transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig},
         },
-        r#type::matcher::v3::RegexMatcher,
+        r#type::matcher::v3::{string_matcher::MatchPattern, RegexMatcher, StringMatcher},
         service::discovery::v3::Resource as EnvoyDiscoveryResource,
     },
     google::protobuf::{BoolValue, Duration, UInt32Value},
@@ -43,39 +43,33 @@ use k8s_openapi::{
     },
     apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
 };
-
 use kube::{
     api::{DeleteParams, Patch, PatchParams},
     Api, Client,
 };
 use kube_core::ObjectMeta;
 use lazy_static::lazy_static;
-use std::collections::{btree_map::Values, BTreeMap, BTreeSet};
 use tera::Tera;
 use tokio::{
     sync::mpsc::{self, Receiver, Sender},
     time,
 };
-
 use tracing::{debug, info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-use crate::backends;
-use crate::backends::common::ResourceGenerator;
-use crate::{
-    backends::envoy_xds_backend::resources,
-    common::{
-        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, DeletedContext, EffectiveRoutingRule, Gateway, GatewayAddress, Listener,
-        ProtocolType, ResourceKey, Route, TlsType, DEFAULT_ROUTE_HOSTNAME,
-    },
-    controllers::HostnameMatchFilter,
-    Error,
-};
-
 use super::{
     converters,
-    server::{start_aggregate_server, ServerAction},
+    server::{start_aggregate_server, AckVersions, ServerAction},
+};
+use crate::{
+    backends,
+    backends::{common::ResourceGenerator, envoy_xds_backend::resources},
+    common::{
+        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig, DeletedContext, EffectiveRoutingRule, Gateway,
+        GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType,
+    },
+    Error,
 };
 
 lazy_static! {
@@ -92,17 +86,20 @@ lazy_static! {
 
 #[derive(TypedBuilder)]
 pub struct EnvoyDeployerChannelHandlerService {
-    controller_name: String,
+    control_plane_config: ControlPlaneConfig,
     client: Client,
     backend_deploy_request_channel_receiver: Receiver<BackendGatewayEvent>,
     backend_response_channel_sender: Sender<BackendGatewayResponse>,
 }
 
 impl EnvoyDeployerChannelHandlerService {
-    pub async fn start(&mut self) {
+    pub async fn start(&mut self) -> crate::Result<()> {
         let (stream_resource_sender, stream_resource_receiver) = mpsc::channel::<ServerAction>(1024);
-        let controller_name = self.controller_name.clone();
+        let control_plane_config = self.control_plane_config.clone();
         let client = self.client.clone();
+        let kube_client = self.client.clone();
+        let mut ack_versions = BTreeMap::<ResourceKey, AckVersions>::new();
+        let server_socket = control_plane_config.addr();
         let envoy_deployer_service = async move {
             info!("Gateways handler started");
             loop {
@@ -116,23 +113,13 @@ impl EnvoyDeployerChannelHandlerService {
                                     let _entered = span.enter();
                                     let Resources{listeners, clusters, secrets} = create_resources(gateway);
 
-                                    let maybe_service = deploy_envoy(&controller_name, client.clone(), gateway, &secrets).instrument(span.clone()).await;
+                                    let ack_version = ack_versions.entry(gateway.key().clone()).and_modify(super::server::AckVersions::inc).or_default();
+
+                                    let maybe_service = deploy_envoy(&control_plane_config, client.clone(), gateway, &secrets).instrument(span.clone()).await;
                                     if let Ok(service) = maybe_service{
-                                        info!("Service deployed {:?} listeners {} clusters {}", service.metadata.name, listeners.len(), clusters.len());
-
-                                        // let cluster1 = resources::create_cluster_with_endpoints("some_cluster1", "127.0.0.1:9080".parse().expect("should work"), 1, false);
-                                        // let cluster2 = resources::create_cluster_with_endpoints("some_cluster2", "127.0.0.1:9080".parse().expect("should work"), 1, false);
-                                        // let cluster_resource1 = resources::create_cluster_resource(&cluster1);
-                                        // let cluster_resource2 = resources::create_cluster_resource(&cluster2);
-                                        let _ = stream_resource_sender.send(ServerAction::UpdateClusters{gateway_id: gateway.key().clone(), resources: clusters}).await;
-
-
-                                        // let listener1 = resources::create_listener("some_listener1", "0.0.0.0:10000".parse().expect("should work"),CodecType::Auto, vec!["*".to_owned()], vec![("some_cluster1".to_owned(), 100)]);
-                                        // let listener2 = resources::create_listener("some_listener2", "0.0.0.0:10001".parse().expect("should work"),CodecType::Auto, vec!["*".to_owned()], vec![("some_cluster2".to_owned(),100)]);
-                                        // let listener_resource1 = resources::create_listener_resource(listener1);
-                                        // let listener_resource2 = resources::create_listener_resource(listener2);
-
-                                        let _ = stream_resource_sender.send(ServerAction::UpdateListeners{gateway_id: gateway.key().clone(), resources: listeners}).await;
+                                        info!("Service deployed {:?} listeners {} clusters {}", service.metadata.name, listeners.len(), clusters.len());                                        
+                                        let _ = stream_resource_sender.send(ServerAction::UpdateClusters{gateway_id: gateway.key().clone(), resources: clusters, ack_version: ack_version.cluster()}).await;
+                                        let _ = stream_resource_sender.send(ServerAction::UpdateListeners{gateway_id: gateway.key().clone(), resources: listeners, ack_version: ack_version.listener()}).await;
 
                                         self.update_address_with_polling(&service, ctx, &span).await;
                                     }else{
@@ -142,6 +129,7 @@ impl EnvoyDeployerChannelHandlerService {
                                 }
 
                                 BackendGatewayEvent::Deleted(DeletedContext{ response_sender, gateway, span }) => {
+                                    let _ = ack_versions.remove(gateway.key());
                                     let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="GatewayDeleted", id = %gateway.key());
                                     let _entered = span.enter();
                                     self.delete_envoy(&gateway).instrument(span.clone()).await;
@@ -156,12 +144,13 @@ impl EnvoyDeployerChannelHandlerService {
                         }
                 }
             }
+            crate::Result::<()>::Ok(())
         }
         .boxed();
 
-        let server_socket = "192.168.1.10:50051".parse().expect("Expect this to work");
-        let xds_service = start_aggregate_server(server_socket, stream_resource_receiver).boxed();
+        let xds_service = start_aggregate_server(kube_client, server_socket, stream_resource_receiver).boxed();
         futures::future::join_all(vec![envoy_deployer_service, xds_service]).await;
+        Ok(())
     }
 
     async fn delete_envoy(&self, gateway: &Gateway) {
@@ -319,9 +308,9 @@ impl EnvoyDeployerChannelHandlerService {
     }
 }
 
-async fn deploy_envoy(controller_name: &str, client: Client, gateway: &Gateway, secrets: &[ResourceKey]) -> std::result::Result<Service, kube::Error> {
+async fn deploy_envoy(control_plane_config: &ControlPlaneConfig, client: Client, gateway: &Gateway, secrets: &[ResourceKey]) -> std::result::Result<Service, kube::Error> {
     debug!("Deploying Envoy {gateway:?}");
-
+    let controller_name = &control_plane_config.controller_name;
     let service_api: Api<Service> = Api::namespaced(client.clone(), gateway.namespace());
     let service_account_api: Api<ServiceAccount> = Api::namespaced(client.clone(), gateway.namespace());
     let deployment_api: Api<Deployment> = Api::namespaced(client.clone(), gateway.namespace());
@@ -336,10 +325,11 @@ async fn deploy_envoy(controller_name: &str, client: Client, gateway: &Gateway, 
         field_manager: Some(controller_name.to_owned()),
         ..Default::default()
     };
-    let bootstrap_content = if let Ok(bootstrap_content) = bootstrap_content_with_secrets(secrets) {
-        bootstrap_content
+
+    let bootstrap_content = if secrets.is_empty() {
+        bootstrap_content(control_plane_config).map_err(kube::Error::Service)?
     } else {
-        bootstrap_content().to_owned()
+        bootstrap_content_with_secrets(control_plane_config, secrets).map_err(kube::Error::Service)?
     };
 
     let envoy_boostrap_config_map = create_envoy_bootstrap_config_map(&bootstrap_cm, gateway, bootstrap_content);
@@ -475,7 +465,6 @@ fn create_resources(gateway: &Gateway) -> Resources {
             ..Default::default()
         };
 
-        warn!("Creating listener {envoy_listener:#?}");
         listener_resources.push(resources::create_listener_resource(&envoy_listener));
         secret_resources.append(&mut secrets);
     }
@@ -488,124 +477,6 @@ fn create_resources(gateway: &Gateway) -> Resources {
         clusters: cluster_resources,
         secrets: secret_resources,
     }
-
-    // for listener in gateway.listeners() {
-    //     match listener {
-    //         Listener::Http(listener_data) | Listener::Https(listener_data) => {
-    //             let listener_name = &listener_data.config.name;
-
-    //             let router = Router { ..Default::default() };
-
-    //             let http_connection_manager_router_filter_any = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.router.v3.Router".to_owned(), &router));
-
-    //             let router_filter = HttpFilter {
-    //                 name: format!("{listener_name}-http-connection-manager-route-filter"),
-    //                 is_optional: false,
-    //                 disabled: false,
-    //                 config_type: Some(envoy_api::envoy::extensions::filters::network::http_connection_manager::v3::http_filter::ConfigType::TypedConfig(
-    //                     http_connection_manager_router_filter_any,
-    //                 )),
-    //             };
-
-    //             let virtual_hosts = generate_virtual_hosts_from_xds(listener);
-    //             let http_connection_manager = HttpConnectionManager {
-    //                 stat_prefix: listener_name.to_owned(),
-    //                 codec_type: CodecType::Auto.into(),
-    //                 http_filters: vec![router_filter],
-    //                 route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
-    //                     name: format!("{listener_name}-route"),
-    //                     virtual_hosts,
-    //                     ..Default::default()
-    //                 })),
-    //                 ..Default::default()
-    //             };
-
-    //             let http_connection_manager_any = converters::AnyTypeConverter::from((
-    //                 "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager".to_owned(),
-    //                 &http_connection_manager,
-    //             ));
-
-    //             let http_connection_manager_filter = Filter {
-    //                 name: format!("{listener_name}-http-connection-manager"),
-    //                 config_type: Some(envoy_api::envoy::config::listener::v3::filter::ConfigType::TypedConfig(http_connection_manager_any)),
-    //             };
-
-    //             let (transport_socket, mut secrets) = if let Some(TlsType::Terminate(secrets)) = listener_data.config.tls_type.as_ref() {
-    //                 let secrets: Vec<ResourceKey> = secrets
-    //                     .iter()
-    //                     .cloned()
-    //                     .filter_map(|cert| match cert {
-    //                         common::Certificate::Resolved(resource_key) => Some(resource_key),
-    //                         common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) => None,
-    //                     })
-    //                     .collect();
-
-    //                 let downstream_context = DownstreamTlsContext {
-    //                     require_client_certificate: Some(BoolValue { value: false }),
-    //                     full_scan_certs_on_sni_mismatch: Some(BoolValue { value: true }),
-    //                     common_tls_context: Some(CommonTlsContext {
-    //                         tls_certificate_sds_secret_configs: secrets
-    //                             .iter()
-    //                             .map(|s| SdsSecretConfig {
-    //                                 name: create_secret_name(s),
-    //                                 ..Default::default()
-    //                             })
-    //                             .collect(),
-    //                         ..Default::default()
-    //                     }),
-    //                     ..Default::default()
-    //                 };
-
-    //                 let downstream_context_any =
-    //                     converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext".to_owned(), &downstream_context));
-
-    //                 (
-    //                     Some(TransportSocket {
-    //                         config_type: Some(envoy_api::envoy::config::core::v3::transport_socket::ConfigType::TypedConfig(downstream_context_any)),
-    //                         name: format!("{listener_name}-downstream-tls-context"),
-    //                     }),
-    //                     secrets,
-    //                 )
-    //             } else {
-    //                 (None, vec![])
-    //             };
-    //             let tls_inspector = TlsInspector::default();
-
-    //             let tls_inspector_listener_filter = ListenerFilter {
-    //                 name: format!("{listener_name}-tls-inspector"),
-    //                 config_type: Some(envoy_api::envoy::config::listener::v3::listener_filter::ConfigType::TypedConfig(converters::AnyTypeConverter::from((
-    //                     "type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector".to_owned(),
-    //                     &tls_inspector,
-    //                 )))),
-    //                 ..Default::default()
-    //             };
-
-    //             let envoy_listener = EnvoyListener {
-    //                 name: listener_name.to_owned(),
-    //                 address: Some(SocketAddressFactory::from(listener)),
-    //                 listener_filters: vec![tls_inspector_listener_filter],
-    //                 filter_chains: vec![FilterChain {
-    //                     transport_socket,
-    //                     filters: vec![http_connection_manager_filter],
-    //                     ..Default::default()
-    //                 }],
-
-    //                 ..Default::default()
-    //             };
-    //             listener_resources.push(resources::create_listener_resource(&envoy_listener));
-
-    //             cluster_resources = generate_clusters(listener).iter().map(resources::create_cluster_resource).collect();
-    //             secret_resources.append(&mut secrets);
-    //         }
-    //         _ => warn!("Not implemenented for other listeners"),
-    //     }
-    // }
-    // secret_resources.dedup_by_key(|k| k.name.clone());
-    // Resources {
-    //     listeners: listener_resources,
-    //     clusters: cluster_resources,
-    //     secrets: secret_resources,
-    // }
 }
 
 enum SocketAddressFactory {}
@@ -650,7 +521,7 @@ impl DurationConverter {
     }
 }
 
-fn bootstrap_content_with_secrets(secrets: &[ResourceKey]) -> Result<String, Error> {
+fn bootstrap_content_with_secrets(control_plane_config: &ControlPlaneConfig, secrets: &[ResourceKey]) -> Result<String, Error> {
     use serde::Serialize;
     #[derive(Serialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
     pub struct TeraSecret {
@@ -670,55 +541,67 @@ fn bootstrap_content_with_secrets(secrets: &[ResourceKey]) -> Result<String, Err
     if !tera_secrets.is_empty() {
         tera_context.insert("secrets", &tera_secrets);
     }
+    tera_context.insert("control_plane_host", &control_plane_config.host);
+    tera_context.insert("control_plane_port", &control_plane_config.port);
 
-    Ok(TEMPLATES.render("envoy-bootstrap-dynamic.yaml.tera", &tera_context)?)
+    Ok(TEMPLATES.render("envoy-bootstrap-dynamic-with-secrets.yaml.tera", &tera_context)?)
 }
 
-fn bootstrap_content() -> &'static str {
-    r#"
-admin:
-  address:
-    socket_address:
-      address: 0.0.0.0
-      port_value: 9901
-      
-dynamic_resources:
-  ads_config:
-    api_type: GRPC
-    grpc_services:
-      - envoy_grpc:
-          cluster_name: xds_cluster
-  cds_config:
-    ads: {}
-  lds_config:
-    ads: {}              
+fn bootstrap_content(control_plane_config: &ControlPlaneConfig) -> Result<String, Error> {
+    let mut tera_context = tera::Context::new();
+    tera_context.insert("control_plane_host", &control_plane_config.host);
+    tera_context.insert("control_plane_port", &control_plane_config.port);
 
-static_resources:
-  clusters:
-  - name: xds_cluster
-    connect_timeout: 0.25s
-    type: STATIC
-    lb_policy: ROUND_ROBIN
-    typed_extension_protocol_options:
-      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
-        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
-        explicit_http_config:
-          http2_protocol_options:
-            # Configure an HTTP/2 keep-alive to detect connection issues and reconnect
-            # to the admin server if the connection is no longer responsive.
-            connection_keepalive:
-              interval: 30s
-              timeout: 5s
-    load_assignment:
-      cluster_name: xds_cluster
-      endpoints:
-      - lb_endpoints:
-        - endpoint:
-            address:
-              socket_address:
-                address: 192.168.1.10
-                port_value: 50051
-    "#
+    Ok(TEMPLATES.render("envoy-bootstrap-dynamic.yaml.tera", &tera_context)?)
+
+    //     r#"
+    // admin:
+    //   address:
+    //     socket_address:
+    //       address: 0.0.0.0
+    //       port_value: 9901
+
+    // dynamic_resources:
+    //   ads_config:
+    //     api_type: GRPC
+    //     grpc_services:
+    //       - envoy_grpc:
+    //           cluster_name: xds_cluster
+    //   cds_config:
+    //     ads: {}
+    //   lds_config:
+    //     ads: {}
+
+    // static_resources:
+    //   clusters:
+    //   - name: xds_cluster
+    //     connect_timeout: 5s
+    //     type: STATIC
+    //     lb_policy: ROUND_ROBIN
+    //     typed_extension_protocol_options:
+    //       envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+    //         "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+    //         explicit_http_config:
+    //           common_http_protocol_options:
+    //             idle_timeout: 30s
+    //             max_requests_per_connection: 2
+    //           http2_protocol_options:
+    //             # Configure an HTTP/2 keep-alive to detect connection issues and reconnect
+    //             # to the admin server if the connection is no longer responsive.
+    //             max_concurrent_streams: 1
+    //             connection_keepalive:
+    //               interval: 30s
+    //               timeout: 5s
+    //     load_assignment:
+    //       cluster_name: xds_cluster
+    //       endpoints:
+    //       - lb_endpoints:
+    //         - endpoint:
+    //             address:
+    //               socket_address:
+    //                 address: 192.168.1.10
+    //                 port_value: 50051
+    //     "#
 }
 
 fn config_map_names(gateway: &Gateway) -> (String, String) {
@@ -867,41 +750,6 @@ fn create_service_account(gateway: &Gateway) -> ServiceAccount {
     }
 }
 
-fn generate_virtual_hosts(listener: &Listener) -> Vec<VirtualHost> {
-    let (resolved_routes, _) = listener.routes();
-    let resolved_routes: Vec<_> = resolved_routes
-        .into_iter()
-        .filter(|r| match r {
-            Route::Http(_) => true,
-            Route::Grpc(_) => false,
-        })
-        .collect();
-
-    let potential_hostnames = calculate_potential_hostnames(&resolved_routes, listener.hostname().cloned());
-    debug!("generate_virtual_hosts Potential hostnames {potential_hostnames:?}");
-    let mut virtual_hosts = vec![];
-    for potential_hostname in potential_hostnames {
-        let effective_matching_rules = listener
-            .effective_matching_rules()
-            .into_iter()
-            .filter(|&em| {
-                let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
-                debug!("generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
-                filtered
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-
-        virtual_hosts.push(VirtualHost {
-            name: listener.name().to_owned() + "-" + &potential_hostname,
-            domains: calculate_effective_hostnames(&resolved_routes, Some(potential_hostname)),
-            routes: effective_matching_rules.into_iter().map(EnvoyRoute::from).collect(),
-            ..Default::default()
-        });
-    }
-    virtual_hosts
-}
-
 fn generate_virtual_hosts_from_xds(virtual_hosts: &BTreeSet<backends::common::EnvoyVirtualHost>) -> Vec<VirtualHost> {
     virtual_hosts
         .iter()
@@ -988,82 +836,6 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
     clusters.into_iter().map(|c| c.cluster).collect::<Vec<_>>()
 }
 
-// fn generate_clusters(listener: &Listener) -> Vec<EnvoyCluster> {
-//     let (resolved_routes, unresolved_routes) = listener.routes();
-//     let all_routes = resolved_routes.iter().chain(unresolved_routes.iter()).filter(|r| match r {
-//         Route::Http(_) => true,
-//         Route::Grpc(_) => false,
-//     });
-
-//     all_routes
-//         .flat_map(|route| {
-//             route.routing_rules().iter().flat_map(|rr| {
-//                 rr.backends
-//                     .iter()
-//                     .filter(|b| b.weight() > 0)
-//                     .filter_map(|b| match b {
-//                         Backend::Resolved(backend_service_config) => Some(backend_service_config),
-//                         _ => None,
-//                     })
-//                     .map(|r| ClusterHolder {
-//                         name: r.cluster_name(),
-//                         cluster: EnvoyCluster {
-//                             name: r.cluster_name(),
-//                             cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::StrictDns.into())),
-//                             lb_policy: LbPolicy::RoundRobin.into(),
-//                             connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
-//                             load_assignment: Some(ClusterLoadAssignment {
-//                                 cluster_name: r.cluster_name(),
-//                                 endpoints: vec![LocalityLbEndpoints {
-//                                     lb_endpoints: vec![LbEndpoint {
-//                                         host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
-//                                             address: Some(SocketAddressFactory::from_backend(r)),
-//                                             ..Default::default()
-//                                         })),
-//                                         load_balancing_weight: Some(UInt32Value {
-//                                             value: r.weight.try_into().expect("For time being we expect this to work"),
-//                                         }),
-
-//                                         ..Default::default()
-//                                     }],
-//                                     ..Default::default()
-//                                 }],
-//                                 ..Default::default()
-//                             }),
-
-//                             ..Default::default()
-//                         },
-//                     })
-//             })
-//         })
-//         .map(|h| h.cluster)
-//         .collect()
-// }
-
-fn calculate_potential_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
-    let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {
-        acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
-        acc
-    });
-
-    match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
-        (true, false) => Vec::from_iter(routes_hostnames),
-        (..) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![hostname]),
-    }
-}
-
-fn calculate_effective_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
-    let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {
-        acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
-        acc
-    });
-
-    match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
-        (true, false) => Vec::from_iter(routes_hostnames),
-        (..) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
-    }
-}
-
 impl From<EffectiveRoutingRule> for EnvoyRoute {
     fn from(effective_routing_rule: EffectiveRoutingRule) -> Self {
         let path_specifier = effective_routing_rule.route_matcher.path.clone().and_then(|matcher| {
@@ -1090,7 +862,10 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
                 .iter()
                 .map(|header| HeaderMatcher {
                     name: header.name.clone(),
-                    header_match_specifier: Some(HeaderMatchSpecifier::ExactMatch(header.value.clone())),
+                    header_match_specifier: Some(HeaderMatchSpecifier::StringMatch(StringMatcher {
+                        match_pattern: Some(MatchPattern::Exact(header.value.clone())),
+                        ..Default::default()
+                    })),
                     ..Default::default()
                 })
                 .collect()
@@ -1151,32 +926,15 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
             ..Default::default()
         };
 
-        // let cluster_action = if cluster_names.len() == 1 {
-        //     let cluster_name = cluster_names.remove(0).name;
-        //     RouteAction {
-        //         cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
-        //         cluster_specifier: Some(ClusterSpecifier::Cluster(cluster_name)),
-        //         ..Default::default()
-        //     }
-        // } else {
-        //     let clusters: Vec<_> = cluster_names;
-
-        //     RouteAction {
-        //         cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
-        //         cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster { clusters, ..Default::default() })),
-        //         ..Default::default()
-        //     }
-        // };
-
         let action: Action = if let Some(redirect_action) = effective_routing_rule.redirect_filter.clone().map(|f| RedirectAction {
             host_redirect: f.hostname.unwrap_or_default(),
 
             response_code: match f.status_code {
-                Some(302) => 302,
-                Some(303) => 303,
-                Some(307) => 307,
-                Some(308) => 308,
-                Some(301 | _) | None => 301,
+                Some(302) => redirect_action::RedirectResponseCode::Found.into(),
+                Some(303) => redirect_action::RedirectResponseCode::SeeOther.into(),
+                Some(307) => redirect_action::RedirectResponseCode::TemporaryRedirect.into(),
+                Some(308) => redirect_action::RedirectResponseCode::PermanentRedirect.into(),
+                Some(301 | _) | None => redirect_action::RedirectResponseCode::MovedPermanently.into(),
             },
             ..Default::default()
         }) {

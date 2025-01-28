@@ -16,6 +16,7 @@ use crate::{
     },
     services::patchers::{Operation, PatchContext},
     state::State,
+    Result,
 };
 
 #[derive(TypedBuilder)]
@@ -31,7 +32,7 @@ pub struct GatewayDeployerService {
 }
 
 impl GatewayDeployerService {
-    pub async fn start(self) {
+    pub async fn start(self) -> Result<()> {
         let mut resolve_receiver = self.gateway_deployer_channel_receiver;
         let mut backend_response_channel_receiver = self.backend_response_channel_receiver;
         let controller_name = self.controller_name.clone();
@@ -105,6 +106,7 @@ impl GatewayDeployerService {
 
                 else => {
                     warn!("All listener manager channels are closed...exiting");
+                    return Result::<()>::Ok(())
                 }
             }
         }

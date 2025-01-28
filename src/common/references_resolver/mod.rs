@@ -175,7 +175,7 @@ where
     async fn update_gateways(&self, key: &ResourceKey) {
         let secrets = self.references.lock().await;
         let gateways = secrets.get(key).cloned().unwrap_or_default();
-        debug!("Refernce changed... updating gateways {key} {gateways:#?}");
+        debug!("Reference changed... updating gateways {key} {gateways:?}");
         let _res = self
             .reference_validate_channel_sender
             .send(ReferenceValidateRequest::UpdatedGateways { reference: key.clone(), gateways })
