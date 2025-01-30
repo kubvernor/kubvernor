@@ -6,7 +6,11 @@ mod route;
 #[cfg(test)]
 mod test;
 
-use std::{collections::BTreeSet, fmt::Display, net::IpAddr};
+use std::{
+    collections::BTreeSet,
+    fmt::Display,
+    net::{IpAddr, SocketAddr},
+};
 
 pub use gateway::{ChangedContext, Gateway};
 
@@ -314,4 +318,22 @@ pub async fn add_finalizer_to_gateway_class(sender: &mpsc::Sender<Operation<Gate
             span: Span::current().clone(),
         }))
         .await;
+}
+
+pub fn create_id(name: &str, namespace: &str) -> String {
+    namespace.to_owned() + "." + name
+}
+
+#[derive(Clone, Debug, TypedBuilder)]
+pub struct ControlPlaneConfig {
+    pub host: String,
+    pub port: u32,
+    pub controller_name: String,
+    pub listening_socket: SocketAddr,
+}
+
+impl ControlPlaneConfig {
+    pub fn addr(&self) -> SocketAddr {
+        self.listening_socket
+    }
 }

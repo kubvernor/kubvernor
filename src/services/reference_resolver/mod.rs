@@ -27,7 +27,7 @@ struct ReferenceResolverHandler {
 }
 
 impl ReferenceValidatorService {
-    pub async fn start(self) {
+    pub async fn start(self) -> crate::Result<()> {
         let mut resolve_receiver = self.reference_validate_channel_receiver;
         let handler = ReferenceResolverHandler {
             client: self.client.clone(),
@@ -46,6 +46,7 @@ impl ReferenceValidatorService {
 
                 else => {
                     warn!("All listener manager channels are closed...exiting");
+                    return crate::Result::<()>::Ok(())
                 }
             }
         }
@@ -103,7 +104,7 @@ impl ReferenceResolverHandler {
 
                 let affected_gateways = self.backend_references_resolver.delete_all_references(references.iter()).await;
 
-                info!("Update gateways due to deleted references {references:#?} {affected_gateways:#?}");
+                info!("Update gateways due to deleted references {references:?} {affected_gateways:?}");
                 for gateway_id in affected_gateways {
                     if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
                         let span = span!(Level::INFO, "ReferenceResolverService", action = "DeleteRouteAndValidateRequest", id = %gateway_id);

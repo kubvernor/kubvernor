@@ -55,7 +55,8 @@ impl SecretsResolver {
         self.reference_resolver.get_reference(resource_key).await
     }
 
-    pub async fn resolve(&self) {
+    pub async fn resolve(&self) -> crate::Result<()> {
         self.reference_resolver.resolve().await;
+        Ok(())
     }
 }

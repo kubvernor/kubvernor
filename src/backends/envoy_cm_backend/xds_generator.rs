@@ -100,7 +100,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
         let rds = listeners
             .iter()
             .filter_map(|listener| {
-                let maybe_content = Self::genereate_rds(listener);
+                let maybe_content = Self::generate_rds(listener);
                 if let Ok(rds_content) = maybe_content {
                     Some(rds_content)
                 } else {
@@ -233,7 +233,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn genereate_rds(listener: &EnvoyListener) -> Result<RdsData, Error> {
+    fn generate_rds(listener: &EnvoyListener) -> Result<RdsData, Error> {
         #[derive(Serialize)]
         struct TeraClusterName {
             pub name: String,

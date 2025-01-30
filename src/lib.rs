@@ -1,7 +1,7 @@
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::Parser;
-use common::{BackendReferenceResolver, SecretsResolver};
+use common::{BackendReferenceResolver, ControlPlaneConfig, SecretsResolver};
 use futures::FutureExt;
 use kube::Client;
 use services::{GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService};
@@ -23,7 +23,16 @@ mod state;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 
-use backends::envoy_backend::EnvoyDeployerChannelHandlerService;
+cfg_if::cfg_if! {
+    if #[cfg(feature="envoy_xds")] {
+        use backends::envoy_xds_backend::EnvoyDeployerChannelHandlerService;
+    } else if #[cfg(feature = "envoy_cm")] {
+        use backends::envoy_cm_backend::EnvoyDeployerChannelHandlerService;
+    } else {
+
+    }
+}
+
 use controllers::{
     gateway::{self, GatewayController},
     gateway_class::GatewayClassController,
@@ -37,6 +46,9 @@ const STARTUP_DURATION: Duration = Duration::from_secs(10);
 #[derive(Parser, Debug, TypedBuilder)]
 pub struct Args {
     controller_name: String,
+    envoy_control_plane_host: String,
+    envoy_control_plane_port: u16,
+    control_plane_socket: SocketAddr,
 }
 
 pub async fn start(args: Args) -> Result<()> {
@@ -83,9 +95,16 @@ pub async fn start(args: Args) -> Result<()> {
     let mut gateway_class_patcher_service = GatewayClassPatcherService::builder().client(client.clone()).receiver(gateway_class_patcher_channel_receiver).build();
     let mut http_route_patcher_service = HttpRoutePatcherService::builder().client(client.clone()).receiver(http_route_patcher_channel_receiver).build();
 
+    let control_plane_config = ControlPlaneConfig {
+        host: args.envoy_control_plane_host.clone(),
+        port: args.envoy_control_plane_port.into(),
+        listening_socket: args.control_plane_socket,
+        controller_name: args.controller_name.clone(),
+    };
+
     let mut envoy_deployer_service = EnvoyDeployerChannelHandlerService::builder()
         .client(client.clone())
-        .controller_name(args.controller_name.clone())
+        .control_plane_config(control_plane_config)
         .backend_deploy_request_channel_receiver(backend_deployer_channel_receiver)
         .backend_response_channel_sender(backend_response_channel_sender)
         .build();
@@ -127,12 +146,14 @@ pub async fn start(args: Args) -> Result<()> {
         info!("Gateway Class controller...started");
         gateway_class_controller.get_controller().await;
         info!("Gateway Class controller...stopped");
+        crate::Result::<()>::Ok(())
     };
     let gateway_controller_task = async move {
         sleep(STARTUP_DURATION).await;
         info!("Gateway controller...started");
         gateway_controller.get_controller().await;
         info!("Gateway controller...stopped");
+        crate::Result::<()>::Ok(())
     };
 
     let http_route_controller_task = async move {
@@ -140,6 +161,7 @@ pub async fn start(args: Args) -> Result<()> {
         info!("Route controller...started");
         http_route_controller.get_controller().await;
         info!("Route controller...stopped");
+        crate::Result::<()>::Ok(())
     };
 
     let secret_resolver_service = async move { secrets_resolver.resolve().await }.boxed();

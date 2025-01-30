@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 pub(crate) use clap::Parser;
 use kubvernor::{start, Args};
 use opentelemetry::trace::TracerProvider as _;
@@ -9,18 +11,61 @@ pub enum Guard {
     Appender(WorkerGuard),
 }
 
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-pub struct CommandArgs {
-    #[arg(short, long)]
-    controller_name: String,
-    #[arg(short, long)]
-    with_opentelemetry: Option<bool>,
-}
+cfg_if::cfg_if! {
+    if #[cfg(feature="envoy_xds")] {
+        #[derive(Parser, Debug)]
+        #[command(version, about, long_about = None)]
+        pub struct CommandArgs {
+            #[arg(short, long)]
+            controller_name: String,
+            #[arg(short, long)]
+            with_opentelemetry: Option<bool>,
+            #[arg(long)]
+            control_plane_socket: Option<SocketAddr>,
+            #[arg(long)]
+            envoy_control_plane_hostname: String,
+            #[arg(long)]
+            envoy_control_plane_port: u16,
+        }
 
-impl From<CommandArgs> for Args {
-    fn from(value: CommandArgs) -> Self {
-        Args::builder().controller_name(value.controller_name).build()
+        impl From<CommandArgs> for Args {
+            fn from(value: CommandArgs) -> Self {
+                let control_plane_socket = if let Some(socket) = value.control_plane_socket {
+                    socket
+                } else {
+                    "0.0.0.0:50051".parse().expect("We expect this to work")
+                };
+
+                Args::builder()
+                    .controller_name(value.controller_name)
+                    .control_plane_socket(control_plane_socket)
+                    .envoy_control_plane_host(value.envoy_control_plane_hostname)
+                    .envoy_control_plane_port(value.envoy_control_plane_port)
+                    .build()
+            }
+        }
+    } else if #[cfg(feature = "envoy_cm")] {
+        #[derive(Parser, Debug)]
+        #[command(version, about, long_about = None)]
+        pub struct CommandArgs {
+            #[arg(short, long)]
+            controller_name: String,
+            #[arg(short, long)]
+            with_opentelemetry: Option<bool>,
+        }
+
+        impl From<CommandArgs> for Args {
+            fn from(value: CommandArgs) -> Self {
+                Args::builder()
+                    .controller_name(value.controller_name)
+                    .control_plane_socket("0.0.0.0:50051".parse().expect("We expect this to work"))
+                    .envoy_control_plane_host("localhost")
+                    .envoy_control_plane_port("50051")
+                    .build()
+            }
+        }
+    } else {
+
     }
 }
 

@@ -59,7 +59,7 @@ where
     fn receiver(&mut self) -> &mut mpsc::Receiver<Operation<R>>;
     fn api(&self, namespace: &str) -> Api<R>;
 
-    async fn start(&mut self) {
+    async fn start(&mut self) -> crate::Result<()> {
         while let Some(event) = self.receiver().recv().await {
             match event {
                 Operation::PatchStatus(PatchContext {
@@ -126,5 +126,6 @@ where
                 }
             }
         }
+        crate::Result::<()>::Ok(())
     }
 }
