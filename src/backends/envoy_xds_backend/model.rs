@@ -1,6 +1,6 @@
 use std::{fmt, result::Result as StdResult};
 
-use envoy_api::{envoy::service::discovery::v3::DeltaDiscoveryRequest, prost};
+use envoy_api_rs::{envoy::service::discovery::v3::DeltaDiscoveryRequest, prost};
 use serde::Deserialize;
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -48,7 +48,7 @@ impl TryFrom<&str> for TypeUrl {
 #[derive(Error, Debug)]
 pub enum XdsError {
     #[error("gRPC error ({}): {}", .0.code(), .0.message())]
-    GrpcStatus(#[from] envoy_api::tonic::Status),
+    GrpcStatus(#[from] envoy_api_rs::tonic::Status),
     #[error(transparent)]
     RequestFailure(#[from] Box<mpsc::error::SendError<DeltaDiscoveryRequest>>),
     #[error("unknown resource type: {0}")]

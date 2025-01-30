@@ -1,6 +1,6 @@
 use std::collections::{btree_map::Values, BTreeMap, BTreeSet};
 
-use envoy_api::{
+use envoy_api_rs::{
     envoy::{
         config::{
             cluster::v3::{
@@ -374,7 +374,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
             name: format!("{listener_name}-http-connection-manager-route-filter"),
             is_optional: false,
             disabled: false,
-            config_type: Some(envoy_api::envoy::extensions::filters::network::http_connection_manager::v3::http_filter::ConfigType::TypedConfig(
+            config_type: Some(envoy_api_rs::envoy::extensions::filters::network::http_connection_manager::v3::http_filter::ConfigType::TypedConfig(
                 http_connection_manager_router_filter_any,
             )),
         };
@@ -400,7 +400,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
 
         let http_connection_manager_filter = Filter {
             name: format!("{listener_name}-http-connection-manager"),
-            config_type: Some(envoy_api::envoy::config::listener::v3::filter::ConfigType::TypedConfig(http_connection_manager_any)),
+            config_type: Some(envoy_api_rs::envoy::config::listener::v3::filter::ConfigType::TypedConfig(http_connection_manager_any)),
         };
 
         let (transport_socket, mut secrets) = if let Some(TlsType::Terminate(secrets)) = listener.tls_type.as_ref() {
@@ -433,7 +433,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
 
             (
                 Some(TransportSocket {
-                    config_type: Some(envoy_api::envoy::config::core::v3::transport_socket::ConfigType::TypedConfig(downstream_context_any)),
+                    config_type: Some(envoy_api_rs::envoy::config::core::v3::transport_socket::ConfigType::TypedConfig(downstream_context_any)),
                     name: format!("{listener_name}-downstream-tls-context"),
                 }),
                 secrets,
@@ -445,10 +445,9 @@ fn create_resources(gateway: &Gateway) -> Resources {
 
         let tls_inspector_listener_filter = ListenerFilter {
             name: format!("{listener_name}-tls-inspector"),
-            config_type: Some(envoy_api::envoy::config::listener::v3::listener_filter::ConfigType::TypedConfig(converters::AnyTypeConverter::from((
-                "type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector".to_owned(),
-                &tls_inspector,
-            )))),
+            config_type: Some(envoy_api_rs::envoy::config::listener::v3::listener_filter::ConfigType::TypedConfig(converters::AnyTypeConverter::from(
+                ("type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector".to_owned(), &tls_inspector),
+            ))),
             ..Default::default()
         };
 
@@ -481,7 +480,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
 
 enum SocketAddressFactory {}
 impl SocketAddressFactory {
-    fn from(listener: &backends::common::EnvoyListener) -> envoy_api::envoy::config::core::v3::Address {
+    fn from(listener: &backends::common::EnvoyListener) -> envoy_api_rs::envoy::config::core::v3::Address {
         Address {
             address: Some(address::Address::SocketAddress(SocketAddress {
                 address: "0.0.0.0".to_owned(),
@@ -493,7 +492,7 @@ impl SocketAddressFactory {
         }
     }
 
-    fn from_backend(backend: &BackendServiceConfig) -> envoy_api::envoy::config::core::v3::Address {
+    fn from_backend(backend: &BackendServiceConfig) -> envoy_api_rs::envoy::config::core::v3::Address {
         Address {
             address: Some(address::Address::SocketAddress(SocketAddress {
                 address: backend.endpoint.clone(),

@@ -1,4 +1,4 @@
-use envoy_api::{
+use envoy_api_rs::{
     envoy::{
         config::{cluster::v3::Cluster, listener::v3::Listener},
         service::discovery::v3::Resource,
@@ -21,7 +21,7 @@ pub fn create_listener_resource(listener: &Listener) -> Resource {
     let mut buf: Vec<u8> = vec![];
     listener.encode(&mut buf).expect("We expect this to work");
     let any = prost::bytes::Bytes::from(buf);
-    let any = envoy_api::google::protobuf::Any {
+    let any = envoy_api_rs::google::protobuf::Any {
         type_url: TypeUrl::Listener.to_string(),
         value: any.to_vec(),
     };

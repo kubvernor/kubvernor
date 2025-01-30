@@ -7,7 +7,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use envoy_api::{
+use envoy_api_rs::{
     envoy::{
         config::core::v3::Node as EnvoyNode,
         service::discovery::v3::{
@@ -279,13 +279,13 @@ impl AggregateServerService {
 
 type AggregatedDiscoveryServiceResult<T> = std::result::Result<Response<T>, Status>;
 
-#[envoy_api::tonic::async_trait]
+#[envoy_api_rs::tonic::async_trait]
 impl AggregatedDiscoveryService for AggregateServer {
     type StreamAggregatedResourcesStream = Pin<Box<dyn Stream<Item = std::result::Result<DiscoveryResponse, Status>> + Send>>;
 
     async fn stream_aggregated_resources(
         &self,
-        req: envoy_api::tonic::Request<envoy_api::tonic::Streaming<DiscoveryRequest>>,
+        req: envoy_api_rs::tonic::Request<envoy_api_rs::tonic::Streaming<DiscoveryRequest>>,
     ) -> AggregatedDiscoveryServiceResult<Self::StreamAggregatedResourcesStream> {
         info!("AggregateServer::stream_aggregated_resources client connected from: {:?}", req);
 
@@ -437,7 +437,7 @@ impl AggregatedDiscoveryService for AggregateServer {
 
     async fn delta_aggregated_resources(
         &self,
-        req: envoy_api::tonic::Request<envoy_api::tonic::Streaming<DeltaDiscoveryRequest>>,
+        req: envoy_api_rs::tonic::Request<envoy_api_rs::tonic::Streaming<DeltaDiscoveryRequest>>,
     ) -> AggregatedDiscoveryServiceResult<Self::DeltaAggregatedResourcesStream> {
         info!("AggregateServer::delta_aggregated_resources");
         info!("client connected from: {:?}", req.remote_addr());

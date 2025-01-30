@@ -1,6 +1,9 @@
 # Kubvernor
 Generic Gateway API Manager for Kubernetes
 
+## Install Kubernetes cluster
+A handy way of starting a cluster with Kind is to use [create-cluster.sh](https://github.com/kubernetes-sigs/gateway-api/blob/main/hack/implementations/common/create-cluster.sh) script.
+
 ## Install CRDs
 ```
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
@@ -20,10 +23,6 @@ cargo run -- --controller-name "kubvernor.com/proxy-controller" --with-opentelem
 cd conformance
 go test -v -count=1 -timeout=3h ./conformance --debug -run TestKubvernorGatewayAPIConformance
 ```
-
-At the moment this is a pretty long process (roughly 1h). This is due to setting the isolation time between the tests to two minutes. 
-The reason for that is that our implementation is using Kubernetes config maps to configure Envoy. Which means that there is no need for starting up an additional server with Envoy control plane... 
-Unfortunately, propagating updates via config maps can take much longer than pushing updates over gRPC due to kubelet synchronization time which can be anywhere from 30-60secs.
 
 
 ## Conformance hacks

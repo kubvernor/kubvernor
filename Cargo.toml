@@ -34,7 +34,8 @@ opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
 opentelemetry = "0.27"
 opentelemetry-otlp = "0.27.0"
 cfg-if = "1.0"
-envoy-api = { version = "0.1.0", path = "../envoy-api" }
+#envoy-api-rs = { version = "0.1.0", path = "../envoy-api-rs" }
+envoy-api-rs = { version = "0.1.0", git = "https://github.com/kubvernor/envoy-api-rs", branch = "main" }
 tokio-stream = "0.1.17"
 
 
