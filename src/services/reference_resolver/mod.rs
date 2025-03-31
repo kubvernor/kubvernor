@@ -3,7 +3,7 @@ use tracing::{debug, info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{self, gateway_api::gateways::Gateway, BackendReferenceResolver, GatewayDeployRequest, ReferenceValidateRequest, RequestContext, SecretsResolver},
+    common::{self, gateway_api::gateways::Gateway, BackendReferenceResolver, GatewayDeployRequest, ReferenceGrantsResolver, ReferenceValidateRequest, RequestContext, SecretsResolver},
     controllers::{ListenerTlsConfigValidator, RoutesResolver},
     state::State,
 };
@@ -14,6 +14,7 @@ pub struct ReferenceValidatorService {
     state: State,
     secrets_resolver: SecretsResolver,
     backend_references_resolver: BackendReferenceResolver,
+    reference_grants_resolver: ReferenceGrantsResolver,
     reference_validate_channel_receiver: tokio::sync::mpsc::Receiver<ReferenceValidateRequest>,
     gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<GatewayDeployRequest>,
 }

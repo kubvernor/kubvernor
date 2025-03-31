@@ -9,7 +9,7 @@ A handy way of starting a cluster with Kind is to use [create-cluster.sh](https:
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
 ```
 
-## Running (with minikube)
+## Running
 ```
 export RUST_FILE_LOG=info,kubvernor=debug
 export RUST_LOG=info,kubvernor=info
