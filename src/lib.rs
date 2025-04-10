@@ -71,7 +71,7 @@ pub async fn start(args: Args) -> Result<()> {
         .reference_resolver(client.clone(), reference_validate_channel_sender.clone())
         .build();
 
-    let reference_grants_resolver = ReferenceGrantsResolver::builder().state(state.clone()).build();
+    let reference_grants_resolver = ReferenceGrantsResolver::builder().client(client.clone()).state(state.clone()).reference_validate_channel_sender(reference_validate_channel_sender.clone()).build();
 
     let gateway_deployer_service = GatewayDeployerService::builder()
         .gateway_deployer_channel_receiver(gateway_deployer_channel_receiver)
