@@ -24,6 +24,7 @@ struct ReferenceResolverHandler {
     state: State,
     secrets_resolver: SecretsResolver,
     backend_references_resolver: BackendReferenceResolver,
+    reference_grants_resolver: ReferenceGrantsResolver,
     gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<GatewayDeployRequest>,
 }
 
@@ -35,6 +36,7 @@ impl ReferenceValidatorService {
             state: self.state,
             secrets_resolver: self.secrets_resolver,
             backend_references_resolver: self.backend_references_resolver,
+            reference_grants_resolver: self.reference_grants_resolver,
             gateway_deployer_channel_sender: self.gateway_deployer_channel_sender,
         };
 
@@ -68,6 +70,7 @@ impl ReferenceResolverHandler {
                 self.secrets_resolver.add_secretes_by_gateway(&gateway).await;
 
                 self.backend_references_resolver.add_references_by_gateway(&gateway).await;
+                self.reference_grants_resolver.add_references_by_gateway(&gateway).await;
 
                 let backend_gateway = self.process(span.clone(), gateway, &kube_gateway).await;
 

@@ -91,7 +91,7 @@ pub async fn start(args: Args) -> Result<()> {
         .state(state.clone())
         .secrets_resolver(secrets_resolver.clone())
         .backend_references_resolver(backend_references_resolver.clone())
-        .reference_grants_resolver(reference_grants_resolver)
+        .reference_grants_resolver(reference_grants_resolver.clone())
         .build();
 
     let mut gateway_patcher_service = GatewayPatcherService::builder().client(client.clone()).receiver(gateway_patcher_channel_receiver).build();
@@ -169,6 +169,7 @@ pub async fn start(args: Args) -> Result<()> {
 
     let secret_resolver_service = async move { secrets_resolver.resolve().await }.boxed();
     let backend_references_resolver_service = async move { backend_references_resolver.resolve().await }.boxed();
+    let reference_grants_resolver_service = async move { reference_grants_resolver.resolve().await }.boxed();
     futures::future::join_all(vec![
         backend_references_resolver_service,
         secret_resolver_service,
