@@ -422,7 +422,7 @@ impl EnvoyDeployerChannelHandlerService {
                 .await;
         } else {
             let client = self.client.clone();
-            let resource_key = ResourceKey::from(&service.metadata);
+            let resource_key = ResourceKey::from(service);
 
             let backend_response_channel_sender = self.backend_response_channel_sender.clone();
             let span = span!(parent: parent_span, Level::INFO, "ServiceResolverTask");

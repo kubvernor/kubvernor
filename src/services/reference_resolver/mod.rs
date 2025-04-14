@@ -93,6 +93,7 @@ impl ReferenceResolverHandler {
 
                 self.secrets_resolver.delete_secrets_by_gateway(&gateway).await;
                 self.backend_references_resolver.delete_references_by_gateway(&gateway).await;
+                self.reference_grants_resolver.delete_references_by_gateway(&gateway).await;
             }
 
             ReferenceValidateRequest::AddRoute { references, span: parent_span } => {
@@ -163,12 +164,16 @@ impl ReferenceResolverHandler {
         }
     }
     async fn process(&self, span: Span, gateway: common::Gateway, kube_gateway: &Gateway) -> common::Gateway {
-        let backend_gateway = ListenerTlsConfigValidator::new(gateway, &self.secrets_resolver).validate().instrument(span.clone()).await;
+        let backend_gateway = ListenerTlsConfigValidator::new(gateway, &self.secrets_resolver, &self.reference_grants_resolver)
+            .validate()
+            .instrument(span.clone())
+            .await;
         let resolver = RoutesResolver::builder()
             .gateway(backend_gateway)
             .kube_gateway(kube_gateway)
             .client(self.client.clone())
             .backend_reference_resolver(&self.backend_references_resolver)
+            .reference_grants_resolver(&self.reference_grants_resolver)
             .state(&self.state)
             .build();
 

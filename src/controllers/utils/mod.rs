@@ -26,7 +26,7 @@ pub use tls_config_validator::ListenerTlsConfigValidator;
 use tracing::{debug, warn};
 
 use crate::{
-    common::{BackendReferenceResolver, ResourceKey, Route},
+    common::{BackendReferenceResolver, ReferenceGrantsResolver, ResourceKey, Route},
     controllers::ControllerError,
     state::State,
 };
@@ -140,14 +140,20 @@ pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route>
         .unwrap_or_default()
 }
 
-pub async fn resolve_route_backends(gateway_namespace: &str, backend_reference_resolver: BackendReferenceResolver, routes: Vec<Route>) -> Vec<Route> {
+pub async fn resolve_route_backends(
+    gateway_resource_key: &ResourceKey,
+    backend_reference_resolver: BackendReferenceResolver,
+    reference_grants_resolver: ReferenceGrantsResolver,
+    routes: Vec<Route>,
+) -> Vec<Route> {
     let futures: Vec<_> = routes
         .into_iter()
         .map(|route| {
             RouteResolver::builder()
-                .gateway_namespace(gateway_namespace)
+                .gateway_resource_key(gateway_resource_key)
                 .route(route)
                 .backend_reference_resolver(backend_reference_resolver.clone())
+                .reference_grants_resolver(reference_grants_resolver.clone())
                 .build()
                 .resolve()
         })

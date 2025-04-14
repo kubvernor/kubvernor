@@ -78,7 +78,7 @@ impl GatewayClassController {
         }
     }
 
-    async fn reconcile_gateway_class<'a>(resource: Arc<GatewayClass>, ctx: Arc<Context>) -> Result<Action> {
+    async fn reconcile_gateway_class(resource: Arc<GatewayClass>, ctx: Arc<Context>) -> Result<Action> {
         let configured_controller_name = &ctx.controller_name;
         let gateway_class_patcher = ctx.gateway_class_patcher.clone();
 
@@ -90,7 +90,7 @@ impl GatewayClassController {
             return Err(ControllerError::InvalidPayload("Uid in wrong format".to_owned()));
         };
 
-        let resource_key = ResourceKey::from(resource.meta());
+        let resource_key = ResourceKey::from(&*resource);
 
         let controller_name = resource.spec.controller_name.clone();
         let version = resource.meta().resource_version.clone();

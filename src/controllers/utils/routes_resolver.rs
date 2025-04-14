@@ -2,63 +2,80 @@ use std::collections::{BTreeSet, HashMap};
 
 use k8s_openapi::api::core::v1::Service;
 use kube::Client;
-use tracing::{debug, warn, Instrument, Span};
+use tracing::{debug, info, warn, Instrument, Span};
 use typed_builder::TypedBuilder;
 
 use super::BackendReferenceResolver;
 use crate::{
-    common::{self, gateway_api::gateways::Gateway, Backend, NotResolvedReason, ResolutionStatus, Route, RouteToListenersMapping, KUBERNETES_NONE},
+    common::{
+        self, gateway_api::gateways::Gateway, Backend, NotResolvedReason, ReferenceGrantRef, ReferenceGrantsResolver, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping, KUBERNETES_NONE,
+    },
     controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };
 
 #[derive(TypedBuilder)]
 pub struct RouteResolver<'a> {
-    gateway_namespace: &'a str,
+    gateway_resource_key: &'a ResourceKey,
     route: common::Route,
     backend_reference_resolver: BackendReferenceResolver,
+    reference_grants_resolver: ReferenceGrantsResolver,
 }
-struct PermittedBackends(String);
-impl PermittedBackends {
-    fn is_permitted(&self, route_namespace: &str, backend_namespace: &str) -> bool {
-        self.0 != route_namespace || backend_namespace == self.0
-    }
-}
+// struct PermittedBackends(String);
+// impl PermittedBackends {
+//     fn is_permitted(&self, _route_namespace: &str, backend_namespace: &str) -> bool {
+//         backend_namespace == self.0
+//     }
+// }
 
-impl<'a> RouteResolver<'a> {
+impl RouteResolver<'_> {
     pub async fn resolve(self) -> common::Route {
         let mut route = self.route;
         let route_namespace = route.namespace().to_owned();
+        let route_resource_key = route.resource_key().clone();
         let route_config = route.config_mut();
         let mut route_resolution_status = ResolutionStatus::Resolved;
+        let gateway_namespace = &self.gateway_resource_key.namespace;
         for rule in &mut route_config.routing_rules {
             let mut new_backends = vec![];
             for backend in rule.backends.clone() {
                 match backend {
                     Backend::Maybe(mut backend_service_config) => {
+                        let reference_grant_allowed = self
+                            .reference_grants_resolver
+                            .is_allowed(&route_resource_key, &backend_service_config.resource_key, self.gateway_resource_key)
+                            .await;
+
+                        let grant_ref = ReferenceGrantRef::builder()
+                            .from(route_resource_key.clone())
+                            .to(backend_service_config.resource_key.clone())
+                            .gateway_key(self.gateway_resource_key.clone())
+                            .build();
+
+                        info!("Allowed because of reference grant {grant_ref:?} {reference_grant_allowed}");
+
                         let backend_namespace = &backend_service_config.resource_key.namespace;
+                        if reference_grant_allowed || gateway_namespace == backend_namespace {
+                            let maybe_service = self.backend_reference_resolver.get_reference(&backend_service_config.resource_key).await;
 
-                        let maybe_service = self.backend_reference_resolver.get_reference(&backend_service_config.resource_key).await;
-
-                        if let Some(service) = maybe_service {
-                            if PermittedBackends(self.gateway_namespace.to_owned()).is_permitted(&route_namespace, backend_namespace) {
+                            if let Some(service) = maybe_service {
                                 backend_service_config.effective_port = Self::backend_remap_port(backend_service_config.port, service);
                                 new_backends.push(Backend::Resolved(backend_service_config));
                             } else {
                                 debug!(
-                                    "Backend is not permitted gateway namespace is {} route namespace is {} backend namespace is {}",
-                                    self.gateway_namespace, &route_namespace, &backend_namespace,
+                                    "can't resolve {}-{} {:?}",
+                                    &backend_service_config.resource_key.name, &backend_service_config.resource_key.namespace, maybe_service
                                 );
-                                new_backends.push(Backend::NotAllowed(backend_service_config));
-                                route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted);
+                                new_backends.push(Backend::Unresolved(backend_service_config));
+                                route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound);
                             }
                         } else {
                             debug!(
-                                "can't resolve {}-{} {:?}",
-                                &backend_service_config.resource_key.name, &backend_service_config.resource_key.namespace, maybe_service
+                                "Backend is not permitted gateway namespace is {} route namespace is {} backend namespace is {}",
+                                gateway_namespace, &route_namespace, &backend_namespace,
                             );
-                            new_backends.push(Backend::Unresolved(backend_service_config));
-                            route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound);
+                            new_backends.push(Backend::NotAllowed(backend_service_config));
+                            route_resolution_status = ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted);
                         }
                     }
                     Backend::Unresolved(_) | Backend::NotAllowed(_) | Backend::Invalid(_) => {
@@ -110,14 +127,15 @@ pub struct RoutesResolver<'a> {
     kube_gateway: &'a Gateway,
     client: Client,
     backend_reference_resolver: &'a BackendReferenceResolver,
+    reference_grants_resolver: &'a ReferenceGrantsResolver,
 }
 
-impl<'a> RoutesResolver<'a> {
+impl RoutesResolver<'_> {
     pub async fn validate(mut self) -> common::Gateway {
         debug!("Validating routes");
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
-        let linked_routes = utils::resolve_route_backends(&gateway_resource_key.namespace, self.backend_reference_resolver.clone(), linked_routes)
+        let linked_routes = utils::resolve_route_backends(gateway_resource_key, self.backend_reference_resolver.clone(), self.reference_grants_resolver.clone(), linked_routes)
             .instrument(Span::current().clone())
             .await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;

@@ -30,7 +30,7 @@ pub struct GatewayDeployerServiceInternal<'a> {
     controller_name: String,
 }
 
-impl<'a> GatewayDeployerServiceInternal<'a> {
+impl GatewayDeployerServiceInternal<'_> {
     pub async fn on_version_not_changed(&mut self, gateway_id: &ResourceKey, gateway_class_name: &str, resource: &Arc<KubeGateway>) {
         let controller_name = &self.controller_name;
         if let Some(status) = &resource.status {

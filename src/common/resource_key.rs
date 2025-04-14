@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
+use k8s_openapi::api::core::v1::Service;
 use kube::{Resource, ResourceExt};
-use kube_core::ObjectMeta;
 
 use crate::common::{
     create_id,
@@ -69,8 +69,9 @@ impl Display for ResourceKey {
     }
 }
 
-impl From<&ObjectMeta> for ResourceKey {
-    fn from(value: &ObjectMeta) -> Self {
+impl From<&Service> for ResourceKey {
+    fn from(service: &Service) -> Self {
+        let value = &service.metadata;
         let namespace = value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
 
         let name = match (value.name.as_ref(), value.generate_name.as_ref()) {
@@ -118,7 +119,7 @@ impl From<&GatewayClass> for ResourceKey {
             group: DEFAULT_GROUP_NAME.to_owned(),
             namespace: value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
             name: value.name_any().clone(),
-            kind: DEFAULT_KIND_NAME.to_owned(),
+            kind: "GatewayClass".to_owned(),
         }
     }
 }
@@ -131,7 +132,7 @@ impl From<&gateways::Gateway> for ResourceKey {
             group: DEFAULT_GROUP_NAME.to_owned(),
             namespace,
             name: value.name_any(),
-            kind: DEFAULT_KIND_NAME.to_owned(),
+            kind: "Gateway".to_owned(),
         }
     }
 }
@@ -144,7 +145,7 @@ impl From<&HTTPRoute> for ResourceKey {
             group: DEFAULT_GROUP_NAME.to_owned(),
             namespace,
             name: value.name_any(),
-            kind: DEFAULT_KIND_NAME.to_owned(),
+            kind: "HTTPRoute".to_owned(),
         }
     }
 }
@@ -157,7 +158,7 @@ impl From<(&HTTPRouteRulesBackendRefs, String)> for ResourceKey {
             group: DEFAULT_GROUP_NAME.to_owned(),
             namespace,
             name: value.name.clone(),
-            kind: DEFAULT_KIND_NAME.to_owned(),
+            kind: value.kind.clone().unwrap_or_default(),
         }
     }
 }
@@ -170,7 +171,7 @@ impl From<&HTTPRouteRulesBackendRefs> for BackendResourceKey {
             group: DEFAULT_GROUP_NAME.to_owned(),
             namespace,
             name: value.name.clone(),
-            kind: DEFAULT_KIND_NAME.to_owned(),
+            kind: value.kind.clone().unwrap_or_default(),
         }
     }
 }
