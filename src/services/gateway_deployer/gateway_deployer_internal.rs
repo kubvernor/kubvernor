@@ -109,10 +109,11 @@ impl GatewayDeployer {
                         conditions.replace(ListenerCondition::Programmed);
                     }
 
-                    ResolvedRefs::InvalidAllowedRoutes => {
+                    ResolvedRefs::InvalidAllowedRoutes | ResolvedRefs::RefNotPermitted(_) => {
                         conditions.insert(ListenerCondition::NotProgrammed);
                         conditions.replace(ListenerCondition::NotAccepted);
                     }
+
                     ResolvedRefs::InvalidCertificates(_) => {
                         conditions.remove(&ListenerCondition::Accepted);
                         conditions.replace(ListenerCondition::NotProgrammed);
@@ -154,7 +155,11 @@ impl GatewayDeployer {
                 listener_conditions.retain(|c| c.type_ != type_);
                 match condition {
                     ListenerCondition::ResolvedRefs(
-                        ResolvedRefs::Resolved(_) | ResolvedRefs::InvalidBackend(_) | ResolvedRefs::ResolvedWithNotAllowedRoutes(_) | ResolvedRefs::InvalidCertificates(_),
+                        ResolvedRefs::Resolved(_)
+                        | ResolvedRefs::InvalidBackend(_)
+                        | ResolvedRefs::ResolvedWithNotAllowedRoutes(_)
+                        | ResolvedRefs::InvalidCertificates(_)
+                        | ResolvedRefs::RefNotPermitted(_),
                     ) => {
                         listener_conditions.push(Condition {
                             last_transition_time: Time(Utc::now()),

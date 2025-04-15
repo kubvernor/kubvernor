@@ -15,7 +15,7 @@ export RUST_FILE_LOG=info,kubvernor=debug
 export RUST_LOG=info,kubvernor=info
 export RUST_TRACE_LOG=info,kubvernor=debug
 kubectl apply -f resources/gateway_class.yaml
-cargo run -- --controller-name "kubvernor.com/proxy-controller" --with-opentelemetry false
+cargo run -- --controller-name "kubvernor.com/proxy-controller" --with-opentelemetry false --envoy-control-plane-hostname <ip or hostname which can be resolved from the pods, not 127.0.0.1 and not 0.0.0.0>>  --envoy-control-plane-port 50051
 ```
 
 ## Run conformance suite
@@ -30,8 +30,4 @@ go test -v -count=1 -timeout=3h ./conformance --debug -run TestKubvernorGatewayA
 ```
 
 
-## Conformance hacks
-```
-https://github.com/envoyproxy/envoy/issues/12383 
-echo 1 | sudo tee /proc/sys/user/max_inotify_instances
-```
+

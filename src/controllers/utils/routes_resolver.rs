@@ -21,18 +21,18 @@ pub struct RouteResolver<'a> {
     backend_reference_resolver: BackendReferenceResolver,
     reference_grants_resolver: ReferenceGrantsResolver,
 }
-// struct PermittedBackends(String);
-// impl PermittedBackends {
-//     fn is_permitted(&self, _route_namespace: &str, backend_namespace: &str) -> bool {
-//         backend_namespace == self.0
-//     }
-// }
+struct PermittedBackends(String);
+impl PermittedBackends {
+    fn is_permitted(&self, route_namespace: &str, backend_namespace: &str) -> bool {
+        self.0 != route_namespace || backend_namespace == self.0
+    }
+}
 
 impl RouteResolver<'_> {
     pub async fn resolve(self) -> common::Route {
         let mut route = self.route;
         let route_namespace = route.namespace().to_owned();
-        let route_resource_key = route.resource_key().clone();
+        let route_resource_key = &route.resource_key().clone();
         let route_config = route.config_mut();
         let mut route_resolution_status = ResolutionStatus::Resolved;
         let gateway_namespace = &self.gateway_resource_key.namespace;
@@ -43,19 +43,20 @@ impl RouteResolver<'_> {
                     Backend::Maybe(mut backend_service_config) => {
                         let reference_grant_allowed = self
                             .reference_grants_resolver
-                            .is_allowed(&route_resource_key, &backend_service_config.resource_key, self.gateway_resource_key)
+                            .is_allowed(route_resource_key, &backend_service_config.resource_key, self.gateway_resource_key)
                             .await;
 
                         let grant_ref = ReferenceGrantRef::builder()
-                            .from(route_resource_key.clone())
-                            .to(backend_service_config.resource_key.clone())
+                            .namespace(backend_service_config.resource_key.namespace.clone())
+                            .from(route_resource_key.into())
+                            .to((&backend_service_config.resource_key).into())
                             .gateway_key(self.gateway_resource_key.clone())
                             .build();
 
                         info!("Allowed because of reference grant {grant_ref:?} {reference_grant_allowed}");
 
                         let backend_namespace = &backend_service_config.resource_key.namespace;
-                        if reference_grant_allowed || gateway_namespace == backend_namespace {
+                        if reference_grant_allowed || PermittedBackends(gateway_namespace.clone()).is_permitted(&route_namespace, backend_namespace) {
                             let maybe_service = self.backend_reference_resolver.get_reference(&backend_service_config.resource_key).await;
 
                             if let Some(service) = maybe_service {

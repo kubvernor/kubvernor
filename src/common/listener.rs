@@ -350,6 +350,12 @@ impl ListenerCondition {
                 crate::common::gateway_api::constants::ListenerConditionReason::InvalidCertificateRef,
             ),
 
+            ListenerCondition::ResolvedRefs(ResolvedRefs::RefNotPermitted(_)) => (
+                "False",
+                crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,
+                crate::common::gateway_api::constants::ListenerConditionReason::RefNotPermitted,
+            ),
+
             ListenerCondition::UnresolvedRouteRefs => (
                 "False",
                 crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,

@@ -9,7 +9,7 @@ use crate::{
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use gateway_api::apis::standard::referencegrants::{ReferenceGrantFrom, ReferenceGrantTo};
-use kube::{api::ListParams, Api, Client};
+use kube::{api::ListParams, Api, Client, ResourceExt};
 use kube_core::ObjectList;
 use tokio::time;
 use tracing::{info, span, warn, Level};
@@ -17,9 +17,82 @@ use typed_builder::TypedBuilder;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, TypedBuilder)]
 pub struct ReferenceGrantRef {
-    from: ResourceKey,
-    to: ResourceKey,
+    from: FromResourceKey,
+    to: ToResourceKey,
     gateway_key: ResourceKey,
+    namespace: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct FromResourceKey {
+    pub group: String,
+    pub namespace: String,
+    pub kind: String,
+}
+
+impl From<ResourceKey> for FromResourceKey {
+    fn from(rk: ResourceKey) -> Self {
+        Self {
+            group: rk.group,
+            namespace: rk.namespace,
+            kind: rk.kind,
+        }
+    }
+}
+
+impl From<&ResourceKey> for FromResourceKey {
+    fn from(rk: &ResourceKey) -> Self {
+        Self::from(rk.clone())
+    }
+}
+
+impl From<&ReferenceGrantFrom> for FromResourceKey {
+    fn from(rk: &ReferenceGrantFrom) -> Self {
+        Self {
+            group: rk.group.clone(),
+            namespace: rk.namespace.clone(),
+            kind: rk.kind.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ToResourceKey {
+    pub group: String,
+    pub name: Option<String>,
+    pub kind: String,
+}
+
+impl From<&ResourceKey> for ToResourceKey {
+    fn from(rk: &ResourceKey) -> Self {
+        Self::from(rk.clone())
+    }
+}
+
+impl From<ResourceKey> for ToResourceKey {
+    fn from(rk: ResourceKey) -> Self {
+        Self {
+            group: if rk.group.is_empty() { DEFAULT_GROUP_NAME.to_owned() } else { rk.group },
+            name: if rk.name.is_empty() { None } else { Some(rk.name) },
+            kind: rk.kind,
+        }
+    }
+}
+
+impl From<ReferenceGrantTo> for ToResourceKey {
+    fn from(rk: ReferenceGrantTo) -> Self {
+        Self {
+            group: if rk.group.is_empty() { DEFAULT_GROUP_NAME.to_owned() } else { rk.group },
+            name: rk.name,
+            kind: rk.kind,
+        }
+    }
+}
+
+impl From<&ReferenceGrantTo> for ToResourceKey {
+    fn from(rk: &ReferenceGrantTo) -> Self {
+        Self::from(rk.clone())
+    }
 }
 
 #[derive(Clone, TypedBuilder)]
@@ -48,9 +121,16 @@ impl ReferenceGrantsResolver {
             for rule in &route_config.routing_rules {
                 for backend in &rule.backends {
                     if let Backend::Maybe(backend_service_config) = backend {
-                        let to = backend_service_config.resource_key.clone();
-                        let (from, to) = normalize_from_and_to(from.clone(), to.clone());
-                        backend_reference_keys.insert(ReferenceGrantRef::builder().from(from).to(to).gateway_key(gateway_key.clone()).build());
+                        let to = &backend_service_config.resource_key;
+
+                        backend_reference_keys.insert(
+                            ReferenceGrantRef::builder()
+                                .namespace(to.namespace.clone())
+                                .from(from.into())
+                                .to(to.into())
+                                .gateway_key(gateway_key.clone())
+                                .build(),
+                        );
                     };
                 }
             }
@@ -62,8 +142,14 @@ impl ReferenceGrantsResolver {
             if let Some(TlsType::Terminate(certificates)) = &listener_data.config.tls_type {
                 for certificate in certificates {
                     let certificate_key = certificate.resouce_key();
-                    let (from, to) = normalize_from_and_to(gateway_key.clone(), certificate_key.clone());
-                    secrets_references.insert(ReferenceGrantRef::builder().from(from).to(to).gateway_key(gateway_key.clone()).build());
+                    secrets_references.insert(
+                        ReferenceGrantRef::builder()
+                            .namespace(certificate_key.namespace.clone())
+                            .from(gateway_key.into())
+                            .to(certificate_key.into())
+                            .gateway_key(gateway_key.clone())
+                            .build(),
+                    );
                 }
             }
         }
@@ -129,15 +215,16 @@ impl ReferenceGrantsResolver {
         let references = self.references.lock().await;
 
         for resolved_reference in references.iter() {
-            let resolved_namespace_key = &resolved_reference.to;
-            if let Ok(reference_grants) = resolver_fn(resolved_namespace_key.namespace.clone()).await {
+            let resolved_namespace = &resolved_reference.namespace;
+            if let Ok(reference_grants) = resolver_fn(resolved_namespace.clone()).await {
                 for grant in reference_grants {
                     for from in &grant.spec.from {
                         for to in &grant.spec.to {
                             configured_reference_grants.insert(
                                 ReferenceGrantRef::builder()
-                                    .from(ResourceKey::from(from))
-                                    .to(ResourceKey::from(to))
+                                    .namespace(grant.namespace().unwrap_or(String::new()))
+                                    .from(from.into())
+                                    .to(to.into())
                                     .gateway_key(resolved_reference.gateway_key.clone())
                                     .build(),
                             );
@@ -145,7 +232,7 @@ impl ReferenceGrantsResolver {
                     }
                 }
             } else {
-                warn!("Unable to list ReferenceGrants for {resolved_namespace_key}");
+                warn!("Unable to list ReferenceGrants for {resolved_namespace}");
             }
         }
 
@@ -153,7 +240,13 @@ impl ReferenceGrantsResolver {
         let mut allowed_reference_grants = BTreeSet::new();
 
         for reference in references.iter() {
-            let valid = configured_reference_grants.contains(reference);
+            let valid = configured_reference_grants.iter().any(|rgr| {
+                rgr == reference || {
+                    let mut temp = reference.clone();
+                    temp.to.name = None;
+                    rgr == &temp
+                }
+            });
             info!("Checking reference {reference:?} {valid}");
             if valid {
                 allowed_reference_grants.insert(reference.clone());
@@ -187,18 +280,24 @@ impl ReferenceGrantsResolver {
     }
 
     pub async fn is_allowed(&self, from: &ResourceKey, to: &ResourceKey, gateway_key: &ResourceKey) -> bool {
-        let (from, to) = normalize_from_and_to(from.clone(), to.clone());
         let resolved_grants = self.resolved_reference_grants.lock().await;
         info!("Resolved grants {resolved_grants:?}");
-        resolved_grants.contains(&ReferenceGrantRef::builder().from(from).to(to).gateway_key(gateway_key.clone()).build())
+        resolved_grants.contains(
+            &ReferenceGrantRef::builder()
+                .namespace(to.namespace.clone())
+                .from(from.into())
+                .to(to.into())
+                .gateway_key(gateway_key.clone())
+                .build(),
+        )
     }
 }
 
-fn normalize_from_and_to(mut from: ResourceKey, mut to: ResourceKey) -> (ResourceKey, ResourceKey) {
-    from.name = String::new();
-    to.namespace = String::new();
-    (from, to)
-}
+// fn normalize_from_and_to(mut from: ResourceKey, mut to: ResourceKey) -> (ResourceKey, ResourceKey) {
+//     from.name = String::new();
+//     to.namespace = String::new();
+//     (from, to)
+// }
 
 impl From<&ReferenceGrantFrom> for ResourceKey {
     fn from(value: &ReferenceGrantFrom) -> Self {
@@ -281,7 +380,7 @@ mod tests {
                     items: vec![ReferenceGrant {
                         metadata: ObjectMeta {
                             name: Some("test".into()),
-                            namespace: Some("dev".into()),
+                            namespace: Some("to_namespace_3".into()),
                             ..ObjectMeta::default()
                         },
                         spec: ReferenceGrantSpec { to: tos, from: froms },
@@ -300,7 +399,7 @@ mod tests {
             group: "to_group_1".to_owned(),
             kind: "to_kind_1".to_owned(),
             name: "to_name_1".to_owned(),
-            namespace: String::new(),
+            namespace: "to_namespace_3".to_owned(),
         };
         let from_1 = ResourceKey {
             group: "from_group_1".to_owned(),
@@ -336,8 +435,22 @@ mod tests {
         };
 
         let mut gateway_references = BTreeSet::new();
-        gateway_references.insert(ReferenceGrantRef::builder().from(from_1.clone()).to(to_1.clone()).gateway_key(gateway_id_1.clone()).build());
-        gateway_references.insert(ReferenceGrantRef::builder().from(from_2.clone()).to(to_2.clone()).gateway_key(gateway_id_2.clone()).build());
+        gateway_references.insert(
+            ReferenceGrantRef::builder()
+                .namespace(to_1.namespace.clone())
+                .from((&from_1).into())
+                .to((&to_1).into())
+                .gateway_key(gateway_id_1.clone())
+                .build(),
+        );
+        gateway_references.insert(
+            ReferenceGrantRef::builder()
+                .namespace(to_2.namespace.clone())
+                .from((&from_2).into())
+                .to((&to_2).into())
+                .gateway_key(gateway_id_2.clone())
+                .build(),
+        );
 
         cloned_reference_grant_resolver.references.lock().await.append(&mut gateway_references);
         let reference_grant_resolver = cloned_reference_grant_resolver.clone();
@@ -407,7 +520,7 @@ mod tests {
                     items: vec![ReferenceGrant {
                         metadata: ObjectMeta {
                             name: Some("test".into()),
-                            namespace: Some("dev".into()),
+                            namespace: Some("to_namespace_3".into()),
                             ..ObjectMeta::default()
                         },
                         spec: ReferenceGrantSpec { to: tos, from: froms },
@@ -426,7 +539,7 @@ mod tests {
             group: "to_group_1".to_owned(),
             kind: "to_kind_1".to_owned(),
             name: "to_name_1".to_owned(),
-            namespace: String::new(),
+            namespace: "to_namespace_3".to_owned(),
         };
         let from_1 = ResourceKey {
             group: "from_group_1".to_owned(),
@@ -439,7 +552,7 @@ mod tests {
             group: "to_group_2".to_owned(),
             kind: "to_kind_2".to_owned(),
             name: "to_name_2".to_owned(),
-            namespace: String::new(),
+            namespace: "to_namespace_3".to_owned(),
         };
         let from_2 = ResourceKey {
             group: "from_group_2".to_owned(),
@@ -462,8 +575,22 @@ mod tests {
         };
 
         let mut gateway_references = BTreeSet::new();
-        gateway_references.insert(ReferenceGrantRef::builder().from(from_1.clone()).to(to_1.clone()).gateway_key(gateway_id_1.clone()).build());
-        gateway_references.insert(ReferenceGrantRef::builder().from(from_2.clone()).to(to_2.clone()).gateway_key(gateway_id_2.clone()).build());
+        gateway_references.insert(
+            ReferenceGrantRef::builder()
+                .namespace(to_1.namespace.clone())
+                .from((&from_1).into())
+                .to((&to_1).into())
+                .gateway_key(gateway_id_1.clone())
+                .build(),
+        );
+        gateway_references.insert(
+            ReferenceGrantRef::builder()
+                .namespace(to_2.namespace.clone())
+                .from((&from_2).into())
+                .to((&to_2).into())
+                .gateway_key(gateway_id_2.clone())
+                .build(),
+        );
 
         cloned_reference_grant_resolver.references.lock().await.append(&mut gateway_references);
         let reference_grant_resolver = cloned_reference_grant_resolver.clone();
