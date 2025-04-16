@@ -427,23 +427,22 @@ impl<'a> EnvoyXDSGenerator<'a> {
             .flat_map(|listener| {
                 listener.http_listener_map.iter().flat_map(|evc| {
                     evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
-                        r.routing_rules().iter().flat_map(|rr| {
-                            rr.backends
-                                .iter()
-                                .filter(|b| b.weight() > 0)
-                                .filter_map(|b| match b {
-                                    Backend::Resolved(backend_service_config) => Some(backend_service_config),
-                                    _ => None,
-                                })
-                                .map(|r| TeraCluster {
-                                    name: r.cluster_name(),
-                                    endpoints: vec![TeraEndpoint {
-                                        service: r.endpoint.clone(),
-                                        port: r.effective_port,
-                                        weight: r.weight,
-                                    }],
-                                })
-                        })
+                        r.backends()
+                            .iter()
+                            .filter(|b| b.weight() > 0)
+                            .filter_map(|b| match b {
+                                Backend::Resolved(backend_service_config) => Some(backend_service_config),
+                                _ => None,
+                            })
+                            .map(|r| TeraCluster {
+                                name: r.cluster_name(),
+                                endpoints: vec![TeraEndpoint {
+                                    service: r.endpoint.clone(),
+                                    port: r.effective_port,
+                                    weight: r.weight,
+                                }],
+                            })
+                            .collect::<Vec<_>>()
                     })
                 })
             })

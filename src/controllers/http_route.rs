@@ -332,15 +332,14 @@ impl HTTPRouteHandler<HTTPRoute> {
     }
 
     fn extract_references(route: &Route) -> BTreeSet<ResourceKey> {
-        let route_config = route.config();
         let mut backend_reference_keys = BTreeSet::new();
-        for rule in &route_config.routing_rules {
-            for backend in &rule.backends {
-                if let Backend::Maybe(backend_service_config) = backend {
-                    backend_reference_keys.insert(backend_service_config.resource_key.clone());
-                };
-            }
+
+        for backend in &route.backends() {
+            if let Backend::Maybe(backend_service_config) = backend {
+                backend_reference_keys.insert(backend_service_config.resource_key.clone());
+            };
         }
+
         backend_reference_keys
     }
 }

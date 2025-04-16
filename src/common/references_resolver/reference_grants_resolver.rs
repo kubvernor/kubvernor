@@ -117,22 +117,18 @@ impl ReferenceGrantsResolver {
         for route in linked_routes {
             let from = route.resource_key();
 
-            let route_config = route.config();
-            for rule in &route_config.routing_rules {
-                for backend in &rule.backends {
-                    if let Backend::Maybe(backend_service_config) = backend {
-                        let to = &backend_service_config.resource_key;
-
-                        backend_reference_keys.insert(
-                            ReferenceGrantRef::builder()
-                                .namespace(to.namespace.clone())
-                                .from(from.into())
-                                .to(to.into())
-                                .gateway_key(gateway_key.clone())
-                                .build(),
-                        );
-                    };
-                }
+            for backend in &route.backends() {
+                if let Backend::Maybe(backend_service_config) = backend {
+                    let to = &backend_service_config.resource_key;
+                    backend_reference_keys.insert(
+                        ReferenceGrantRef::builder()
+                            .namespace(to.namespace.clone())
+                            .from(from.into())
+                            .to(to.into())
+                            .gateway_key(gateway_key.clone())
+                            .build(),
+                    );
+                };
             }
         }
 

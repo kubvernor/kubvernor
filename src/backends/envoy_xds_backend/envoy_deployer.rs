@@ -789,44 +789,43 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
         .flat_map(|listener| {
             listener.http_listener_map.iter().flat_map(|evc| {
                 evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
-                    r.routing_rules().iter().flat_map(|rr| {
-                        rr.backends
-                            .iter()
-                            .filter(|b| b.weight() > 0)
-                            .filter_map(|b| match b {
-                                Backend::Resolved(backend_service_config) => Some(backend_service_config),
-                                _ => None,
-                            })
-                            .map(|r| ClusterHolder {
+                    r.backends()
+                        .iter()
+                        .filter(|b| b.weight() > 0)
+                        .filter_map(|b| match b {
+                            Backend::Resolved(backend_service_config) => Some(backend_service_config),
+                            _ => None,
+                        })
+                        .map(|r| ClusterHolder {
+                            name: r.cluster_name(),
+                            cluster: EnvoyCluster {
                                 name: r.cluster_name(),
-                                cluster: EnvoyCluster {
-                                    name: r.cluster_name(),
-                                    cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::StrictDns.into())),
-                                    lb_policy: LbPolicy::RoundRobin.into(),
-                                    connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
-                                    load_assignment: Some(ClusterLoadAssignment {
-                                        cluster_name: r.cluster_name(),
-                                        endpoints: vec![LocalityLbEndpoints {
-                                            lb_endpoints: vec![LbEndpoint {
-                                                host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
-                                                    address: Some(SocketAddressFactory::from_backend(r)),
-                                                    ..Default::default()
-                                                })),
-                                                load_balancing_weight: Some(UInt32Value {
-                                                    value: r.weight.try_into().expect("For time being we expect this to work"),
-                                                }),
-
+                                cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::StrictDns.into())),
+                                lb_policy: LbPolicy::RoundRobin.into(),
+                                connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
+                                load_assignment: Some(ClusterLoadAssignment {
+                                    cluster_name: r.cluster_name(),
+                                    endpoints: vec![LocalityLbEndpoints {
+                                        lb_endpoints: vec![LbEndpoint {
+                                            host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
+                                                address: Some(SocketAddressFactory::from_backend(r)),
                                                 ..Default::default()
-                                            }],
+                                            })),
+                                            load_balancing_weight: Some(UInt32Value {
+                                                value: r.weight.try_into().expect("For time being we expect this to work"),
+                                            }),
+
                                             ..Default::default()
                                         }],
                                         ..Default::default()
-                                    }),
-
+                                    }],
                                     ..Default::default()
-                                },
-                            })
-                    })
+                                }),
+
+                                ..Default::default()
+                            },
+                        })
+                        .collect::<Vec<_>>()
                 })
             })
         })
