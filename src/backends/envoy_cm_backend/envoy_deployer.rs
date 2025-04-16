@@ -422,7 +422,7 @@ impl EnvoyDeployerChannelHandlerService {
                 .await;
         } else {
             let client = self.client.clone();
-            let resource_key = ResourceKey::from(&service.metadata);
+            let resource_key = ResourceKey::from(service);
 
             let backend_response_channel_sender = self.backend_response_channel_sender.clone();
             let span = span!(parent: parent_span, Level::INFO, "ServiceResolverTask");
@@ -479,8 +479,8 @@ impl EnvoyDeployerChannelHandlerService {
         let secrets = all_certificates
             .into_iter()
             .filter_map(|c| match c {
-                Certificate::Resolved(resource_key) => Some(resource_key),
-                Certificate::NotResolved(_) | Certificate::Invalid(_) => None,
+                Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
+                Certificate::NotResolved(_) | Certificate::Invalid(_) | Certificate::ResolvedCrossSpace(_) => None,
             })
             .map(|resource_key| VolumeProjection {
                 secret: Some(SecretProjection {

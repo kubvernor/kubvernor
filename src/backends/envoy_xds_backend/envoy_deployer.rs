@@ -232,7 +232,7 @@ impl EnvoyDeployerChannelHandlerService {
                 .await;
         } else {
             let client = self.client.clone();
-            let resource_key = ResourceKey::from(&service.metadata);
+            let resource_key = ResourceKey::from(service);
 
             let backend_response_channel_sender = self.backend_response_channel_sender.clone();
             let span = span!(parent: parent_span, Level::INFO, "ServiceResolverTask");
@@ -408,8 +408,8 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 .iter()
                 .cloned()
                 .filter_map(|cert| match cert {
-                    common::Certificate::Resolved(resource_key) => Some(resource_key),
-                    common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) => None,
+                    common::Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
+                    common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) | common::Certificate::ResolvedCrossSpace(_) => None,
                 })
                 .collect();
 
@@ -1059,8 +1059,8 @@ fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
     let secrets = all_certificates
         .into_iter()
         .filter_map(|c| match c {
-            Certificate::Resolved(resource_key) => Some(resource_key),
-            Certificate::NotResolved(_) | Certificate::Invalid(_) => None,
+            Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
+            Certificate::NotResolved(_) | Certificate::Invalid(_) | Certificate::ResolvedCrossSpace(_) => None,
         })
         .map(|resource_key| VolumeProjection {
             secret: Some(SecretProjection {

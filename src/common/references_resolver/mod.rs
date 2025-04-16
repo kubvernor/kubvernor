@@ -11,9 +11,12 @@ use typed_builder::TypedBuilder;
 
 use crate::common::{ReferenceValidateRequest, ResourceKey};
 mod backends_resolver;
+mod reference_grants_resolver;
 mod secrets_resolver;
 
 pub use backends_resolver::BackendReferenceResolver;
+
+pub use reference_grants_resolver::{ReferenceGrantRef, ReferenceGrantsResolver};
 pub use secrets_resolver::SecretsResolver;
 
 #[derive(Clone, TypedBuilder)]
@@ -44,7 +47,7 @@ where
             return;
         }
 
-        debug!("Adding new references for Gateway {gateway_key} BackendRef {reference_keys:?}");
+        debug!("Adding new references for Gateway {gateway_key} Reference {reference_keys:?}");
         let mut lock = self.references.lock().await;
 
         for key in reference_keys {
@@ -85,7 +88,7 @@ where
     where
         I: Iterator<Item = &'a ResourceKey> + fmt::Debug,
     {
-        debug!("Adding new references BackendRef {reference_keys:?}");
+        debug!("Adding new references  {reference_keys:?}");
         let mut lock = self.references.lock().await;
 
         for key in reference_keys {
@@ -117,28 +120,28 @@ where
 
     pub async fn resolve(&self) {
         let mut interval = time::interval(time::Duration::from_secs(1));
-        let span = span!(Level::INFO, "BackendReferenceResolver");
+        let span = span!(Level::INFO, "ReferencesResolver");
         let _entered = span.enter();
         loop {
             interval.tick().await;
-            let secrets = {
-                let secrets = self.references.lock().await;
-                secrets.clone()
+            let references = {
+                let references = self.references.lock().await;
+                references.clone()
             };
 
-            for key in secrets.keys() {
+            for key in references.keys() {
                 let key = key.clone();
                 let myself = (*self).clone();
-                let span = span!(Level::INFO, "BackendReferenceResolverTask", secret = %key);
+                let span = span!(Level::INFO, "ReferencesResolver", secret = %key);
                 tokio::spawn(
                     async move {
-                        debug!("Checking backend reference  {key}");
+                        debug!("Checking  reference  {key}");
                         let api: Api<R> = Api::namespaced(myself.client.clone(), &key.namespace);
                         if let Ok(service) = api.get(&key.name).await {
                             let mut update_gateway = false;
                             {
-                                let mut resolved_backend_references = myself.resolved_references.lock().await;
-                                resolved_backend_references
+                                let mut resolved_references = myself.resolved_references.lock().await;
+                                resolved_references
                                     .entry(key.clone())
                                     .and_modify(|f| {
                                         if *f != service {
@@ -156,12 +159,12 @@ where
                                 myself.update_gateways(&key).await;
                             }
                         } else {
-                            let resolved_secret = {
-                                let mut resolved_secrets = myself.resolved_references.lock().await;
-                                resolved_secrets.remove(&key).is_some()
+                            let resolved_references = {
+                                let mut resolved_references = myself.resolved_references.lock().await;
+                                resolved_references.remove(&key).is_some()
                             };
 
-                            if resolved_secret {
+                            if resolved_references {
                                 myself.update_gateways(&key).await;
                             }
                         }
@@ -173,8 +176,8 @@ where
     }
 
     async fn update_gateways(&self, key: &ResourceKey) {
-        let secrets = self.references.lock().await;
-        let gateways = secrets.get(key).cloned().unwrap_or_default();
+        let references = self.references.lock().await;
+        let gateways = references.get(key).cloned().unwrap_or_default();
         debug!("Reference changed... updating gateways {key} {gateways:?}");
         let _res = self
             .reference_validate_channel_sender

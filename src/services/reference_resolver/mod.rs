@@ -3,7 +3,7 @@ use tracing::{debug, info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{self, gateway_api::gateways::Gateway, BackendReferenceResolver, GatewayDeployRequest, ReferenceValidateRequest, RequestContext, SecretsResolver},
+    common::{self, gateway_api::gateways::Gateway, BackendReferenceResolver, GatewayDeployRequest, ReferenceGrantsResolver, ReferenceValidateRequest, RequestContext, SecretsResolver},
     controllers::{ListenerTlsConfigValidator, RoutesResolver},
     state::State,
 };
@@ -14,6 +14,7 @@ pub struct ReferenceValidatorService {
     state: State,
     secrets_resolver: SecretsResolver,
     backend_references_resolver: BackendReferenceResolver,
+    reference_grants_resolver: ReferenceGrantsResolver,
     reference_validate_channel_receiver: tokio::sync::mpsc::Receiver<ReferenceValidateRequest>,
     gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<GatewayDeployRequest>,
 }
@@ -23,6 +24,7 @@ struct ReferenceResolverHandler {
     state: State,
     secrets_resolver: SecretsResolver,
     backend_references_resolver: BackendReferenceResolver,
+    reference_grants_resolver: ReferenceGrantsResolver,
     gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<GatewayDeployRequest>,
 }
 
@@ -34,6 +36,7 @@ impl ReferenceValidatorService {
             state: self.state,
             secrets_resolver: self.secrets_resolver,
             backend_references_resolver: self.backend_references_resolver,
+            reference_grants_resolver: self.reference_grants_resolver,
             gateway_deployer_channel_sender: self.gateway_deployer_channel_sender,
         };
 
@@ -67,6 +70,7 @@ impl ReferenceResolverHandler {
                 self.secrets_resolver.add_secretes_by_gateway(&gateway).await;
 
                 self.backend_references_resolver.add_references_by_gateway(&gateway).await;
+                self.reference_grants_resolver.add_references_by_gateway(&gateway).await;
 
                 let backend_gateway = self.process(span.clone(), gateway, &kube_gateway).await;
 
@@ -89,6 +93,7 @@ impl ReferenceResolverHandler {
 
                 self.secrets_resolver.delete_secrets_by_gateway(&gateway).await;
                 self.backend_references_resolver.delete_references_by_gateway(&gateway).await;
+                self.reference_grants_resolver.delete_references_by_gateway(&gateway).await;
             }
 
             ReferenceValidateRequest::AddRoute { references, span: parent_span } => {
@@ -159,12 +164,16 @@ impl ReferenceResolverHandler {
         }
     }
     async fn process(&self, span: Span, gateway: common::Gateway, kube_gateway: &Gateway) -> common::Gateway {
-        let backend_gateway = ListenerTlsConfigValidator::new(gateway, &self.secrets_resolver).validate().instrument(span.clone()).await;
+        let backend_gateway = ListenerTlsConfigValidator::new(gateway, &self.secrets_resolver, &self.reference_grants_resolver)
+            .validate()
+            .instrument(span.clone())
+            .await;
         let resolver = RoutesResolver::builder()
             .gateway(backend_gateway)
             .kube_gateway(kube_gateway)
             .client(self.client.clone())
             .backend_reference_resolver(&self.backend_references_resolver)
+            .reference_grants_resolver(&self.reference_grants_resolver)
             .state(&self.state)
             .build();
 

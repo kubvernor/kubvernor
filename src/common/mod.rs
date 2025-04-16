@@ -33,7 +33,7 @@ cfg_if::cfg_if! {
 }
 
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
-pub use references_resolver::{BackendReferenceResolver, SecretsResolver};
+pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};
 pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE};
 pub use route::{EffectiveRoutingRule, HttpHeader, NotResolvedReason, ResolutionStatus, Route, RouteStatus};
 use tokio::sync::{mpsc, oneshot};
@@ -45,7 +45,8 @@ use crate::services::patchers::{FinalizerContext, Operation};
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
 pub enum Certificate {
-    Resolved(ResourceKey),
+    ResolvedSameSpace(ResourceKey),
+    ResolvedCrossSpace(ResourceKey),
     NotResolved(ResourceKey),
     Invalid(ResourceKey),
 }
@@ -53,28 +54,35 @@ pub enum Certificate {
 impl Certificate {
     pub fn resolve(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::Resolved(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
         };
-        Certificate::Resolved(resource.clone())
+        Certificate::ResolvedSameSpace(resource.clone())
+    }
+
+    pub fn resolve_cross_space(self: &Certificate) -> Self {
+        let resource = match self {
+            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+        };
+        Certificate::ResolvedCrossSpace(resource.clone())
     }
 
     pub fn not_resolved(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::Resolved(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
         };
         Certificate::NotResolved(resource.clone())
     }
 
     pub fn invalid(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::Resolved(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
         };
         Certificate::Invalid(resource.clone())
     }
 
     pub fn resouce_key(&self) -> &ResourceKey {
         match self {
-            Certificate::Resolved(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
         }
     }
 }
@@ -243,6 +251,7 @@ pub enum ResolvedRefs {
     InvalidAllowedRoutes,
     InvalidCertificates(Vec<String>),
     InvalidBackend(Vec<String>),
+    RefNotPermitted(Vec<String>),
 }
 
 impl ResolvedRefs {

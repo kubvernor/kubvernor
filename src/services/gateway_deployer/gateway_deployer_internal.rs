@@ -30,7 +30,7 @@ pub struct GatewayDeployerServiceInternal<'a> {
     controller_name: String,
 }
 
-impl<'a> GatewayDeployerServiceInternal<'a> {
+impl GatewayDeployerServiceInternal<'_> {
     pub async fn on_version_not_changed(&mut self, gateway_id: &ResourceKey, gateway_class_name: &str, resource: &Arc<KubeGateway>) {
         let controller_name = &self.controller_name;
         if let Some(status) = &resource.status {
@@ -109,10 +109,11 @@ impl GatewayDeployer {
                         conditions.replace(ListenerCondition::Programmed);
                     }
 
-                    ResolvedRefs::InvalidAllowedRoutes => {
+                    ResolvedRefs::InvalidAllowedRoutes | ResolvedRefs::RefNotPermitted(_) => {
                         conditions.insert(ListenerCondition::NotProgrammed);
                         conditions.replace(ListenerCondition::NotAccepted);
                     }
+
                     ResolvedRefs::InvalidCertificates(_) => {
                         conditions.remove(&ListenerCondition::Accepted);
                         conditions.replace(ListenerCondition::NotProgrammed);
@@ -154,7 +155,11 @@ impl GatewayDeployer {
                 listener_conditions.retain(|c| c.type_ != type_);
                 match condition {
                     ListenerCondition::ResolvedRefs(
-                        ResolvedRefs::Resolved(_) | ResolvedRefs::InvalidBackend(_) | ResolvedRefs::ResolvedWithNotAllowedRoutes(_) | ResolvedRefs::InvalidCertificates(_),
+                        ResolvedRefs::Resolved(_)
+                        | ResolvedRefs::InvalidBackend(_)
+                        | ResolvedRefs::ResolvedWithNotAllowedRoutes(_)
+                        | ResolvedRefs::InvalidCertificates(_)
+                        | ResolvedRefs::RefNotPermitted(_),
                     ) => {
                         listener_conditions.push(Condition {
                             last_transition_time: Time(Utc::now()),

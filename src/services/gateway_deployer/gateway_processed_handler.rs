@@ -32,7 +32,7 @@ pub struct GatewayProcessedHandler<'a> {
     pub controller_name: String,
 }
 
-impl<'a> GatewayProcessedHandler<'a> {
+impl GatewayProcessedHandler<'_> {
     pub async fn deploy_gateway(mut self) -> Result<Gateway> {
         self.update_gateway_resource();
         self.update_routes().instrument(Span::current().clone()).await;
@@ -84,7 +84,7 @@ impl<'a> GatewayProcessedHandler<'a> {
         for attached_route in attached_routes {
             let updated_route = self.update_attached_route_parents(attached_route, gateway_id);
             if let Some(route) = updated_route {
-                let route_resource_key = ResourceKey::from(route.meta());
+                let route_resource_key = ResourceKey::from(&route);
                 let (sender, receiver) = oneshot::channel();
                 let _res = self
                     .route_patcher
@@ -111,7 +111,7 @@ impl<'a> GatewayProcessedHandler<'a> {
         for unresolve_route in unresolved_routes {
             let updated_route = self.update_unresolved_route_parents(unresolve_route, gateway_id);
             if let Some(route) = updated_route {
-                let route_resource_key = ResourceKey::from(route.meta());
+                let route_resource_key = ResourceKey::from(&route);
                 let (sender, receiver) = oneshot::channel();
                 let _res = self
                     .route_patcher
@@ -142,7 +142,7 @@ impl<'a> GatewayProcessedHandler<'a> {
         for route_with_no_hostname in self.effective_gateway.orphaned_routes() {
             let updated_route = self.update_non_attached_route_parents(route_with_no_hostname, gateway_id);
             if let Some(route) = updated_route {
-                let route_resource_key = ResourceKey::from(route.meta());
+                let route_resource_key = ResourceKey::from(&route);
                 let (sender, receiver) = oneshot::channel();
                 let _res = self
                     .route_patcher

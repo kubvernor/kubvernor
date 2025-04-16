@@ -1,7 +1,7 @@
 use std::{fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
 
 use clap::Parser;
-use common::{BackendReferenceResolver, ControlPlaneConfig, SecretsResolver};
+use common::{BackendReferenceResolver, ControlPlaneConfig, ReferenceGrantsResolver, SecretsResolver};
 use futures::FutureExt;
 use kube::Client;
 use services::{GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService};
@@ -42,7 +42,6 @@ use typed_builder::TypedBuilder;
 
 const STARTUP_DURATION: Duration = Duration::from_secs(10);
 
-/// Simple program to greet a person
 #[derive(Parser, Debug, TypedBuilder)]
 pub struct Args {
     controller_name: String,
@@ -71,6 +70,12 @@ pub async fn start(args: Args) -> Result<()> {
         .reference_resolver(client.clone(), reference_validate_channel_sender.clone())
         .build();
 
+    let reference_grants_resolver = ReferenceGrantsResolver::builder()
+        .client(client.clone())
+        .state(state.clone())
+        .reference_validate_channel_sender(reference_validate_channel_sender.clone())
+        .build();
+
     let gateway_deployer_service = GatewayDeployerService::builder()
         .gateway_deployer_channel_receiver(gateway_deployer_channel_receiver)
         .backend_deployer_channel_sender(backend_deployer_channel_sender.clone())
@@ -89,6 +94,7 @@ pub async fn start(args: Args) -> Result<()> {
         .state(state.clone())
         .secrets_resolver(secrets_resolver.clone())
         .backend_references_resolver(backend_references_resolver.clone())
+        .reference_grants_resolver(reference_grants_resolver.clone())
         .build();
 
     let mut gateway_patcher_service = GatewayPatcherService::builder().client(client.clone()).receiver(gateway_patcher_channel_receiver).build();
@@ -166,7 +172,9 @@ pub async fn start(args: Args) -> Result<()> {
 
     let secret_resolver_service = async move { secrets_resolver.resolve().await }.boxed();
     let backend_references_resolver_service = async move { backend_references_resolver.resolve().await }.boxed();
+    let reference_grants_resolver_service = async move { reference_grants_resolver.resolve().await }.boxed();
     futures::future::join_all(vec![
+        reference_grants_resolver_service,
         backend_references_resolver_service,
         secret_resolver_service,
         gateway_deployer_service,
