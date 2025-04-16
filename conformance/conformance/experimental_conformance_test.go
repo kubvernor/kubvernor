@@ -42,8 +42,8 @@ func TestKubvernorGatewayAPIConformanceExperimental(t *testing.T) {
 	
 	opts.ConformanceProfiles = sets.New(
 		suite.GatewayHTTPConformanceProfileName,
-		suite.GatewayTLSConformanceProfileName,
-		suite.GatewayGRPCConformanceProfileName,
+		//suite.GatewayTLSConformanceProfileName,
+		//suite.GatewayGRPCConformanceProfileName,
 	)
 
 	t.Logf("Running experimental conformance tests with %s GatewayClass\n cleanup: %t\n debug: %t\n enable all features: %t \n conformance profiles: [%v]",

@@ -1,0 +1,22 @@
+apiVersion: gateway.networking.k8s.io/v1
+date: "2025-04-16T15:53:01+01:00"
+gatewayAPIChannel: standard
+gatewayAPIVersion: v1.2.0
+implementation:
+  contact:
+  - nowakd@gmail.com
+  organization: kubvernor
+  project: kubvernor
+  url: https://github.com/kubvernor
+  version: latest
+kind: ConformanceReport
+mode: default
+profiles:
+- core:
+    result: success
+    statistics:
+      Failed: 0
+      Passed: 33
+      Skipped: 0
+  name: GATEWAY-HTTP
+  summary: Core tests succeeded.
