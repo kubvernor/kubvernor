@@ -35,7 +35,7 @@ cfg_if::cfg_if! {
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};
 pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE};
-pub use route::{EffectiveRoutingRule, HttpHeader, NotResolvedReason, ResolutionStatus, Route, RouteStatus};
+pub use route::{EffectiveRoutingRule, HttpHeader, NotResolvedReason, ResolutionStatus, Route, RouteType, RouteParentRefs, RouteStatus};
 use tokio::sync::{mpsc, oneshot};
 use tracing::Span;
 use typed_builder::TypedBuilder;

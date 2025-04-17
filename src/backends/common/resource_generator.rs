@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tracing::debug;
 
 use crate::{
-    common::{self, EffectiveRoutingRule, Listener, ProtocolType, Route, TlsType, DEFAULT_ROUTE_HOSTNAME},
+    common::{self, EffectiveRoutingRule, Listener, ProtocolType, Route, RouteType, TlsType, DEFAULT_ROUTE_HOSTNAME},
     controllers::HostnameMatchFilter,
 };
 
@@ -113,9 +113,9 @@ impl<'a> ResourceGenerator<'a> {
         let (resolved, unresolved) = listener.routes();
         let resolved: Vec<_> = resolved
             .into_iter()
-            .filter(|r| match r {
-                Route::Http(_) => true,
-                Route::Grpc(_) => false,
+            .filter(|r| match &r.config.route_type {
+                RouteType::Http(_) => true,
+                RouteType::Grpc(_) => false
             })
             .collect();
 

@@ -5,7 +5,7 @@ use tracing::{debug, info, warn};
 
 use super::envoy_deployer::{create_certificate_name, create_key_name, create_secret_name, TEMPLATES};
 use crate::{
-    common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, TlsType, DEFAULT_ROUTE_HOSTNAME},
+    common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, RouteType, TlsType, DEFAULT_ROUTE_HOSTNAME},
     controllers::HostnameMatchFilter,
 };
 #[derive(Debug)]
@@ -168,9 +168,9 @@ impl<'a> EnvoyXDSGenerator<'a> {
         let (resolved, unresolved) = listener.routes();
         let resolved: Vec<_> = resolved
             .into_iter()
-            .filter(|r| match r {
-                Route::Http(_) => true,
-                Route::Grpc(_) => false,
+            .filter(|r| match &r.config.route_type {
+                RouteType::Http(_) => true,
+                RouteType::Grpc(_) => false
             })
             .collect();
 
