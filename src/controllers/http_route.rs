@@ -20,17 +20,15 @@ use super::{
     utils::{ResourceCheckerArgs, ResourceState, RouteListenerMatcher},
     ControllerError, RECONCILE_LONG_WAIT,
 };
+
 use crate::{
-    common::{
-        self,
-        gateway_api::{
-            gateways::Gateway,
-            httproutes::{self, HTTPRoute, HTTPRouteParentRefs, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
-        },
-        Backend, ReferenceValidateRequest, RequestContext, ResourceKey, Route, RouteRefKey, VerifiyItems,
-    },
+    common::{self, Backend, ReferenceValidateRequest, RequestContext, ResourceKey, Route, RouteRefKey, VerifiyItems},
     services::patchers::{DeleteContext, FinalizerContext, Operation},
     state::State,
+};
+use gateway_api::{
+    gateways::Gateway,
+    httproutes::{self, HTTPRoute, HTTPRouteParentRefs, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;

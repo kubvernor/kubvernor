@@ -1,13 +1,51 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    cmp,
+    collections::{BTreeMap, BTreeSet},
+};
 
+use envoy_api_rs::envoy::config::route::v3::Route as EnvoyRoute;
 use tracing::debug;
 
 use crate::{
-    common::{self, EffectiveRoutingRule, Listener, ProtocolType, Route, RouteType, TlsType, DEFAULT_ROUTE_HOSTNAME},
+    common::{self, EffectiveRoutingRule, GRPCEffectiveRoutingRule, Listener, ProtocolType, Route, RouteType, TlsType, DEFAULT_ROUTE_HOSTNAME},
     controllers::HostnameMatchFilter,
 };
 
 type ListenerNameToHostname = (String, Option<String>);
+
+impl Listener {
+    pub fn http_matching_rules(&self) -> Vec<&EffectiveRoutingRule> {
+        let (resolved_routes, unresolved) = self.routes();
+        let mut matching_rules: Vec<_> = resolved_routes
+            .iter()
+            .chain(unresolved.iter())
+            .filter_map(|r| match &r.config.route_type {
+                RouteType::Http(configuration) => Some(configuration),
+                RouteType::Grpc(_) => None,
+            })
+            .flat_map(|r| &r.effective_routing_rules)
+            .collect();
+        matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
+        //matching_rules.reverse();
+        matching_rules
+    }
+
+    pub fn grpc_matching_rules(&self) -> Vec<&GRPCEffectiveRoutingRule> {
+        let (resolved_routes, unresolved) = self.routes();
+        let mut matching_rules: Vec<_> = resolved_routes
+            .iter()
+            .chain(unresolved.iter())
+            .filter_map(|r| match &r.config.route_type {
+                RouteType::Http(_) => None,
+                RouteType::Grpc(configuration) => Some(configuration),
+            })
+            .flat_map(|r| &r.effective_routing_rules)
+            .collect();
+        matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
+        //matching_rules.reverse();
+        matching_rules
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct EnvoyVirtualHost {
@@ -15,7 +53,8 @@ pub struct EnvoyVirtualHost {
     pub effective_hostnames: Vec<String>,
     pub resolved_routes: Vec<Route>,
     pub unresolved_routes: Vec<Route>,
-    pub effective_matching_rules: Vec<EffectiveRoutingRule>,
+    pub http_routes: Vec<EnvoyRoute>,
+    pub grpc_routes: Vec<EnvoyRoute>,
 }
 
 impl Ord for EnvoyVirtualHost {
@@ -115,7 +154,7 @@ impl<'a> ResourceGenerator<'a> {
             .into_iter()
             .filter(|r| match &r.config.route_type {
                 RouteType::Http(_) => true,
-                RouteType::Grpc(_) => false
+                RouteType::Grpc(_) => false,
             })
             .collect();
 
@@ -123,8 +162,19 @@ impl<'a> ResourceGenerator<'a> {
         let potential_hostnames = Self::calculate_potential_hostnames(&resolved, listener.hostname().cloned());
         debug!("generate_virtual_hosts Potential hostnames {potential_hostnames:?}");
         for potential_hostname in potential_hostnames {
-            let effective_matching_rules = listener
-                .effective_matching_rules()
+            let http_matching_rules = listener
+                .http_matching_rules()
+                .into_iter()
+                .filter(|&em| {
+                    let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
+                    debug!("generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
+                    filtered
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let grpc_matching_rules = listener
+                .grpc_matching_rules()
                 .into_iter()
                 .filter(|&em| {
                     let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
@@ -135,7 +185,8 @@ impl<'a> ResourceGenerator<'a> {
                 .collect::<Vec<_>>();
 
             listener_map.insert(EnvoyVirtualHost {
-                effective_matching_rules,
+                http_routes: http_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
+                grpc_routes: grpc_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
                 name: listener.name().to_owned() + "-" + &potential_hostname,
                 effective_hostnames: Self::calculate_effective_hostnames(&resolved, Some(potential_hostname)),
                 resolved_routes: resolved.iter().map(|r| (**r).clone()).collect(),

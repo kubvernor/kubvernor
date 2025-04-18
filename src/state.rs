@@ -1,11 +1,8 @@
+use crate::common::ResourceKey;
+use gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute};
 use std::{
     collections::{BTreeSet, HashMap},
     sync::{Arc, Mutex, MutexGuard},
-};
-
-use crate::common::{
-    gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway, httproutes::HTTPRoute},
-    ResourceKey,
 };
 
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]

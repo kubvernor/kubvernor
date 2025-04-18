@@ -7,12 +7,11 @@ use typed_builder::TypedBuilder;
 
 use super::BackendReferenceResolver;
 use crate::{
-    common::{
-        self, gateway_api::gateways::Gateway, Backend, NotResolvedReason, ReferenceGrantRef, ReferenceGrantsResolver, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping, KUBERNETES_NONE,
-    },
+    common::{self, Backend, NotResolvedReason, ReferenceGrantRef, ReferenceGrantsResolver, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping, KUBERNETES_NONE},
     controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };
+use gateway_api::gateways::Gateway;
 
 #[derive(TypedBuilder)]
 pub struct RouteResolver<'a> {
@@ -30,33 +29,32 @@ impl PermittedBackends {
 
 impl RouteResolver<'_> {
     pub async fn resolve(self) -> common::Route {
-        let mut route = self.route.clone();        
+        let mut route = self.route.clone();
         let route_resource_key = &route.resource_key().clone();
-        let route_config = route.config_mut();        
+        let route_config = route.config_mut();
         let mut route_resolution_status = ResolutionStatus::Resolved;
-        
-        
-        match &mut route_config.route_type{
-            common::RouteType::Http(httprouting_configuration) => {                
-                for rule in &mut httprouting_configuration.routing_rules {                    
-                    let (new_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;                    
-                    if resolution_status != ResolutionStatus::Resolved{
+
+        match &mut route_config.route_type {
+            common::RouteType::Http(httprouting_configuration) => {
+                for rule in &mut httprouting_configuration.routing_rules {
+                    let (new_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;
+                    if resolution_status != ResolutionStatus::Resolved {
                         route_resolution_status = resolution_status;
-                    }                        
-                    rule.backends = new_backends;        
+                    }
+                    rule.backends = new_backends;
                 }
             }
             common::RouteType::Grpc(grpcrouting_configuration) => {
                 for rule in &mut grpcrouting_configuration.routing_rules {
-                    let (new_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;                    
-                    if resolution_status != ResolutionStatus::Resolved{
+                    let (new_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;
+                    if resolution_status != ResolutionStatus::Resolved {
                         route_resolution_status = resolution_status;
-                    }                        
-                    rule.backends = new_backends;        
-                }                
+                    }
+                    rule.backends = new_backends;
+                }
             }
         }
-        
+
         route_config.resolution_status = route_resolution_status;
         route
     }
@@ -85,21 +83,21 @@ impl RouteResolver<'_> {
         port
     }
 
-    async fn process_backends(&self, route_resource_key: &ResourceKey, backends: Vec<Backend>)->(Vec<Backend>, ResolutionStatus){
-        let mut new_backends = vec![];                    
+    async fn process_backends(&self, route_resource_key: &ResourceKey, backends: Vec<Backend>) -> (Vec<Backend>, ResolutionStatus) {
+        let mut new_backends = vec![];
         let mut route_resolution_status = ResolutionStatus::Resolved;
         for backend in backends {
-            let (new_backend, resolution_status)= self.process_backend(route_resource_key, backend).await;
-            if resolution_status != ResolutionStatus::Resolved{
+            let (new_backend, resolution_status) = self.process_backend(route_resource_key, backend).await;
+            if resolution_status != ResolutionStatus::Resolved {
                 route_resolution_status = resolution_status;
-            }                        
-            new_backends.push(new_backend);                    
-        }                                        
+            }
+            new_backends.push(new_backend);
+        }
         (new_backends, route_resolution_status)
     }
 
-    async fn process_backend(&self, route_resource_key: &ResourceKey, backend: Backend)->(Backend, ResolutionStatus){
-        let gateway_resource_key = self.gateway_resource_key;        
+    async fn process_backend(&self, route_resource_key: &ResourceKey, backend: Backend) -> (Backend, ResolutionStatus) {
+        let gateway_resource_key = self.gateway_resource_key;
         let gateway_namespace = &self.gateway_resource_key.namespace;
         let route_namespace = &route_resource_key.namespace;
         match backend {
@@ -119,7 +117,7 @@ impl RouteResolver<'_> {
                 info!("Allowed because of reference grant {grant_ref:?} {reference_grant_allowed}");
 
                 let backend_namespace = &backend_service_config.resource_key.namespace;
-                if reference_grant_allowed || PermittedBackends(gateway_namespace.to_owned()).is_permitted(&route_namespace, backend_namespace) {
+                if reference_grant_allowed || PermittedBackends(gateway_namespace.to_owned()).is_permitted(route_namespace, backend_namespace) {
                     let maybe_service = self.backend_reference_resolver.get_reference(&backend_service_config.resource_key).await;
 
                     if let Some(service) = maybe_service {
@@ -130,34 +128,27 @@ impl RouteResolver<'_> {
                             "can't resolve {}-{} {:?}",
                             &backend_service_config.resource_key.name, &backend_service_config.resource_key.namespace, maybe_service
                         );
-                        (Backend::Unresolved(backend_service_config), ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound))                        
+                        (Backend::Unresolved(backend_service_config), ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound))
                     }
                 } else {
                     debug!(
                         "Backend is not permitted gateway namespace is {} route namespace is {} backend namespace is {}",
                         gateway_namespace, &route_namespace, &backend_namespace,
                     );
-                    (Backend::NotAllowed(backend_service_config), ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted))                    
+                    (Backend::NotAllowed(backend_service_config), ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted))
                 }
             }
             Backend::Unresolved(_) | Backend::NotAllowed(_) | Backend::Invalid(_) => {
                 debug!("Skipping unresolved backend {:?}", backend);
-                (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))                
+                (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
             }
             Backend::Resolved(_) => {
                 debug!("Skipping resolved/unupported backend {:?}", backend);
                 (backend, ResolutionStatus::Resolved)
-                
             }
         }
-
     }
-
-
 }
-
-
-
 
 #[derive(TypedBuilder)]
 pub struct RoutesResolver<'a> {

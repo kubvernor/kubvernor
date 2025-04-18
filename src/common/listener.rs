@@ -1,11 +1,13 @@
-use std::{cmp, collections::BTreeSet, fmt::Display};
+use std::{collections::BTreeSet, fmt::Display};
 
 use thiserror::Error;
 
-use super::{Certificate, EffectiveRoutingRule, NotResolvedReason, ResolutionStatus, ResolvedRefs, ResourceKey, Route};
-use crate::{
-    common::gateway_api::gateways::{self, GatewayListeners},
-    controllers::ControllerError,
+use super::{Certificate, NotResolvedReason, ResolutionStatus, ResolvedRefs, ResourceKey, Route};
+use crate::controllers::ControllerError;
+
+use gateway_api::{
+    constants,
+    gateways::{self, GatewayListeners},
 };
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Hash, Eq)]
@@ -182,13 +184,13 @@ impl Listener {
         }
     }
 
-    pub fn effective_matching_rules(&self) -> Vec<&EffectiveRoutingRule> {
-        let (resolved_routes, unresolved) = self.routes();
-        let mut matching_rules: Vec<_> = resolved_routes.iter().chain(unresolved.iter()).flat_map(|r| r.effective_routing_rules()).collect();
-        matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
-        //matching_rules.reverse();
-        matching_rules
-    }
+    // pub fn effective_matching_rules(&self) -> Vec<&EffectiveRoutingRule> {
+    //     let (resolved_routes, unresolved) = self.routes();
+    //     let mut matching_rules: Vec<_> = resolved_routes.iter().chain(unresolved.iter()).flat_map(|r| r.effective_routing_rules()).collect();
+    //     matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
+    //     //matching_rules.reverse();
+    //     matching_rules
+    // }
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -318,71 +320,29 @@ impl PartialEq for ListenerCondition {
 }
 
 impl ListenerCondition {
-    pub fn resolved_type(
-        &self,
-    ) -> (
-        &'static str,
-        crate::common::gateway_api::constants::ListenerConditionType,
-        crate::common::gateway_api::constants::ListenerConditionReason,
-    ) {
+    pub fn resolved_type(&self) -> (&'static str, constants::ListenerConditionType, constants::ListenerConditionReason) {
         match self {
-            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes | ResolvedRefs::ResolvedWithNotAllowedRoutes(_)) => (
-                "False",
-                crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,
-                crate::common::gateway_api::constants::ListenerConditionReason::InvalidRouteKinds,
-            ),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes | ResolvedRefs::ResolvedWithNotAllowedRoutes(_)) => {
+                ("False", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::InvalidRouteKinds)
+            }
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidBackend(_)) => (
-                "True",
-                crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,
-                crate::common::gateway_api::constants::ListenerConditionReason::InvalidRouteKinds,
-            ),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidBackend(_)) => ("True", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::InvalidRouteKinds),
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(_)) => (
-                "True",
-                crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,
-                crate::common::gateway_api::constants::ListenerConditionReason::ResolvedRefs,
-            ),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(_)) => ("True", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::ResolvedRefs),
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(_)) => (
-                "False",
-                crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,
-                crate::common::gateway_api::constants::ListenerConditionReason::InvalidCertificateRef,
-            ),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(_)) => {
+                ("False", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::InvalidCertificateRef)
+            }
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::RefNotPermitted(_)) => (
-                "False",
-                crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,
-                crate::common::gateway_api::constants::ListenerConditionReason::RefNotPermitted,
-            ),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::RefNotPermitted(_)) => ("False", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::RefNotPermitted),
 
-            ListenerCondition::UnresolvedRouteRefs => (
-                "False",
-                crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs,
-                crate::common::gateway_api::constants::ListenerConditionReason::ResolvedRefs,
-            ),
+            ListenerCondition::UnresolvedRouteRefs => ("False", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::ResolvedRefs),
 
-            ListenerCondition::Accepted => (
-                "True",
-                crate::common::gateway_api::constants::ListenerConditionType::Accepted,
-                crate::common::gateway_api::constants::ListenerConditionReason::Accepted,
-            ),
-            ListenerCondition::NotAccepted => (
-                "False",
-                crate::common::gateway_api::constants::ListenerConditionType::Accepted,
-                crate::common::gateway_api::constants::ListenerConditionReason::Accepted,
-            ),
-            ListenerCondition::Programmed => (
-                "True",
-                crate::common::gateway_api::constants::ListenerConditionType::Programmed,
-                crate::common::gateway_api::constants::ListenerConditionReason::Programmed,
-            ),
+            ListenerCondition::Accepted => ("True", constants::ListenerConditionType::Accepted, constants::ListenerConditionReason::Accepted),
+            ListenerCondition::NotAccepted => ("False", constants::ListenerConditionType::Accepted, constants::ListenerConditionReason::Accepted),
+            ListenerCondition::Programmed => ("True", constants::ListenerConditionType::Programmed, constants::ListenerConditionReason::Programmed),
 
-            ListenerCondition::NotProgrammed => (
-                "False",
-                crate::common::gateway_api::constants::ListenerConditionType::Programmed,
-                crate::common::gateway_api::constants::ListenerConditionReason::Programmed,
-            ),
+            ListenerCondition::NotProgrammed => ("False", constants::ListenerConditionType::Programmed, constants::ListenerConditionReason::Programmed),
         }
     }
     pub fn supported_routes(&self) -> Vec<String> {

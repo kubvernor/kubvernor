@@ -10,14 +10,12 @@ use tracing::{span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{
-        gateway_api::{gatewayclasses::GatewayClass, httproutes::HTTPRoute},
-        BackendGatewayEvent, BackendGatewayResponse, GatewayDeployRequest, KubeGateway, RequestContext,
-    },
+    common::{BackendGatewayEvent, BackendGatewayResponse, GatewayDeployRequest, KubeGateway, RequestContext},
     services::patchers::{Operation, PatchContext},
     state::State,
     Result,
 };
+use gateway_api::{gatewayclasses::GatewayClass, httproutes::HTTPRoute};
 
 #[derive(TypedBuilder)]
 pub struct GatewayDeployerService {

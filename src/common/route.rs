@@ -5,14 +5,16 @@ use thiserror::Error;
 use tracing::debug;
 
 use super::{Backend, BackendServiceConfig, ResourceKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME};
-use crate::{
-    common::gateway_api::{
-        grpcroutes::{GRPCRoute, GRPCRouteRules, GRPCRouteParentRefs, GRPCRouteRulesFilters, GRPCRouteRulesMatches, GRPCRouteRulesFiltersType, GRPCRouteRulesFiltersRequestHeaderModifierAdd, GRPCRouteRulesFiltersRequestHeaderModifierSet},        
-        httproutes::{
+use crate::controllers::ControllerError;
+use gateway_api::{
+    grpcroutes::{
+        GRPCRoute, GRPCRouteParentRefs, GRPCRouteRules, GRPCRouteRulesFilters, GRPCRouteRulesFiltersRequestHeaderModifierAdd, GRPCRouteRulesFiltersRequestHeaderModifierSet, GRPCRouteRulesFiltersType,
+        GRPCRouteRulesMatches,
+    },
+    httproutes::{
         HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesFilters, HTTPRouteRulesFiltersRequestHeaderModifierAdd, HTTPRouteRulesFiltersRequestHeaderModifierSet,
-        HTTPRouteRulesFiltersRequestRedirect, HTTPRouteRulesFiltersType, HTTPRouteRulesMatches,        
-    }},
-    controllers::ControllerError,
+        HTTPRouteRulesFiltersRequestRedirect, HTTPRouteRulesFiltersType, HTTPRouteRulesMatches,
+    },
 };
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
@@ -27,11 +29,9 @@ impl std::fmt::Display for RouteStatus {
     }
 }
 
-
-
 #[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
 pub struct Route {
-    pub config: RouteConfig,    
+    pub config: RouteConfig,
 }
 
 impl Route {
@@ -54,8 +54,8 @@ impl Route {
         self.config.parents.as_ref()
     }
 
-    pub fn backends(&self) -> Vec<&Backend> {        
-        self.config.backends()        
+    pub fn backends(&self) -> Vec<&Backend> {
+        self.config.backends()
     }
 
     pub fn config(&self) -> &RouteConfig {
@@ -63,16 +63,15 @@ impl Route {
     }
 
     pub fn resolution_status(&self) -> &ResolutionStatus {
-        &self.config.resolution_status        
+        &self.config.resolution_status
     }
 
     pub fn config_mut(&mut self) -> &mut RouteConfig {
         &mut self.config
     }
-    
 
     pub fn resolution_status_mut(&mut self) -> &mut ResolutionStatus {
-        &mut self.config.resolution_status        
+        &mut self.config.resolution_status
     }
 }
 
@@ -209,20 +208,22 @@ impl TryFrom<&HTTPRoute> for Route {
 
         let config = RouteConfig {
             resource_key: key,
-            parents: parents.map(|parents| parents.into_iter().map(RouteParentRefs::from).collect()),            
+            parents: parents.map(|parents| parents.into_iter().map(RouteParentRefs::from).collect()),
             hostnames,
             resolution_status: if has_invalid_backends {
                 ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend)
             } else {
                 ResolutionStatus::NotResolved(NotResolvedReason::Unknown)
             },
-            route_type: RouteType::Http(HTTPRoutingConfiguration { routing_rules, effective_routing_rules }),            
+            route_type: RouteType::Http(HTTPRoutingConfiguration {
+                routing_rules,
+                effective_routing_rules,
+            }),
         };
 
-        Ok(Route{config})
+        Ok(Route { config })
     }
 }
-
 
 impl TryFrom<&GRPCRoute> for Route {
     type Error = ControllerError;
@@ -344,68 +345,64 @@ impl TryFrom<&GRPCRoute> for Route {
                             .collect(),
                     },
                     response_headers: FilterHeaders::default(),
-                    
                 })
             })
             .collect();
 
         let config = RouteConfig {
             resource_key: key,
-            parents: parents.map(|parents| parents.into_iter().map(RouteParentRefs::from).collect()),            
+            parents: parents.map(|parents| parents.into_iter().map(RouteParentRefs::from).collect()),
             hostnames,
             resolution_status: if has_invalid_backends {
                 ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend)
             } else {
                 ResolutionStatus::NotResolved(NotResolvedReason::Unknown)
             },
-            route_type: RouteType::Grpc(GRPCRoutingConfiguration { routing_rules, effective_routing_rules }),            
+            route_type: RouteType::Grpc(GRPCRoutingConfiguration {
+                routing_rules,
+                effective_routing_rules,
+            }),
         };
 
-        Ok(Route{config})
+        Ok(Route { config })
     }
 }
 
-
 #[derive(Clone, Debug)]
-pub struct HTTPRoutingConfiguration{
+pub struct HTTPRoutingConfiguration {
     pub routing_rules: Vec<RoutingRule>,
-    pub effective_routing_rules: Vec<EffectiveRoutingRule>
+    pub effective_routing_rules: Vec<EffectiveRoutingRule>,
 }
 
 #[derive(Clone, Debug)]
-pub struct GRPCRoutingConfiguration{
+pub struct GRPCRoutingConfiguration {
     pub routing_rules: Vec<GRPCRoutingRule>,
-    pub effective_routing_rules: Vec<GRPCEffectiveRoutingRule>
+    pub effective_routing_rules: Vec<GRPCEffectiveRoutingRule>,
 }
 
 #[derive(Clone, Debug)]
-pub enum RouteType{
+pub enum RouteType {
     Http(HTTPRoutingConfiguration),
-    Grpc(GRPCRoutingConfiguration)
+    Grpc(GRPCRoutingConfiguration),
 }
 
 #[derive(Clone, Debug)]
 pub struct RouteConfig {
     pub resource_key: ResourceKey,
-    parents: Option<Vec<RouteParentRefs>>,    
+    parents: Option<Vec<RouteParentRefs>>,
     hostnames: Vec<String>,
     pub resolution_status: ResolutionStatus,
-    pub route_type: RouteType       
+    pub route_type: RouteType,
 }
 
-
 impl RouteConfig {
-    pub fn backends(&self)-> Vec<&Backend>{
-        match &self.route_type{
+    pub fn backends(&self) -> Vec<&Backend> {
+        match &self.route_type {
             RouteType::Http(routing_rules_configuration) => routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect(),
             RouteType::Grpc(routing_rules_configuration) => routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect(),
         }
-
     }
-    
 }
-
-
 
 #[derive(Clone, Debug)]
 pub struct RouteParentRefs {
@@ -459,14 +456,18 @@ impl From<HTTPRouteParentRefs> for RouteParentRefs {
     }
 }
 
-pub struct RouteParents {}
-
 impl RouteConfig {
     pub fn reorder_routes(&mut self) {
-        match &mut self.route_type{
-            RouteType::Http(HTTPRoutingConfiguration{ routing_rules: _, effective_routing_rules }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
-            RouteType::Grpc(GRPCRoutingConfiguration{ routing_rules: _, effective_routing_rules }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
-        };       
+        match &mut self.route_type {
+            RouteType::Http(HTTPRoutingConfiguration {
+                routing_rules: _,
+                effective_routing_rules,
+            }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
+            RouteType::Grpc(GRPCRoutingConfiguration {
+                routing_rules: _,
+                effective_routing_rules,
+            }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
+        };
     }
 }
 
@@ -489,7 +490,6 @@ impl Ord for RouteConfig {
 }
 
 impl Eq for RouteConfig {}
-
 
 #[derive(Clone, Debug)]
 pub struct RoutingRule {
@@ -520,14 +520,11 @@ pub struct EffectiveRoutingRule {
     pub redirect_filter: Option<HTTPRouteRulesFiltersRequestRedirect>,
 }
 
-
 impl PartialOrd for EffectiveRoutingRule {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(Self::compare_matching(&self.route_matcher, &other.route_matcher))
     }
 }
-
-
 
 impl EffectiveRoutingRule {
     fn header_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
@@ -611,7 +608,6 @@ impl EffectiveRoutingRule {
     }
 }
 
-
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct GRPCEffectiveRoutingRule {
     pub route_matcher: GRPCRouteRulesMatches,
@@ -629,8 +625,6 @@ impl PartialOrd for GRPCEffectiveRoutingRule {
     }
 }
 
-
-
 impl GRPCEffectiveRoutingRule {
     fn header_matching(this: &GRPCRouteRulesMatches, other: &GRPCRouteRulesMatches) -> std::cmp::Ordering {
         match (this.headers.as_ref(), other.headers.as_ref()) {
@@ -640,7 +634,6 @@ impl GRPCEffectiveRoutingRule {
             (Some(this_headers), Some(other_headers)) => other_headers.len().cmp(&this_headers.len()),
         }
     }
-    
 
     fn method_matching(this: &GRPCRouteRulesMatches, other: &GRPCRouteRulesMatches) -> std::cmp::Ordering {
         match (this.method.as_ref(), other.method.as_ref()) {
@@ -650,26 +643,21 @@ impl GRPCEffectiveRoutingRule {
             (Some(this_method), Some(other_method)) => {
                 let cmp_method = this_method.method.cmp(&other_method.method);
                 let cmp_service = this_method.service.cmp(&other_method.service);
-                
-                match (cmp_method, cmp_service){
+
+                match (cmp_method, cmp_service) {
                     (cmp::Ordering::Equal, _) => cmp_service,
-                    _ => cmp_method
-                }                 
+                    _ => cmp_method,
+                }
             }
         }
     }
-    
 
-    fn compare_matching(this: &GRPCRouteRulesMatches, other: &GRPCRouteRulesMatches) -> std::cmp::Ordering {        
+    fn compare_matching(this: &GRPCRouteRulesMatches, other: &GRPCRouteRulesMatches) -> std::cmp::Ordering {
         let method_match = Self::method_matching(this, other);
-        let header_match = Self::header_matching(this, other);        
-        
-        let result = if header_match == std::cmp::Ordering::Equal {                
-                method_match            
-        } else {
-            header_match
-        };
-        
+        let header_match = Self::header_matching(this, other);
+
+        let result = if header_match == std::cmp::Ordering::Equal { method_match } else { header_match };
+
         debug!("Comparing {this:#?} {other:#?} {result:?} {header_match:?} {method_match:?}");
         result
     }
@@ -723,7 +711,6 @@ impl From<&HTTPRouteRulesFiltersRequestHeaderModifierSet> for HttpHeader {
     }
 }
 
-
 impl From<&GRPCRouteRulesFiltersRequestHeaderModifierAdd> for HttpHeader {
     fn from(modifier: &GRPCRouteRulesFiltersRequestHeaderModifierAdd) -> Self {
         Self {
@@ -741,4 +728,3 @@ impl From<&GRPCRouteRulesFiltersRequestHeaderModifierSet> for HttpHeader {
         }
     }
 }
-

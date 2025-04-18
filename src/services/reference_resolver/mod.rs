@@ -3,10 +3,11 @@ use tracing::{debug, info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{self, gateway_api::gateways::Gateway, BackendReferenceResolver, GatewayDeployRequest, ReferenceGrantsResolver, ReferenceValidateRequest, RequestContext, SecretsResolver},
+    common::{self, BackendReferenceResolver, GatewayDeployRequest, ReferenceGrantsResolver, ReferenceValidateRequest, RequestContext, SecretsResolver},
     controllers::{ListenerTlsConfigValidator, RoutesResolver},
     state::State,
 };
+use gateway_api::gateways::Gateway;
 
 #[derive(TypedBuilder)]
 pub struct ReferenceValidatorService {

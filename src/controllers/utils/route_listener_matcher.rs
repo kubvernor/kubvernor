@@ -4,13 +4,12 @@ use tracing::debug;
 
 use super::HostnameMatchFilter;
 use crate::{
-    common::{
-        gateway_api::{
-            gateways::{self, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom},
-            httproutes::HTTPRouteParentRefs,
-        }, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteParentRefs, RouteRefKey, RouteToListenersMapping
-    },
+    common::{NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteParentRefs, RouteRefKey, RouteToListenersMapping},
     state::State,
+};
+use gateway_api::{
+    gateways::{self, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom},
+    httproutes::HTTPRouteParentRefs,
 };
 
 pub struct RouteListenerMatcher<'a> {

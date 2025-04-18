@@ -1,4 +1,4 @@
-use std::{    
+use std::{
     collections::{btree_map, BTreeMap, BTreeSet},
     fmt::Display,
 };
@@ -8,7 +8,7 @@ use tracing::Span;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-use super::{EffectiveRoutingRule, GatewayAddress, Listener, ResourceKey, Route, VerifiyItems};
+use super::{GatewayAddress, Listener, ResourceKey, Route, VerifiyItems};
 use crate::common::KubeGateway;
 
 #[derive(Clone, Debug)]

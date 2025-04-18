@@ -7,17 +7,15 @@ use tokio::sync::{mpsc::Sender, oneshot};
 use tracing::{debug, info, warn, Instrument, Span};
 
 use crate::{
-    common::{
-        self,
-        gateway_api::{
-            gateways::{Gateway, GatewayStatusAddresses},
-            httproutes::{HTTPRoute, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
-        },
-        GatewayAddress, NotResolvedReason, ResolutionStatus, ResourceKey, Route,
-    },
+    common::{self, GatewayAddress, NotResolvedReason, ResolutionStatus, ResourceKey, Route},
     controllers::ControllerError,
     services::patchers::{Operation, PatchContext},
     state::State,
+};
+use gateway_api::{
+    constants,
+    gateways::{Gateway, GatewayStatusAddresses},
+    httproutes::{HTTPRoute, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
@@ -50,21 +48,21 @@ impl GatewayProcessedHandler<'_> {
         let mut status = self.gateway.status.clone().unwrap_or_default();
         let mut conditions = status.conditions.unwrap_or_default();
 
-        conditions.retain(|f| f.type_ != crate::common::gateway_api::constants::GatewayConditionType::Ready.to_string());
+        conditions.retain(|f| f.type_ != constants::GatewayConditionType::Ready.to_string());
         for f in &mut conditions {
             f.last_transition_time = Time(Utc::now());
             f.observed_generation = observed_generation;
             f.status = String::from("True");
-            f.reason = crate::common::gateway_api::constants::GatewayConditionReason::Ready.to_string();
+            f.reason = constants::GatewayConditionReason::Ready.to_string();
         }
 
         let new_condition = Condition {
             last_transition_time: Time(Utc::now()),
             message: GATEWAY_CONDITION_MESSAGE.to_owned(),
             observed_generation,
-            reason: crate::common::gateway_api::constants::GatewayConditionReason::Ready.to_string(),
+            reason: constants::GatewayConditionReason::Ready.to_string(),
             status: String::from("True"),
-            type_: crate::common::gateway_api::constants::GatewayConditionType::Ready.to_string(),
+            type_: constants::GatewayConditionType::Ready.to_string(),
         };
         conditions.push(new_condition);
         status.conditions = Some(conditions);
@@ -204,9 +202,9 @@ impl GatewayProcessedHandler<'_> {
                 last_transition_time: Time(Utc::now()),
                 message: ROUTE_CONDITION_MESSAGE.to_owned(),
                 observed_generation: None,
-                reason: crate::common::gateway_api::constants::ListenerConditionReason::Invalid.to_string(),
+                reason: constants::ListenerConditionReason::Invalid.to_string(),
                 status: "False".to_owned(),
-                type_: crate::common::gateway_api::constants::ListenerConditionType::Conflicted.to_string(),
+                type_: constants::ListenerConditionType::Conflicted.to_string(),
             }],
 
             ResolutionStatus::NotResolved(resolution_reason) => match resolution_reason {
@@ -218,23 +216,23 @@ impl GatewayProcessedHandler<'_> {
                             observed_generation: None,
                             reason: "InvalidKind".to_owned(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
                             last_transition_time: Time(Utc::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
-                            reason: crate::common::gateway_api::constants::ListenerConditionReason::Programmed.to_string(),
+                            reason: constants::ListenerConditionReason::Programmed.to_string(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::Programmed.to_string(),
+                            type_: constants::ListenerConditionType::Programmed.to_string(),
                         },
                         Condition {
                             last_transition_time: Time(Utc::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
-                            reason: crate::common::gateway_api::constants::ListenerConditionReason::Accepted.to_string(),
+                            reason: constants::ListenerConditionReason::Accepted.to_string(),
                             status: "True".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::Accepted.to_string(),
+                            type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
                 }
@@ -246,23 +244,23 @@ impl GatewayProcessedHandler<'_> {
                             observed_generation: None,
                             reason: "BackendNotFound".to_owned(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
                             last_transition_time: Time(Utc::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
-                            reason: crate::common::gateway_api::constants::ListenerConditionReason::Programmed.to_string(),
+                            reason: constants::ListenerConditionReason::Programmed.to_string(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::Programmed.to_string(),
+                            type_: constants::ListenerConditionType::Programmed.to_string(),
                         },
                         Condition {
                             last_transition_time: Time(Utc::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
-                            reason: crate::common::gateway_api::constants::ListenerConditionReason::Accepted.to_string(),
+                            reason: constants::ListenerConditionReason::Accepted.to_string(),
                             status: "True".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::Accepted.to_string(),
+                            type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
                 }
@@ -274,15 +272,15 @@ impl GatewayProcessedHandler<'_> {
                             observed_generation: None,
                             reason: "RefNotPermitted".to_owned(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
                             last_transition_time: Time(Utc::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
-                            reason: crate::common::gateway_api::constants::ListenerConditionReason::Accepted.to_string(),
+                            reason: constants::ListenerConditionReason::Accepted.to_string(),
                             status: "True".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::Accepted.to_string(),
+                            type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
                 }
@@ -294,7 +292,7 @@ impl GatewayProcessedHandler<'_> {
                             observed_generation: None,
                             reason: "NoMatchingParent".to_owned(),
                             status: "True".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
                             last_transition_time: Time(Utc::now()),
@@ -302,7 +300,7 @@ impl GatewayProcessedHandler<'_> {
                             observed_generation: None,
                             reason: "NoMatchingParent".to_owned(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::Accepted.to_string(),
+                            type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
                 }
@@ -312,17 +310,17 @@ impl GatewayProcessedHandler<'_> {
                             last_transition_time: Time(Utc::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
-                            reason: crate::common::gateway_api::constants::ListenerConditionReason::ResolvedRefs.to_string(),
+                            reason: constants::ListenerConditionReason::ResolvedRefs.to_string(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
                             last_transition_time: Time(Utc::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
-                            reason: crate::common::gateway_api::constants::ListenerConditionReason::Programmed.to_string(),
+                            reason: constants::ListenerConditionReason::Programmed.to_string(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::Programmed.to_string(),
+                            type_: constants::ListenerConditionType::Programmed.to_string(),
                         },
                     ]
                 }
@@ -340,17 +338,17 @@ impl GatewayProcessedHandler<'_> {
                     last_transition_time: Time(Utc::now()),
                     message: ROUTE_CONDITION_MESSAGE.to_owned(),
                     observed_generation: None,
-                    reason: crate::common::gateway_api::constants::ListenerConditionType::Accepted.to_string(),
+                    reason: constants::ListenerConditionType::Accepted.to_string(),
                     status: "True".to_owned(),
-                    type_: crate::common::gateway_api::constants::ListenerConditionType::Accepted.to_string(),
+                    type_: constants::ListenerConditionType::Accepted.to_string(),
                 },
                 Condition {
                     last_transition_time: Time(Utc::now()),
                     message: ROUTE_CONDITION_MESSAGE.to_owned(),
                     observed_generation: None,
-                    reason: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                    reason: constants::ListenerConditionType::ResolvedRefs.to_string(),
                     status: "True".to_owned(),
-                    type_: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                    type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                 },
             ],
 
@@ -361,7 +359,7 @@ impl GatewayProcessedHandler<'_> {
                     observed_generation: None,
                     reason: "Uknown reason".to_owned(),
                     status: "False".to_owned(),
-                    type_: crate::common::gateway_api::constants::ListenerConditionType::Programmed.to_string(),
+                    type_: constants::ListenerConditionType::Programmed.to_string(),
                 }],
 
                 NotResolvedReason::NotAllowedByListeners => {
@@ -372,15 +370,15 @@ impl GatewayProcessedHandler<'_> {
                             observed_generation: None,
                             reason: "NotAllowedByListeners".to_owned(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::Accepted.to_string(),
+                            type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                         Condition {
                             last_transition_time: Time(Utc::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
-                            reason: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            reason: constants::ListenerConditionType::ResolvedRefs.to_string(),
                             status: "True".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                     ]
                 }
@@ -393,7 +391,7 @@ impl GatewayProcessedHandler<'_> {
                             observed_generation: None,
                             reason: "RefNotPermitted".to_owned(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::Accepted.to_string(),
+                            type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                         Condition {
                             last_transition_time: Time(Utc::now()),
@@ -401,7 +399,7 @@ impl GatewayProcessedHandler<'_> {
                             observed_generation: None,
                             reason: "RefNotPermitted".to_owned(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                     ]
                 }
@@ -414,15 +412,15 @@ impl GatewayProcessedHandler<'_> {
                             observed_generation: None,
                             reason: "NoMatchingListenerHostname".to_owned(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::Accepted.to_string(),
+                            type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                         Condition {
                             last_transition_time: Time(Utc::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
-                            reason: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            reason: constants::ListenerConditionType::ResolvedRefs.to_string(),
                             status: "True".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                     ]
                 }
@@ -435,7 +433,7 @@ impl GatewayProcessedHandler<'_> {
                             observed_generation: None,
                             reason: "NoMatchingParent".to_owned(),
                             status: "True".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
                             last_transition_time: Time(Utc::now()),
@@ -443,7 +441,7 @@ impl GatewayProcessedHandler<'_> {
                             observed_generation: None,
                             reason: "NoMatchingParent".to_owned(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::Accepted.to_string(),
+                            type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
                 }
@@ -454,17 +452,17 @@ impl GatewayProcessedHandler<'_> {
                             last_transition_time: Time(Utc::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
-                            reason: crate::common::gateway_api::constants::ListenerConditionReason::ResolvedRefs.to_string(),
+                            reason: constants::ListenerConditionReason::ResolvedRefs.to_string(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::ResolvedRefs.to_string(),
+                            type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
                             last_transition_time: Time(Utc::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
-                            reason: crate::common::gateway_api::constants::ListenerConditionReason::Programmed.to_string(),
+                            reason: constants::ListenerConditionReason::Programmed.to_string(),
                             status: "False".to_owned(),
-                            type_: crate::common::gateway_api::constants::ListenerConditionType::Programmed.to_string(),
+                            type_: constants::ListenerConditionType::Programmed.to_string(),
                         },
                     ]
                 }

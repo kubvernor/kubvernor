@@ -32,6 +32,7 @@ use envoy_api_rs::{
     google::protobuf::{BoolValue, Duration, UInt32Value},
 };
 use futures::FutureExt;
+use gateway_api::httproutes;
 use itertools::Itertools;
 use k8s_openapi::{
     api::{
@@ -63,11 +64,10 @@ use super::{
     server::{start_aggregate_server, AckVersions, ServerAction},
 };
 use crate::{
-    backends,
-    backends::{common::ResourceGenerator, envoy_xds_backend::resources},
+    backends::{self, common::ResourceGenerator, envoy_xds_backend::resources},
     common::{
-        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig, DeletedContext, EffectiveRoutingRule, Gateway,
-        GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType,
+        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig, DeletedContext, EffectiveRoutingRule,
+        GRPCEffectiveRoutingRule, Gateway, GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType,
     },
     Error,
 };
@@ -755,7 +755,7 @@ fn generate_virtual_hosts_from_xds(virtual_hosts: &BTreeSet<backends::common::En
         .map(|vh| VirtualHost {
             name: vh.name.clone(),
             domains: vh.effective_hostnames.clone(),
-            routes: vh.effective_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
+            routes: vh.http_routes.clone().into_iter().chain(vh.grpc_routes.clone()).collect(),
             ..Default::default()
         })
         .collect()
@@ -839,8 +839,8 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
         let path_specifier = effective_routing_rule.route_matcher.path.clone().and_then(|matcher| {
             let value = matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
             matcher.r#type.map(|t| match t {
-                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::Exact => PathSpecifier::Path(value),
-                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
+                httproutes::HTTPRouteRulesMatchesPathType::Exact => PathSpecifier::Path(value),
+                httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
                     if let Some(val) = matcher.value {
                         if val == "/" {
                             PathSpecifier::Prefix(value)
@@ -851,7 +851,7 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
                         PathSpecifier::Prefix(value)
                     }
                 }
-                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: value, ..Default::default() }),
+                httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: value, ..Default::default() }),
             })
         });
 
@@ -940,6 +940,86 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
         } else {
             Action::Route(cluster_action)
         };
+
+        EnvoyRoute {
+            name: format!("{}-route", effective_routing_rule.name),
+            r#match: Some(route_match),
+            request_headers_to_add,
+            request_headers_to_remove,
+            action: Some(action),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
+    fn from(effective_routing_rule: GRPCEffectiveRoutingRule) -> Self {
+        let headers = effective_routing_rule.route_matcher.headers.map_or(vec![], |headers| {
+            headers
+                .iter()
+                .map(|header| HeaderMatcher {
+                    name: header.name.clone(),
+                    header_match_specifier: Some(HeaderMatchSpecifier::StringMatch(StringMatcher {
+                        match_pattern: Some(MatchPattern::Exact(header.value.clone())),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })
+                .collect()
+        });
+
+        let route_match = RouteMatch { headers, ..Default::default() };
+
+        let request_filter_headers = effective_routing_rule.request_headers;
+
+        let request_headers_to_add = request_filter_headers
+            .add
+            .clone()
+            .into_iter()
+            .map(|h| HeaderValueOption {
+                header: Some(HeaderValue {
+                    key: h.name,
+                    value: h.value,
+                    ..Default::default()
+                }),
+                append_action: HeaderAppendAction::AppendIfExistsOrAdd.into(),
+                ..Default::default()
+            })
+            .chain(request_filter_headers.set.clone().into_iter().map(|h| HeaderValueOption {
+                header: Some(HeaderValue {
+                    key: h.name,
+                    value: h.value,
+                    ..Default::default()
+                }),
+                append_action: HeaderAppendAction::OverwriteIfExistsOrAdd.into(),
+                ..Default::default()
+            }))
+            .collect();
+
+        let request_headers_to_remove = request_filter_headers.remove;
+
+        let cluster_names: Vec<_> = effective_routing_rule
+            .backends
+            .iter()
+            .filter(|b| b.weight() > 0)
+            .map(|b| ClusterWeight {
+                name: b.cluster_name(),
+                weight: Some(UInt32Value {
+                    value: b.weight().try_into().expect("We do expect this to work for time being"),
+                }),
+                ..Default::default()
+            })
+            .collect();
+        let cluster_action = RouteAction {
+            cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
+            cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
+                clusters: cluster_names,
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        let action: Action = Action::Route(cluster_action);
 
         EnvoyRoute {
             name: format!("{}-route", effective_routing_rule.name),
