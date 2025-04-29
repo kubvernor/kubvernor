@@ -15,6 +15,7 @@ use crate::{
 use gateway_api::{
     constants,
     gateways::{Gateway, GatewayStatusAddresses},
+    grpcroutes::{GRPCRoute, GRPCRouteStatus, GRPCRouteStatusParents, GRPCRouteStatusParentsParentRef},
     httproutes::{HTTPRoute, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
 };
 
@@ -33,7 +34,8 @@ pub struct GatewayProcessedHandler<'a> {
 impl GatewayProcessedHandler<'_> {
     pub async fn deploy_gateway(mut self) -> Result<Gateway> {
         self.update_gateway_resource();
-        self.update_routes().instrument(Span::current().clone()).await;
+        self.update_http_routes().instrument(Span::current().clone()).await;
+        self.update_grpc_routes().instrument(Span::current().clone()).await;
         Ok(self.gateway)
     }
 
@@ -73,14 +75,14 @@ impl GatewayProcessedHandler<'_> {
         self.gateway.metadata.managed_fields = None;
     }
 
-    async fn update_routes(&self) {
+    async fn update_http_routes(&self) {
         let (attached_routes, unresolved_routes) = self.effective_gateway.routes();
 
         let routes_with_no_hostnames = self.effective_gateway.orphaned_routes();
         debug!("Updating attached routes {attached_routes:?}");
         let gateway_id = &self.effective_gateway.key();
         for attached_route in attached_routes {
-            let updated_route = self.update_attached_route_parents(attached_route, gateway_id);
+            let updated_route = self.update_http_attached_route_parents(attached_route, gateway_id);
             if let Some(route) = updated_route {
                 let route_resource_key = ResourceKey::from(&route);
                 let (sender, receiver) = oneshot::channel();
@@ -169,8 +171,129 @@ impl GatewayProcessedHandler<'_> {
         }
     }
 
-    fn update_attached_route_parents(&self, attached_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
-        self.update_route_parents(
+    async fn update_grpc_routes(&self) {
+        let (attached_routes, unresolved_routes) = self.effective_gateway.routes();
+
+        let routes_with_no_hostnames = self.effective_gateway.orphaned_routes();
+        debug!("Updating attached routes {attached_routes:?}");
+        let gateway_id = &self.effective_gateway.key();
+        for attached_route in attached_routes {
+            let updated_route = self.update_grpc_attached_route_parents(attached_route, gateway_id);
+            if let Some(route) = updated_route {
+                let route_resource_key = ResourceKey::from(&route);
+                let (sender, receiver) = oneshot::channel();
+                let _res = self
+                    .route_patcher
+                    .send(Operation::PatchStatus(PatchContext {
+                        resource_key: route_resource_key.clone(),
+                        resource: route,
+                        controller_name: self.controller_name.clone(),
+                        response_sender: sender,
+                        span: Span::current().clone(),
+                    }))
+                    .await;
+                let patched_route = receiver.await;
+                if let Ok(maybe_patched) = patched_route {
+                    match maybe_patched {
+                        Ok(_patched_route) => {}
+                        Err(e) => {
+                            warn!("Error while patching {e}");
+                        }
+                    }
+                }
+            }
+        }
+        debug!("Updating unresolved routes  {unresolved_routes:?}");
+        for unresolve_route in unresolved_routes {
+            let updated_route = self.update_unresolved_route_parents(unresolve_route, gateway_id);
+            if let Some(route) = updated_route {
+                let route_resource_key = ResourceKey::from(&route);
+                let (sender, receiver) = oneshot::channel();
+                let _res = self
+                    .route_patcher
+                    .send(Operation::PatchStatus(PatchContext {
+                        resource_key: route_resource_key.clone(),
+                        resource: route,
+                        controller_name: self.controller_name.clone(),
+                        response_sender: sender,
+                        span: Span::current().clone(),
+                    }))
+                    .await;
+
+                let patched_route = receiver.await;
+                if let Ok(maybe_patched) = patched_route {
+                    match maybe_patched {
+                        Ok(_patched_route) => {
+                            //patched_route.metadata.resource_version = None;
+                            //self.state.save_http_route(route_resource_key, &Arc::new(patched_route));
+                        }
+                        Err(e) => {
+                            warn!("Error while patching {e}");
+                        }
+                    }
+                }
+            }
+        }
+        debug!("Updating routes with no hostnames  {routes_with_no_hostnames:?}");
+        for route_with_no_hostname in self.effective_gateway.orphaned_routes() {
+            let updated_route = self.update_non_attached_route_parents(route_with_no_hostname, gateway_id);
+            if let Some(route) = updated_route {
+                let route_resource_key = ResourceKey::from(&route);
+                let (sender, receiver) = oneshot::channel();
+                let _res = self
+                    .route_patcher
+                    .send(Operation::PatchStatus(PatchContext {
+                        resource_key: route_resource_key.clone(),
+                        resource: route,
+                        controller_name: self.controller_name.clone(),
+                        response_sender: sender,
+                        span: Span::current().clone(),
+                    }))
+                    .await;
+
+                let patched_route = receiver.await;
+                if let Ok(maybe_patched) = patched_route {
+                    match maybe_patched {
+                        Ok(_patched_route) => {
+                            //patched_route.metadata.resource_version = None;
+                            //self.state.save_http_route(route_resource_key, &Arc::new(patched_route));
+                        }
+                        Err(e) => {
+                            warn!("Error while patching {e}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn update_http_attached_route_parents(&self, attached_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
+        self.update_http_route_parents(
+            attached_route,
+            gateway_id,
+            vec![
+                Condition {
+                    last_transition_time: Time(Utc::now()),
+                    message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                    observed_generation: None,
+                    reason: "Accepted".to_owned(),
+                    status: "True".to_owned(),
+                    type_: "Accepted".to_owned(),
+                },
+                Condition {
+                    last_transition_time: Time(Utc::now()),
+                    message: ROUTE_CONDITION_MESSAGE.to_owned(),
+                    observed_generation: None,
+                    reason: "ResolvedRefs".to_owned(),
+                    status: "True".to_owned(),
+                    type_: "ResolvedRefs".to_owned(),
+                },
+            ],
+        )
+    }
+
+    fn update_grpc_attached_route_parents(&self, attached_route: &Route, gateway_id: &ResourceKey) -> Option<GRPCRoute> {
+        self.update_grpc_route_parents(
             attached_route,
             gateway_id,
             vec![
@@ -326,7 +449,7 @@ impl GatewayProcessedHandler<'_> {
                 }
             },
         };
-        self.update_route_parents(rejected_route, gateway_id, conditions)
+        self.update_http_route_parents(rejected_route, gateway_id, conditions)
     }
 
     fn update_non_attached_route_parents(&self, non_attached_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
@@ -468,10 +591,10 @@ impl GatewayProcessedHandler<'_> {
                 }
             },
         };
-        self.update_route_parents(non_attached_route, gateway_id, conditions)
+        self.update_http_route_parents(non_attached_route, gateway_id, conditions)
     }
 
-    fn update_route_parents(&self, route: &Route, gateway_id: &ResourceKey, mut new_conditions: Vec<Condition>) -> Option<HTTPRoute> {
+    fn update_http_route_parents(&self, route: &Route, gateway_id: &ResourceKey, mut new_conditions: Vec<Condition>) -> Option<HTTPRoute> {
         let kube_routes = self.state.get_http_routes_attached_to_gateway(gateway_id).expect("We expect the lock to work");
 
         if let Some(kube_routes) = kube_routes {
@@ -499,6 +622,53 @@ impl GatewayProcessedHandler<'_> {
                         conditions: Some(new_conditions.clone()),
                         controller_name: self.controller_name.clone(),
                         parent_ref: HTTPRouteStatusParentsParentRef {
+                            namespace: kube_parent.namespace.clone(),
+                            name: kube_parent.name.clone(),
+                            group: kube_parent.group.clone(),
+                            kind: kube_parent.kind.clone(),
+                            section_name: kube_parent.section_name.clone(),
+                            port: kube_parent.port,
+                        },
+                    };
+                    status.parents.push(route_parents);
+                }
+
+                kube_route.status = Some(status);
+                kube_route.metadata.managed_fields = None;
+                return Some(kube_route);
+            }
+        }
+        None
+    }
+
+    fn update_grpc_route_parents(&self, route: &Route, gateway_id: &ResourceKey, mut new_conditions: Vec<Condition>) -> Option<GRPCRoute> {
+        let kube_routes = self.state.get_grpc_routes_attached_to_gateway(gateway_id).expect("We expect the lock to work");
+
+        if let Some(kube_routes) = kube_routes {
+            let kube_route = kube_routes
+                .iter()
+                .find(|f| f.metadata.name == Some(route.name().to_owned()) && f.metadata.namespace == Some(route.namespace().clone()));
+
+            if let Some(mut kube_route) = kube_route.map(|r| (**r).clone()) {
+                new_conditions.iter_mut().for_each(|f| f.observed_generation = kube_route.meta().generation);
+
+                let mut status = if let Some(status) = kube_route.status { status } else { GRPCRouteStatus { parents: vec![] } };
+
+                status.parents.retain(|p| {
+                    let geteway_name = gateway_id.name.clone();
+                    let geteway_namespace = gateway_id.namespace.clone();
+                    if p.parent_ref.namespace.is_some() {
+                        !(p.controller_name == self.controller_name && p.parent_ref.namespace == Some(geteway_namespace) && Some(geteway_name) == Some(p.parent_ref.name.clone()))
+                    } else {
+                        !(p.controller_name == self.controller_name && Some(geteway_name) == Some(p.parent_ref.name.clone()))
+                    }
+                });
+
+                for kube_parent in kube_route.spec.parent_refs.clone().unwrap_or_default() {
+                    let route_parents = GRPCRouteStatusParents {
+                        conditions: Some(new_conditions.clone()),
+                        controller_name: self.controller_name.clone(),
+                        parent_ref: GRPCRouteStatusParentsParentRef {
                             namespace: kube_parent.namespace.clone(),
                             name: kube_parent.name.clone(),
                             group: kube_parent.group.clone(),

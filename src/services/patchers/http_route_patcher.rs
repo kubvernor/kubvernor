@@ -11,7 +11,7 @@ pub struct HttpRoutePatcherService {
     receiver: mpsc::Receiver<Operation<HTTPRoute>>,
 }
 
-impl Patcher<HTTPRoute> for HttpRoutePatcherService {
+impl Patcher<Box<dyn kube::Resource>> for HttpRoutePatcherService {
     fn receiver(&mut self) -> &mut mpsc::Receiver<Operation<HTTPRoute>> {
         &mut self.receiver
     }
