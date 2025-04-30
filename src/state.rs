@@ -159,6 +159,30 @@ impl State {
         Ok(lock.get(id).cloned())
     }
 
+
+    pub fn maybe_save_grpc_route(&self, id: ResourceKey, route: &Arc<GRPCRoute>) -> Result<(), StorageError> {
+        let mut lock = self.grpc_routes.lock().map_err(|_| StorageError::LockingError)?;
+        if lock.contains_key(&id) {
+            lock.insert(id, Arc::clone(route));
+        };
+        Ok(())
+    }
+    pub fn save_grpc_route(&self, id: ResourceKey, route: &Arc<GRPCRoute>) -> Result<(), StorageError> {
+        let mut lock = self.grpc_routes.lock().map_err(|_| StorageError::LockingError)?;
+        lock.insert(id, Arc::clone(route));
+        Ok(())
+    }
+
+    pub fn delete_grpc_route(&self, id: &ResourceKey) -> Result<Option<Arc<GRPCRoute>>, StorageError> {
+        let mut lock = self.grpc_routes.lock().map_err(|_| StorageError::LockingError)?;
+        Ok(lock.remove(id))
+    }
+
+    pub fn get_grpc_route_by_id(&self, id: &ResourceKey) -> Result<Option<Arc<GRPCRoute>>, StorageError> {
+        let lock = self.grpc_routes.lock().map_err(|_| StorageError::LockingError)?;
+        Ok(lock.get(id).cloned())
+    }
+
     pub fn get_gateways(&self) -> Result<Vec<Arc<Gateway>>, StorageError> {
         let lock = self.gateways.lock().map_err(|_| StorageError::LockingError)?;
         Ok(lock.values().cloned().collect())

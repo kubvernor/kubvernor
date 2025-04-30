@@ -15,7 +15,7 @@ use crate::{
     state::State,
     Result,
 };
-use gateway_api::{gatewayclasses::GatewayClass, httproutes::HTTPRoute};
+use gateway_api::{gatewayclasses::GatewayClass, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
 
 #[derive(TypedBuilder)]
 pub struct GatewayDeployerService {
@@ -26,6 +26,7 @@ pub struct GatewayDeployerService {
     gateway_patcher_channel_sender: tokio::sync::mpsc::Sender<Operation<KubeGateway>>,
     gateway_class_patcher_channel_sender: tokio::sync::mpsc::Sender<Operation<GatewayClass>>,
     http_route_patcher_channel_sender: tokio::sync::mpsc::Sender<Operation<HTTPRoute>>,
+    grpc_route_patcher_channel_sender: tokio::sync::mpsc::Sender<Operation<GRPCRoute>>,
     controller_name: String,
 }
 
@@ -60,7 +61,8 @@ impl GatewayDeployerService {
                                 effective_gateway: gateway,
                                 gateway: kube_gateway.clone(),
                                 state: &self.state.clone(),
-                                route_patcher: self.http_route_patcher_channel_sender.clone(),
+                                http_route_patcher: self.http_route_patcher_channel_sender.clone(),
+                                grpc_route_patcher: self.grpc_route_patcher_channel_sender.clone(),
                                 controller_name: self.controller_name.clone(),
                             };
 
