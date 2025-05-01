@@ -150,13 +150,7 @@ impl<'a> ResourceGenerator<'a> {
 
     fn generate_virtual_hosts(gateway_name: String, listener: &Listener) -> EnvoyListener {
         let (resolved, unresolved) = listener.routes();
-        let resolved: Vec<_> = resolved
-            .into_iter()
-            .filter(|r| match &r.config.route_type {
-                RouteType::Http(_) => true,
-                RouteType::Grpc(_) => false,
-            })
-            .collect();
+        let resolved: Vec<_> = resolved.into_iter().collect();
 
         let mut listener_map = BTreeSet::new();
         let potential_hostnames = Self::calculate_potential_hostnames(&resolved, listener.hostname().cloned());
