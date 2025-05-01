@@ -11,11 +11,10 @@ use envoy_api_rs::{
             endpoint::v3::{lb_endpoint::HostIdentifier, ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints},
             listener::v3::{Filter, FilterChain, Listener as EnvoyListener, ListenerFilter},
             route::v3::{
-                header_matcher::HeaderMatchSpecifier, redirect_action, route::Action, route_action, route_action::ClusterSpecifier, route_match::PathSpecifier, weighted_cluster::ClusterWeight,
+                header_matcher::HeaderMatchSpecifier, redirect_action, route::Action, route_action::{self, ClusterSpecifier}, route_match::{GrpcRouteMatchOptions, PathSpecifier}, weighted_cluster::ClusterWeight,
                 HeaderMatcher, RedirectAction, Route as EnvoyRoute, RouteAction, RouteConfiguration, RouteMatch, VirtualHost, WeightedCluster,
             },
-        },
-        extensions::{
+        }, extensions::{
             filters::{
                 http::router::v3::Router,
                 listener::tls_inspector::v3::TlsInspector,
@@ -25,14 +24,12 @@ use envoy_api_rs::{
                 },
             },
             transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig},
-        },
-        r#type::matcher::v3::{string_matcher::MatchPattern, RegexMatcher, StringMatcher},
-        service::discovery::v3::Resource as EnvoyDiscoveryResource,
+        }, service::discovery::v3::Resource as EnvoyDiscoveryResource, r#type::matcher::v3::{string_matcher::MatchPattern, RegexMatcher, StringMatcher}
     },
     google::protobuf::{BoolValue, Duration, UInt32Value},
 };
 use futures::FutureExt;
-use gateway_api::httproutes;
+use gateway_api::{grpcroutes, httproutes};
 use itertools::Itertools;
 use k8s_openapi::{
     api::{
@@ -111,6 +108,8 @@ impl EnvoyDeployerChannelHandlerService {
                                     let gateway = &ctx.gateway;
                                     let span = span!(parent: &ctx.span, Level::INFO, "EnvoyDeployerService", event="GatewayChanged", id = %gateway.key());
                                     let _entered = span.enter();
+
+
                                     let Resources{listeners, clusters, secrets} = create_resources(gateway);
 
                                     let ack_version = ack_versions.entry(gateway.key().clone()).and_modify(super::server::AckVersions::inc).or_default();
@@ -392,6 +391,8 @@ fn create_resources(gateway: &Gateway) -> Resources {
             })),
             ..Default::default()
         };
+
+        warn!("HTTP Connection manager {} {http_connection_manager:#?}",listener.name);
 
         let http_connection_manager_any = converters::AnyTypeConverter::from((
             "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager".to_owned(),
@@ -855,6 +856,14 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
             })
         });
 
+        let path_specifier = if path_specifier.is_none(){
+            Some(PathSpecifier::Path("/".to_owned()))
+        }else{
+            path_specifier
+        };
+
+
+        warn!("Headers to match {:?}", effective_routing_rule.route_matcher.headers);
         let headers = effective_routing_rule.route_matcher.headers.map_or(vec![], |headers| {
             headers
                 .iter()
@@ -868,9 +877,12 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
                 })
                 .collect()
         });
+        
 
+        
         let route_match = RouteMatch {
             path_specifier,
+            grpc: None,
             headers,
             ..Default::default()
         };
@@ -954,6 +966,8 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
 
 impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
     fn from(effective_routing_rule: GRPCEffectiveRoutingRule) -> Self {
+        warn!("Headers to match {:?}", effective_routing_rule.route_matcher.headers);
+
         let headers = effective_routing_rule.route_matcher.headers.map_or(vec![], |headers| {
             headers
                 .iter()
@@ -968,7 +982,24 @@ impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
                 .collect()
         });
 
-        let route_match = RouteMatch { headers, ..Default::default() };
+        let path_specifier = effective_routing_rule.route_matcher.method.clone().and_then(|matcher| {
+            let service = matcher.service.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
+            let method = matcher.method.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
+            let path = "/".to_owned() + &service;
+            matcher.r#type.map(|t| match t {
+                grpcroutes::GRPCRouteRulesMatchesMethodType::Exact => PathSpecifier::Path(path),                
+                grpcroutes::GRPCRouteRulesMatchesMethodType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: path, ..Default::default() }),
+            })
+        });
+
+        let path_specifier = if path_specifier.is_none(){
+            Some(PathSpecifier::Prefix("/".to_owned()))
+        }else{
+            path_specifier
+        };
+                
+        //let route_match = RouteMatch { headers, path_specifier, grpc: Some(GrpcRouteMatchOptions::default()), ..Default::default() };
+        let route_match = RouteMatch { headers, path_specifier, grpc: None,  ..Default::default() };
 
         let request_filter_headers = effective_routing_rule.request_headers;
 
@@ -1022,7 +1053,7 @@ impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
         let action: Action = Action::Route(cluster_action);
 
         EnvoyRoute {
-            name: format!("{}-route", effective_routing_rule.name),
+            name: format!("{}-grpc-route", effective_routing_rule.name),
             r#match: Some(route_match),
             request_headers_to_add,
             request_headers_to_remove,
