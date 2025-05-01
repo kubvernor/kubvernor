@@ -355,7 +355,7 @@ impl ListenerCondition {
     }
 }
 
-const APPROVED_ROUTES: [&str; 2] = ["HTTPRoute", "TCPRoute"];
+const APPROVED_ROUTES: [&str; 3] = ["GRPCRoute", "HTTPRoute", "TCPRoute"];
 
 fn validate_allowed_routes(gateway_listeners: &GatewayListeners) -> ListenerCondition {
     if let Some(ar) = gateway_listeners.allowed_routes.as_ref() {
@@ -369,12 +369,12 @@ fn validate_allowed_routes(gateway_listeners: &GatewayListeners) -> ListenerCond
                 (false, false) => ListenerCondition::ResolvedRefs(ResolvedRefs::ResolvedWithNotAllowedRoutes(supported)),
             }
         } else if gateway_listeners.protocol == "HTTP" || gateway_listeners.protocol == "HTTPS" {
-            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec!["HTTPRoute".to_owned()]))
+            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec!["HTTPRoute".to_owned(), "GRPCRoute".to_owned()]))
         } else {
             ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec![]))
         }
     } else if gateway_listeners.protocol == "HTTP" || gateway_listeners.protocol == "HTTPS" {
-        ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec!["HTTPRoute".to_owned()]))
+        ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec!["HTTPRoute".to_owned(), "GRPCRoute".to_owned()]))
     } else {
         ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec![]))
     }

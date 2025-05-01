@@ -195,18 +195,9 @@ pub enum BackendGatewayEvent {
 impl Display for BackendGatewayEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BackendGatewayEvent::Changed(ctx) => write!(
-                f,
-                "GatewayEvent::GatewayChanged
-                {ctx}"
-            ),
+            BackendGatewayEvent::Changed(ctx) => write!(f, "GatewayEvent::GatewayChanged {ctx}"),
             BackendGatewayEvent::Deleted(ctx) => {
-                write!(
-                    f,
-                    "GatewayEvent::GatewayDeleted
-                gateway {:?}",
-                    ctx.gateway
-                )
+                write!(f, "GatewayEvent::GatewayDeleted gateway {:?}", ctx.gateway)
             }
         }
     }

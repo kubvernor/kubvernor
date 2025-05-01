@@ -11,10 +11,16 @@ use envoy_api_rs::{
             endpoint::v3::{lb_endpoint::HostIdentifier, ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints},
             listener::v3::{Filter, FilterChain, Listener as EnvoyListener, ListenerFilter},
             route::v3::{
-                header_matcher::HeaderMatchSpecifier, redirect_action, route::Action, route_action::{self, ClusterSpecifier}, route_match::{GrpcRouteMatchOptions, PathSpecifier}, weighted_cluster::ClusterWeight,
+                header_matcher::HeaderMatchSpecifier,
+                redirect_action,
+                route::Action,
+                route_action::{self, ClusterSpecifier},
+                route_match::{GrpcRouteMatchOptions, PathSpecifier},
+                weighted_cluster::ClusterWeight,
                 HeaderMatcher, RedirectAction, Route as EnvoyRoute, RouteAction, RouteConfiguration, RouteMatch, VirtualHost, WeightedCluster,
             },
-        }, extensions::{
+        },
+        extensions::{
             filters::{
                 http::router::v3::Router,
                 listener::tls_inspector::v3::TlsInspector,
@@ -24,7 +30,9 @@ use envoy_api_rs::{
                 },
             },
             transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig},
-        }, service::discovery::v3::Resource as EnvoyDiscoveryResource, r#type::matcher::v3::{string_matcher::MatchPattern, RegexMatcher, StringMatcher}
+        },
+        r#type::matcher::v3::{string_matcher::MatchPattern, RegexMatcher, StringMatcher},
+        service::discovery::v3::Resource as EnvoyDiscoveryResource,
     },
     google::protobuf::{BoolValue, Duration, UInt32Value},
 };
@@ -102,7 +110,7 @@ impl EnvoyDeployerChannelHandlerService {
             loop {
                 tokio::select! {
                         Some(event) = self.backend_deploy_request_channel_receiver.recv() => {
-                            info!("Backend got event {event:#}");
+                            info!("Backend got event {event}");
                             match event{
                                 BackendGatewayEvent::Changed(ctx) => {
                                     let gateway = &ctx.gateway;
@@ -308,7 +316,7 @@ impl EnvoyDeployerChannelHandlerService {
 }
 
 async fn deploy_envoy(control_plane_config: &ControlPlaneConfig, client: Client, gateway: &Gateway, secrets: &[ResourceKey]) -> std::result::Result<Service, kube::Error> {
-    debug!("Deploying Envoy {gateway:?}");
+    //debug!("Deploying Envoy {gateway:#?}");
     let controller_name = &control_plane_config.controller_name;
     let service_api: Api<Service> = Api::namespaced(client.clone(), gateway.namespace());
     let service_account_api: Api<ServiceAccount> = Api::namespaced(client.clone(), gateway.namespace());
@@ -391,8 +399,6 @@ fn create_resources(gateway: &Gateway) -> Resources {
             })),
             ..Default::default()
         };
-
-        warn!("HTTP Connection manager {} {http_connection_manager:#?}",listener.name);
 
         let http_connection_manager_any = converters::AnyTypeConverter::from((
             "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager".to_owned(),
@@ -762,6 +768,7 @@ fn generate_virtual_hosts_from_xds(virtual_hosts: &BTreeSet<backends::common::En
         .collect()
 }
 
+#[derive(Debug)]
 struct ClusterHolder {
     name: String,
     cluster: EnvoyCluster,
@@ -795,7 +802,10 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
                         .filter(|b| b.weight() > 0)
                         .filter_map(|b| match b {
                             Backend::Resolved(backend_service_config) => Some(backend_service_config),
-                            _ => None,
+                            _ => {
+                                warn!("Filtering out backend not resolved {:?}", b);
+                                None
+                            }
                         })
                         .map(|r| ClusterHolder {
                             name: r.cluster_name(),
@@ -831,7 +841,7 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
             })
         })
         .collect();
-
+    warn!("Clusters produced {:?}", clusters);
     clusters.into_iter().map(|c| c.cluster).collect::<Vec<_>>()
 }
 
@@ -856,12 +866,7 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
             })
         });
 
-        let path_specifier = if path_specifier.is_none(){
-            Some(PathSpecifier::Path("/".to_owned()))
-        }else{
-            path_specifier
-        };
-
+        let path_specifier = if path_specifier.is_none() { Some(PathSpecifier::Path("/".to_owned())) } else { path_specifier };
 
         warn!("Headers to match {:?}", effective_routing_rule.route_matcher.headers);
         let headers = effective_routing_rule.route_matcher.headers.map_or(vec![], |headers| {
@@ -877,9 +882,7 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
                 })
                 .collect()
         });
-        
 
-        
         let route_match = RouteMatch {
             path_specifier,
             grpc: None,
@@ -987,19 +990,20 @@ impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
             let method = matcher.method.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
             let path = "/".to_owned() + &service;
             matcher.r#type.map(|t| match t {
-                grpcroutes::GRPCRouteRulesMatchesMethodType::Exact => PathSpecifier::Path(path),                
+                grpcroutes::GRPCRouteRulesMatchesMethodType::Exact => PathSpecifier::Path(path),
                 grpcroutes::GRPCRouteRulesMatchesMethodType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: path, ..Default::default() }),
             })
         });
 
-        let path_specifier = if path_specifier.is_none(){
-            Some(PathSpecifier::Prefix("/".to_owned()))
-        }else{
-            path_specifier
-        };
-                
+        let path_specifier = if path_specifier.is_none() { Some(PathSpecifier::Prefix("/".to_owned())) } else { path_specifier };
+
         //let route_match = RouteMatch { headers, path_specifier, grpc: Some(GrpcRouteMatchOptions::default()), ..Default::default() };
-        let route_match = RouteMatch { headers, path_specifier, grpc: None,  ..Default::default() };
+        let route_match = RouteMatch {
+            headers,
+            path_specifier,
+            grpc: None,
+            ..Default::default()
+        };
 
         let request_filter_headers = effective_routing_rule.request_headers;
 

@@ -189,7 +189,7 @@ impl From<&GRPCRoute> for ResourceKey {
             group: DEFAULT_GROUP_NAME.to_owned(),
             namespace,
             name: value.name_any(),
-            kind: "HTTPRoute".to_owned(),
+            kind: "GRPCRoute".to_owned(),
         }
     }
 }

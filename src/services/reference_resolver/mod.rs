@@ -65,9 +65,9 @@ impl ReferenceResolverHandler {
                 gateway_class_name,
                 span,
             }) => {
-                let span = span!(parent: &span, Level::INFO, "ReferenceResolverService", action = "ReferenceValidateRequest", id = %gateway.key());
+                let span = span!(parent: &span, Level::INFO, "ReferenceResolverService", action = "AddGateway", id = %gateway.key());
                 let _entered = span.enter();
-                info!("Processing gateway {}", gateway.key());
+                info!("Adding gateway  {}", gateway.key());
                 self.secrets_resolver.add_secretes_by_gateway(&gateway).await;
 
                 self.backend_references_resolver.add_references_by_gateway(&gateway).await;
@@ -89,7 +89,7 @@ impl ReferenceResolverHandler {
             }
 
             ReferenceValidateRequest::DeleteGateway { gateway, span: parent_span } => {
-                let span = span!(parent: &parent_span, Level::INFO, "ReferenceResolverService", action = "ReferenceValidateRequest", id = %gateway.key());
+                let span = span!(parent: &parent_span, Level::INFO, "ReferenceResolverService", action = "DeleteGateway", id = %gateway.key());
                 let _entered = span.enter();
 
                 self.secrets_resolver.delete_secrets_by_gateway(&gateway).await;
