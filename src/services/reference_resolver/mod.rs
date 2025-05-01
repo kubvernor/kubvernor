@@ -67,7 +67,7 @@ impl ReferenceResolverHandler {
             }) => {
                 let span = span!(parent: &span, Level::INFO, "ReferenceResolverService", action = "AddGateway", id = %gateway.key());
                 let _entered = span.enter();
-                info!("Adding gateway  {}", gateway.key());
+                let key = gateway.key().clone();
                 self.secrets_resolver.add_secretes_by_gateway(&gateway).await;
 
                 self.backend_references_resolver.add_references_by_gateway(&gateway).await;
@@ -75,6 +75,7 @@ impl ReferenceResolverHandler {
 
                 let backend_gateway = self.process(span.clone(), gateway, &kube_gateway).await;
 
+                info!("Adding gateway {} Send on channel", key);
                 let _ = self
                     .gateway_deployer_channel_sender
                     .send(GatewayDeployRequest::Deploy(
@@ -142,12 +143,13 @@ impl ReferenceResolverHandler {
                 for gateway_id in gateways {
                     if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
                         let span = span!(Level::INFO, "ReferenceResolverService", id = %gateway_id);
-
                         let gateway = common::Gateway::try_from(&*kube_gateway).expect("We expect this to work since KubeGateway was validated");
+                        let key = gateway.key().clone();
                         let gateway_class_name = kube_gateway.spec.gateway_class_name.clone();
                         let backend_gateway = self.process(span.clone(), gateway, &kube_gateway).await;
 
                         let kube_gateway = (*kube_gateway).clone();
+                        info!("Update gateway {} Send on channel", key);
                         let _ = self
                             .gateway_deployer_channel_sender
                             .send(GatewayDeployRequest::Deploy(
