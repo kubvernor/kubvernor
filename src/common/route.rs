@@ -73,6 +73,11 @@ impl Route {
     pub fn resolution_status_mut(&mut self) -> &mut ResolutionStatus {
         &mut self.config.resolution_status
     }
+
+    pub fn route_type(&self) -> &RouteType {
+        &self.config.route_type
+        
+    }
 }
 
 impl TryFrom<&HTTPRoute> for Route {

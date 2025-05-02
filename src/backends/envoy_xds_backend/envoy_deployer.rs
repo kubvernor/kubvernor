@@ -1,4 +1,4 @@
-use std::collections::{btree_map::Values, BTreeMap, BTreeSet};
+use std::collections::{btree_map::Values, BTreeMap, BTreeSet, HashMap};
 
 use envoy_api_rs::{
     envoy::{
@@ -7,7 +7,7 @@ use envoy_api_rs::{
                 cluster::{ClusterDiscoveryType, DiscoveryType, LbPolicy},
                 Cluster as EnvoyCluster,
             },
-            core::v3::{address, header_value_option::HeaderAppendAction, socket_address::PortSpecifier, Address, HeaderValue, HeaderValueOption, SocketAddress, TransportSocket},
+            core::v3::{address, header_value_option::HeaderAppendAction, socket_address::PortSpecifier, Address, HeaderValue, HeaderValueOption, Http2ProtocolOptions, SocketAddress, TransportSocket},
             endpoint::v3::{lb_endpoint::HostIdentifier, ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints},
             listener::v3::{Filter, FilterChain, Listener as EnvoyListener, ListenerFilter},
             route::v3::{
@@ -15,12 +15,11 @@ use envoy_api_rs::{
                 redirect_action,
                 route::Action,
                 route_action::{self, ClusterSpecifier},
-                route_match::{GrpcRouteMatchOptions, PathSpecifier},
+                route_match::PathSpecifier,
                 weighted_cluster::ClusterWeight,
                 HeaderMatcher, RedirectAction, Route as EnvoyRoute, RouteAction, RouteConfiguration, RouteMatch, VirtualHost, WeightedCluster,
             },
-        },
-        extensions::{
+        }, extensions::{
             filters::{
                 http::router::v3::Router,
                 listener::tls_inspector::v3::TlsInspector,
@@ -29,10 +28,8 @@ use envoy_api_rs::{
                     HttpConnectionManager, HttpFilter,
                 },
             },
-            transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig},
-        },
-        r#type::matcher::v3::{string_matcher::MatchPattern, RegexMatcher, StringMatcher},
-        service::discovery::v3::Resource as EnvoyDiscoveryResource,
+            transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig}, upstreams::http::v3::http_protocol_options::{explicit_http_config::ProtocolConfig, ExplicitHttpConfig, UpstreamProtocolOptions}, 
+        }, service::discovery::v3::Resource as EnvoyDiscoveryResource, r#type::matcher::v3::{string_matcher::MatchPattern, RegexMatcher, StringMatcher}
     },
     google::protobuf::{BoolValue, Duration, UInt32Value},
 };
@@ -793,10 +790,21 @@ impl Ord for ClusterHolder {
 }
 
 fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) -> Vec<EnvoyCluster> {
+    let grpc_protocol_options = envoy_api_rs::envoy::extensions::upstreams::http::v3::HttpProtocolOptions{
+        upstream_protocol_options  :Some(UpstreamProtocolOptions::ExplicitHttpConfig(ExplicitHttpConfig{ protocol_config: Some(ProtocolConfig::Http2ProtocolOptions(Http2ProtocolOptions{max_concurrent_streams: Some(UInt32Value{value: 10}), ..Default::default()})) })),
+        ..Default::default() 
+    };
+    
+    let grpc_http_configuration = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), &grpc_protocol_options));
+    
     let clusters: BTreeSet<ClusterHolder> = listeners
         .flat_map(|listener| {
             listener.http_listener_map.iter().flat_map(|evc| {
                 evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
+                    let route_type = r.route_type();
+                    
+
+
                     r.backends()
                         .iter()
                         .filter(|b| b.weight() > 0)
@@ -832,6 +840,10 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
                                     }],
                                     ..Default::default()
                                 }),
+                                typed_extension_protocol_options: match route_type{
+                                    common::RouteType::Http(_) => HashMap::new(),
+                                    common::RouteType::Grpc(_) => vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(),grpc_http_configuration.clone())].into_iter().collect(),
+                                },
 
                                 ..Default::default()
                             },
