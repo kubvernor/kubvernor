@@ -13,7 +13,7 @@ use gateway_api::{
     },
     httproutes::{
         HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesFilters, HTTPRouteRulesFiltersRequestHeaderModifierAdd, HTTPRouteRulesFiltersRequestHeaderModifierSet,
-        HTTPRouteRulesFiltersRequestRedirect, HTTPRouteRulesFiltersType, HTTPRouteRulesMatches,
+        HTTPRouteRulesFiltersRequestRedirect, HTTPRouteRulesFiltersType, HTTPRouteRulesMatches, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType,
     },
 };
 
@@ -76,7 +76,18 @@ impl Route {
 
     pub fn route_type(&self) -> &RouteType {
         &self.config.route_type
-        
+    }
+}
+
+fn get_http_default_rules_matches() -> HTTPRouteRulesMatches {
+    HTTPRouteRulesMatches {
+        headers: Some(vec![]),
+        method: None,
+        path: Some(HTTPRouteRulesMatchesPath {
+            r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
+            value: Some("/".to_owned()),
+        }),
+        query_params: None,
     }
 }
 
@@ -144,6 +155,11 @@ impl TryFrom<&HTTPRoute> for Route {
         let effective_routing_rules: Vec<_> = routing_rules
             .iter()
             .flat_map(|rr| {
+                let mut matching_rules = rr.matching_rules.clone();
+                if matching_rules.is_empty() {
+                    matching_rules.push(get_http_default_rules_matches());
+                }
+
                 rr.matching_rules.iter().map(|matcher| EffectiveRoutingRule {
                     route_matcher: matcher.clone(),
                     backends: rr.backends.clone(),
@@ -230,6 +246,10 @@ impl TryFrom<&HTTPRoute> for Route {
     }
 }
 
+fn get_grpc_default_rules_matches() -> GRPCRouteRulesMatches {
+    GRPCRouteRulesMatches { headers: Some(vec![]), method: None }
+}
+
 impl TryFrom<&GRPCRoute> for Route {
     type Error = ControllerError;
     fn try_from(kube_route: &GRPCRoute) -> Result<Self, Self::Error> {
@@ -294,7 +314,12 @@ impl TryFrom<&GRPCRoute> for Route {
         let effective_routing_rules: Vec<_> = routing_rules
             .iter()
             .flat_map(|rr| {
-                rr.matching_rules.iter().map(|matcher| GRPCEffectiveRoutingRule {
+                let mut matching_rules = rr.matching_rules.clone();
+                if matching_rules.is_empty() {
+                    matching_rules.push(get_grpc_default_rules_matches());
+                }
+
+                matching_rules.into_iter().map(|matcher| GRPCEffectiveRoutingRule {
                     route_matcher: matcher.clone(),
                     backends: rr.backends.clone(),
                     name: rr.name.clone(),

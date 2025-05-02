@@ -13,7 +13,6 @@ envoy-api-rs = { version = "0.1.0", git = "https://github.com/kubvernor/envoy-ap
 
 gateway-api = { version = "0.15.0", git = "https://github.com/kubvernor/gateway-api-rs", branch = "splitting_standard_from_experimental" }
 # gateway-api = { version = "0.15.0", path = "../gateway-api-rs/gateway-api", features = [
-#     "default",
 # ] }
 k8s-openapi = { version = "0.24", features = ["v1_29", "schemars"] }
 kube = { version = "0.99", features = ["runtime", "client", "derive"] }
