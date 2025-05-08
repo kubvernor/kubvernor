@@ -6,7 +6,7 @@ use std::{
 
 use kube::{Api, Client, Resource, ResourceExt};
 use tokio::time;
-use tracing::{debug, span, Instrument, Level};
+use tracing::{debug, span, warn, Instrument, Level};
 use typed_builder::TypedBuilder;
 
 use crate::common::{ReferenceValidateRequest, ResourceKey};
@@ -114,8 +114,9 @@ where
     }
 
     pub async fn get_reference(&self, resource_key: &ResourceKey) -> Option<R> {
-        let resolved_backend_references = self.resolved_references.lock().await;
-        resolved_backend_references.get(resource_key).cloned()
+        let resolved_backend_references = { self.resolved_references.lock().await.get(resource_key).cloned() };
+        warn!("Getting reference for {resource_key} {}", resolved_backend_references.is_some());
+        resolved_backend_references
     }
 
     pub async fn resolve(&self) {
@@ -154,6 +155,8 @@ where
                                         service
                                     });
                             };
+
+                            debug!("Resolved reference {key} {update_gateway}");
 
                             if update_gateway {
                                 myself.update_gateways(&key).await;

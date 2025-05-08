@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use gateway_api::httproutes;
 use serde::Serialize;
 use tracing::{debug, info, warn};
 
 use super::envoy_deployer::{create_certificate_name, create_key_name, create_secret_name, TEMPLATES};
 use crate::{
-    common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, TlsType, DEFAULT_ROUTE_HOSTNAME},
+    common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, RouteType, TlsType, DEFAULT_ROUTE_HOSTNAME},
     controllers::HostnameMatchFilter,
 };
 #[derive(Debug)]
@@ -168,9 +169,9 @@ impl<'a> EnvoyXDSGenerator<'a> {
         let (resolved, unresolved) = listener.routes();
         let resolved: Vec<_> = resolved
             .into_iter()
-            .filter(|r| match r {
-                Route::Http(_) => true,
-                Route::Grpc(_) => false,
+            .filter(|r| match &r.config.route_type {
+                RouteType::Http(_) => true,
+                RouteType::Grpc(_) => false,
             })
             .collect();
 
@@ -179,7 +180,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
         debug!("generate_virtual_hosts Potential hostnames {potential_hostnames:?}");
         for potential_hostname in potential_hostnames {
             let effective_matching_rules = listener
-                .effective_matching_rules()
+                .http_matching_rules()
                 .into_iter()
                 .filter(|&em| {
                     let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
@@ -327,8 +328,8 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         path: er.route_matcher.path.clone().map(|matcher| TeraPath {
                             path: matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v }),
                             match_type: matcher.r#type.map_or(String::new(), |f| match f {
-                                crate::common::gateway_api::httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
-                                crate::common::gateway_api::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
+                                httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
+                                httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
                                     if let Some(val) = matcher.value {
                                         if val == "/" {
                                             "prefix".to_owned()
@@ -339,7 +340,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                         "prefix".to_owned()
                                     }
                                 }
-                                crate::common::gateway_api::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
+                                httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
                             }),
                         }),
                         headers: er.route_matcher.headers.clone().map(|headers| {
@@ -427,23 +428,22 @@ impl<'a> EnvoyXDSGenerator<'a> {
             .flat_map(|listener| {
                 listener.http_listener_map.iter().flat_map(|evc| {
                     evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
-                        r.routing_rules().iter().flat_map(|rr| {
-                            rr.backends
-                                .iter()
-                                .filter(|b| b.weight() > 0)
-                                .filter_map(|b| match b {
-                                    Backend::Resolved(backend_service_config) => Some(backend_service_config),
-                                    _ => None,
-                                })
-                                .map(|r| TeraCluster {
-                                    name: r.cluster_name(),
-                                    endpoints: vec![TeraEndpoint {
-                                        service: r.endpoint.clone(),
-                                        port: r.effective_port,
-                                        weight: r.weight,
-                                    }],
-                                })
-                        })
+                        r.backends()
+                            .iter()
+                            .filter(|b| b.weight() > 0)
+                            .filter_map(|b| match b {
+                                Backend::Resolved(backend_service_config) => Some(backend_service_config),
+                                _ => None,
+                            })
+                            .map(|r| TeraCluster {
+                                name: r.cluster_name(),
+                                endpoints: vec![TeraEndpoint {
+                                    service: r.endpoint.clone(),
+                                    port: r.effective_port,
+                                    weight: r.weight,
+                                }],
+                            })
+                            .collect::<Vec<_>>()
                     })
                 })
             })

@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 use typed_builder::TypedBuilder;
 
 use super::patcher::{Operation, Patcher};
-use crate::common::gateway_api::gatewayclasses::GatewayClass;
+use gateway_api::gatewayclasses::GatewayClass;
 
 #[derive(TypedBuilder)]
 pub struct GatewayClassPatcherService {

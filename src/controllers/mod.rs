@@ -3,6 +3,7 @@ pub mod gateway;
 pub mod gateway_class;
 mod handlers;
 pub mod http_route;
+pub mod grpc_route;
 
 mod utils;
 

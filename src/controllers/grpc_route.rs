@@ -28,45 +28,45 @@ use crate::{
 };
 use gateway_api::{
     gateways::Gateway,
-    httproutes::{self, HTTPRoute, HTTPRouteParentRefs, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
+    grpcroutes::{self, GRPCRoute, GRPCRouteParentRefs, GRPCRouteStatus, GRPCRouteStatusParents, GRPCRouteStatusParentsParentRef},
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 const CONDITION_MESSAGE: &str = "Route updated by controller";
 
 #[derive(Clone, TypedBuilder)]
-pub struct HttpRouteControllerContext {
+pub struct GRPCRouteControllerContext {
     controller_name: String,
     client: Client,
     state: State,
-    http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
+    grpc_route_patcher: mpsc::Sender<Operation<GRPCRoute>>,
     validate_references_channel_sender: mpsc::Sender<ReferenceValidateRequest>,
 }
 
 #[derive(TypedBuilder)]
-pub struct HttpRouteController {
-    ctx: Arc<HttpRouteControllerContext>,
+pub struct GRPCRouteController {
+    ctx: Arc<GRPCRouteControllerContext>,
 }
 
-impl HttpRouteController {
+impl GRPCRouteController {
     pub fn get_controller(&self) -> BoxFuture<()> {
         let client = self.ctx.client.clone();
         let context = &self.ctx;
 
         Controller::new(Api::all(client), Config::default())
-            .run(Self::reconcile_http_route, Self::error_policy, Arc::clone(context))
+            .run(Self::reconcile_grpc_route, Self::error_policy, Arc::clone(context))
             .for_each(|_| futures::future::ready(()))
             .boxed()
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn error_policy<T>(_object: Arc<T>, _err: &ControllerError, _ctx: Arc<HttpRouteControllerContext>) -> Action {
+    fn error_policy<T>(_object: Arc<T>, _err: &ControllerError, _ctx: Arc<GRPCRouteControllerContext>) -> Action {
         Action::requeue(RECONCILE_LONG_WAIT)
     }
 
-    async fn reconcile_http_route(resource: Arc<httproutes::HTTPRoute>, ctx: Arc<HttpRouteControllerContext>) -> Result<Action> {
+    async fn reconcile_grpc_route(resource: Arc<grpcroutes::GRPCRoute>, ctx: Arc<GRPCRouteControllerContext>) -> Result<Action> {
         let controller_name = ctx.controller_name.clone();
-        let http_route_patcher = ctx.http_route_patcher.clone();
+        let grpc_route_patcher = ctx.grpc_route_patcher.clone();
 
         let Some(maybe_id) = resource.metadata.uid.clone() else {
             return Err(ControllerError::InvalidPayload("Uid must be present".to_owned()));
@@ -80,16 +80,16 @@ impl HttpRouteController {
 
         let state = &ctx.state;
 
-        let maybe_stored_route = state.get_http_route_by_id(&resource_key).expect("We expect the lock to work");
+        let maybe_stored_route = state.get_grpc_route_by_id(&resource_key).expect("We expect the lock to work");
 
         let _ = Route::try_from(&*resource)?;
 
-        let handler = HTTPRouteHandler::builder()
+        let handler = GRPCRouteHandler::builder()
             .state(ctx.state.clone())
             .resource_key(resource_key)
             .controller_name(controller_name)
             .resource(resource)
-            .http_route_patcher(http_route_patcher)
+            .grpc_route_patcher(grpc_route_patcher)
             .validate_references_channel_sender(ctx.validate_references_channel_sender.clone())
             .version(version)
             .build();
@@ -97,7 +97,7 @@ impl HttpRouteController {
         handler.process(maybe_stored_route, Self::check_spec, Self::check_status).await
     }
 
-    fn check_spec(args: ResourceCheckerArgs<HTTPRoute>) -> ResourceState {
+    fn check_spec(args: ResourceCheckerArgs<GRPCRoute>) -> ResourceState {
         let (resource, stored_resource) = args;
         if resource.spec == stored_resource.spec {
             ResourceState::SpecNotChanged
@@ -106,7 +106,7 @@ impl HttpRouteController {
         }
     }
 
-    fn check_status(args: ResourceCheckerArgs<HTTPRoute>) -> ResourceState {
+    fn check_status(args: ResourceCheckerArgs<GRPCRoute>) -> ResourceState {
         let (resource, stored_resource) = args;
         if resource.status == stored_resource.status {
             ResourceState::StatusNotChanged
@@ -117,18 +117,18 @@ impl HttpRouteController {
 }
 
 #[derive(TypedBuilder)]
-struct HTTPRouteHandler<R> {
+struct GRPCRouteHandler<R> {
     state: State,
     resource_key: ResourceKey,
     controller_name: String,
     resource: Arc<R>,
-    http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
+    grpc_route_patcher: mpsc::Sender<Operation<GRPCRoute>>,
     validate_references_channel_sender: mpsc::Sender<ReferenceValidateRequest>,
     version: Option<String>,
 }
 
 #[async_trait]
-impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
+impl ResourceHandler<GRPCRoute> for GRPCRouteHandler<GRPCRoute> {
     fn state(&self) -> &State {
         &self.state
     }
@@ -137,7 +137,7 @@ impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
         self.version.clone().unwrap_or_default()
     }
 
-    fn resource(&self) -> Arc<HTTPRoute> {
+    fn resource(&self) -> Arc<GRPCRoute> {
         Arc::clone(&self.resource)
     }
 
@@ -145,41 +145,41 @@ impl ResourceHandler<HTTPRoute> for HTTPRouteHandler<HTTPRoute> {
         self.resource_key.clone()
     }
 
-    async fn on_spec_not_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
-        let () = state.save_http_route(id, resource).expect("We expect the lock to work");
+    async fn on_spec_not_changed(&self, id: ResourceKey, resource: &Arc<GRPCRoute>, state: &State) -> Result<Action> {
+        let () = state.save_grpc_route(id, resource).expect("We expect the lock to work");
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_status_not_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
-        let () = state.maybe_save_http_route(id, resource).expect("We expect the lock to work");
+    async fn on_status_not_changed(&self, id: ResourceKey, resource: &Arc<GRPCRoute>, state: &State) -> Result<Action> {
+        let () = state.maybe_save_grpc_route(id, resource).expect("We expect the lock to work");
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_new(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
+    async fn on_new(&self, id: ResourceKey, resource: &Arc<GRPCRoute>, state: &State) -> Result<Action> {
         self.on_new_or_changed(id, resource, state).await
     }
 
-    async fn on_status_changed(&self, _id: ResourceKey, _resource: &Arc<HTTPRoute>, _state: &State) -> Result<Action> {
+    async fn on_status_changed(&self, _id: ResourceKey, _resource: &Arc<GRPCRoute>, _state: &State) -> Result<Action> {
         Ok(Action::await_change())
     }
 
-    async fn on_spec_changed(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
+    async fn on_spec_changed(&self, id: ResourceKey, resource: &Arc<GRPCRoute>, state: &State) -> Result<Action> {
         self.on_new_or_changed(id, resource, state).await
     }
 
-    async fn on_deleted(&self, id: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
+    async fn on_deleted(&self, id: ResourceKey, resource: &Arc<GRPCRoute>, state: &State) -> Result<Action> {
         self.on_deleted(id, resource, state).await
     }
 }
 
-impl HTTPRouteHandler<HTTPRoute> {
-    async fn on_new_or_changed(&self, route_key: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
+impl GRPCRouteHandler<GRPCRoute> {
+    async fn on_new_or_changed(&self, route_key: ResourceKey, resource: &Arc<GRPCRoute>, state: &State) -> Result<Action> {
         let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
             return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
         };
 
-        let mut http_route = (**resource).clone();
-        let route = Route::try_from(&http_route)?;
+        let mut grpc_route = (**resource).clone();
+        let route = Route::try_from(&grpc_route)?;
 
         let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
 
@@ -190,13 +190,13 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let (resolved_gateways, unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
 
-        parent_gateway_refs_keys.for_each(|(_ref, key)| state.attach_http_route_to_gateway(key.as_ref().clone(), route_key.clone()).expect("We expect the lock to work"));
+        parent_gateway_refs_keys.for_each(|(_ref, key)| state.attach_grpc_route_to_gateway(key.as_ref().clone(), route_key.clone()).expect("We expect the lock to work"));
 
-        let matching_gateways = RouteListenerMatcher::filter_http_matching_gateways(state, &resolved_gateways);
+        let matching_gateways = RouteListenerMatcher::filter_grpc_matching_gateways(state, &resolved_gateways);
         let unknown_gateway_status = self.generate_status_for_unknown_gateways(&unknown_gateways, resource.metadata.generation);
 
-        http_route.status = Some(HTTPRouteStatus { parents: unknown_gateway_status });
-        let () = state.save_http_route(route_key.clone(), &Arc::new(http_route)).expect("We expect the lock to work");
+        grpc_route.status = Some(GRPCRouteStatus { parents: unknown_gateway_status });
+        let () = state.save_grpc_route(route_key.clone(), &Arc::new(grpc_route)).expect("We expect the lock to work");
 
         let _ = self.add_finalizer(resource).await?;
 
@@ -244,7 +244,7 @@ impl HTTPRouteHandler<HTTPRoute> {
         Ok(Action::await_change())
     }
 
-    async fn on_deleted(&self, route_key: ResourceKey, resource: &Arc<HTTPRoute>, state: &State) -> Result<Action> {
+    async fn on_deleted(&self, route_key: ResourceKey, resource: &Arc<GRPCRoute>, state: &State) -> Result<Action> {
         let _ = Route::try_from(&**resource)?;
 
         let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
@@ -254,20 +254,20 @@ impl HTTPRouteHandler<HTTPRoute> {
         let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
 
         debug!("Parent keys = {parent_gateway_refs_keys:?}");
-        parent_gateway_refs_keys.for_each(|(_ref, gateway_key)| state.detach_http_route_from_gateway(gateway_key.as_ref(), &route_key).expect("We expect the lock to work"));
+        parent_gateway_refs_keys.for_each(|(_ref, gateway_key)| state.detach_grpc_route_from_gateway(gateway_key.as_ref(), &route_key).expect("We expect the lock to work"));
 
-        let Some(route) = state.delete_http_route(&route_key).expect("We expect the lock to work") else {
+        let Some(route) = state.delete_grpc_route(&route_key).expect("We expect the lock to work") else {
             return Err(ControllerError::InvalidPayload("Route doesn't exist".to_owned()));
         };
         let route = Route::try_from(&*route)?;
 
-        let http_route = (**resource).clone();
+        let grpc_route = (**resource).clone();
         let resource_key = route_key;
         let _res = self
-            .http_route_patcher
+            .grpc_route_patcher
             .send(Operation::Delete(DeleteContext {
                 resource_key: resource_key.clone(),
-                resource: http_route,
+                resource: grpc_route,
                 controller_name: self.controller_name.clone(),
                 span: Span::current().clone(),
             }))
@@ -283,10 +283,10 @@ impl HTTPRouteHandler<HTTPRoute> {
         Ok(Action::await_change())
     }
 
-    fn generate_status_for_unknown_gateways(&self, gateways: &[(&HTTPRouteParentRefs, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<HTTPRouteStatusParents> {
+    fn generate_status_for_unknown_gateways(&self, gateways: &[(&GRPCRouteParentRefs, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<GRPCRouteStatusParents> {
         gateways
             .iter()
-            .map(|(gateway, _)| HTTPRouteStatusParents {
+            .map(|(gateway, _)| GRPCRouteStatusParents {
                 conditions: Some(vec![Condition {
                     last_transition_time: Time(Utc::now()),
                     message: CONDITION_MESSAGE.to_owned(),
@@ -296,7 +296,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                     type_: "ResolvedRefs".to_owned(),
                 }]),
                 controller_name: self.controller_name.clone(),
-                parent_ref: HTTPRouteStatusParentsParentRef {
+                parent_ref: GRPCRouteStatusParentsParentRef {
                     group: gateway.group.clone(),
                     kind: gateway.kind.clone(),
                     name: gateway.name.clone(),
@@ -308,7 +308,7 @@ impl HTTPRouteHandler<HTTPRoute> {
             .collect()
     }
 
-    async fn add_finalizer(&self, resource: &Arc<HTTPRoute>) -> Result<Action> {
+    async fn add_finalizer(&self, resource: &Arc<GRPCRoute>) -> Result<Action> {
         let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
             finalizers.iter().any(|f| *f == self.controller_name)
         } else {
@@ -317,7 +317,7 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         if !has_finalizer {
             let _res = self
-                .http_route_patcher
+                .grpc_route_patcher
                 .send(Operation::PatchFinalizer(FinalizerContext {
                     resource_key: self.resource_key.clone(),
                     controller_name: self.controller_name.clone(),

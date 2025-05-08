@@ -133,11 +133,18 @@ impl ResourceFinalizer {
 }
 
 pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route> {
-    state
+    let mut http_routes: Vec<Route> = state
         .get_http_routes_attached_to_gateway(gateway_id)
         .expect("We expect the lock to work")
         .map(|routes| routes.iter().filter_map(|r| Route::try_from(&**r).ok()).collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let mut grpc_routes: Vec<Route> = state
+        .get_grpc_routes_attached_to_gateway(gateway_id)
+        .expect("We expect the lock to work")
+        .map(|routes| routes.iter().filter_map(|r| Route::try_from(&**r).ok()).collect())
+        .unwrap_or_default();
+    http_routes.append(&mut grpc_routes);
+    http_routes
 }
 
 pub async fn resolve_route_backends(

@@ -808,9 +808,9 @@ dependencies = [
 [[package]]
 name = "gateway-api"
 version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ea401eaa9802293115029b448ef0f13ebc39cccfd9651aa2abac084aa4f4bef"
+source = "git+https://github.com/kubvernor/gateway-api-rs?branch=splitting_standard_from_experimental#0f9d26f4cb7b9145d0427e44e432ec291ee791be"
 dependencies = [
+ "cfg-if",
  "delegate",
  "k8s-openapi",
  "kube",

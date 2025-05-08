@@ -1,14 +1,16 @@
-use crate::common::{gateway_api::referencegrants::ReferenceGrant, resource_key::DEFAULT_GROUP_NAME};
+use gateway_api::referencegrants::ReferenceGrant;
+
 use std::{collections::BTreeSet, sync::Arc};
 
 use crate::{
-    common::{Backend, Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey, TlsType},
+    common::{resource_key::DEFAULT_GROUP_NAME, Backend, Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey, TlsType},
     controllers::find_linked_routes,
     state::State,
 };
 use futures::future::BoxFuture;
 use futures::FutureExt;
-use gateway_api::apis::standard::referencegrants::{ReferenceGrantFrom, ReferenceGrantTo};
+
+use gateway_api::referencegrants::{ReferenceGrantFrom, ReferenceGrantTo};
 use kube::{api::ListParams, Api, Client, ResourceExt};
 use kube_core::ObjectList;
 use tokio::time;
@@ -117,22 +119,18 @@ impl ReferenceGrantsResolver {
         for route in linked_routes {
             let from = route.resource_key();
 
-            let route_config = route.config();
-            for rule in &route_config.routing_rules {
-                for backend in &rule.backends {
-                    if let Backend::Maybe(backend_service_config) = backend {
-                        let to = &backend_service_config.resource_key;
-
-                        backend_reference_keys.insert(
-                            ReferenceGrantRef::builder()
-                                .namespace(to.namespace.clone())
-                                .from(from.into())
-                                .to(to.into())
-                                .gateway_key(gateway_key.clone())
-                                .build(),
-                        );
-                    };
-                }
+            for backend in &route.backends() {
+                if let Backend::Maybe(backend_service_config) = backend {
+                    let to = &backend_service_config.resource_key;
+                    backend_reference_keys.insert(
+                        ReferenceGrantRef::builder()
+                            .namespace(to.namespace.clone())
+                            .from(from.into())
+                            .to(to.into())
+                            .gateway_key(gateway_key.clone())
+                            .build(),
+                    );
+                };
             }
         }
 
@@ -340,8 +338,9 @@ impl From<&ReferenceGrantTo> for ResourceKey {
 }
 #[cfg(test)]
 mod tests {
-    use gateway_api::apis::standard::referencegrants::ReferenceGrantSpec;
+    use gateway_api::referencegrants;
     use kube_core::{ApiResource, ListMeta, ObjectMeta, TypeMeta};
+    use referencegrants::ReferenceGrantSpec;
     use tokio::sync::{mpsc, Mutex};
 
     use super::*;

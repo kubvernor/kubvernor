@@ -3,14 +3,15 @@ use std::fmt::Display;
 use k8s_openapi::api::core::v1::Service;
 use kube::{Resource, ResourceExt};
 
-use crate::common::{
-    create_id,
-    gateway_api::{
-        gatewayclasses::GatewayClass,
-        gateways,
-        httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRulesBackendRefs},
-    },
+use crate::common::create_id;
+use gateway_api::{
+    gatewayclasses::GatewayClass,
+    gateways,
+    grpcroutes::{GRPCRoute, GRPCRouteParentRefs, GRPCRouteRulesBackendRefs},
+    httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRulesBackendRefs},
 };
+
+use super::RouteParentRefs;
 
 pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";
 pub const DEFAULT_NAMESPACE_NAME: &str = "default";
@@ -113,6 +114,36 @@ impl From<(&HTTPRouteParentRefs, String)> for RouteRefKey {
     }
 }
 
+impl From<(&GRPCRouteParentRefs, String)> for RouteRefKey {
+    fn from((route_parent, route_namespace): (&GRPCRouteParentRefs, String)) -> Self {
+        Self {
+            resource_key: ResourceKey {
+                group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
+                namespace: route_parent.namespace.clone().unwrap_or(route_namespace),
+                name: route_parent.name.clone(),
+                kind: route_parent.kind.clone().unwrap_or(DEFAULT_KIND_NAME.to_owned()),
+            },
+            section_name: route_parent.section_name.clone(),
+            port: route_parent.port,
+        }
+    }
+}
+
+impl From<(&RouteParentRefs, String)> for RouteRefKey {
+    fn from((route_parent, route_namespace): (&RouteParentRefs, String)) -> Self {
+        Self {
+            resource_key: ResourceKey {
+                group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
+                namespace: route_parent.namespace.clone().unwrap_or(route_namespace),
+                name: route_parent.name.clone(),
+                kind: route_parent.kind.clone().unwrap_or(DEFAULT_KIND_NAME.to_owned()),
+            },
+            section_name: route_parent.section_name.clone(),
+            port: route_parent.port,
+        }
+    }
+}
+
 impl From<&GatewayClass> for ResourceKey {
     fn from(value: &GatewayClass) -> Self {
         Self {
@@ -150,6 +181,19 @@ impl From<&HTTPRoute> for ResourceKey {
     }
 }
 
+impl From<&GRPCRoute> for ResourceKey {
+    fn from(value: &GRPCRoute) -> Self {
+        let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+
+        Self {
+            group: DEFAULT_GROUP_NAME.to_owned(),
+            namespace,
+            name: value.name_any(),
+            kind: "GRPCRoute".to_owned(),
+        }
+    }
+}
+
 impl From<(&HTTPRouteRulesBackendRefs, String)> for ResourceKey {
     fn from((value, gateway_namespace): (&HTTPRouteRulesBackendRefs, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
@@ -163,8 +207,34 @@ impl From<(&HTTPRouteRulesBackendRefs, String)> for ResourceKey {
     }
 }
 
+impl From<(&GRPCRouteRulesBackendRefs, String)> for ResourceKey {
+    fn from((value, gateway_namespace): (&GRPCRouteRulesBackendRefs, String)) -> Self {
+        let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
+
+        Self {
+            group: DEFAULT_GROUP_NAME.to_owned(),
+            namespace,
+            name: value.name.clone(),
+            kind: value.kind.clone().unwrap_or_default(),
+        }
+    }
+}
+
 impl From<&HTTPRouteRulesBackendRefs> for BackendResourceKey {
     fn from(value: &HTTPRouteRulesBackendRefs) -> Self {
+        let namespace = value.namespace.clone();
+
+        Self {
+            group: DEFAULT_GROUP_NAME.to_owned(),
+            namespace,
+            name: value.name.clone(),
+            kind: value.kind.clone().unwrap_or_default(),
+        }
+    }
+}
+
+impl From<&GRPCRouteRulesBackendRefs> for BackendResourceKey {
+    fn from(value: &GRPCRouteRulesBackendRefs) -> Self {
         let namespace = value.namespace.clone();
 
         Self {

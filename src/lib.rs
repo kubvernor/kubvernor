@@ -4,7 +4,7 @@ use clap::Parser;
 use common::{BackendReferenceResolver, ControlPlaneConfig, ReferenceGrantsResolver, SecretsResolver};
 use futures::FutureExt;
 use kube::Client;
-use services::{GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService};
+use services::{patchers::GRPCRoutePatcherService, GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService};
 use state::State;
 use tokio::{
     sync::mpsc::{self},
@@ -34,9 +34,7 @@ cfg_if::cfg_if! {
 }
 
 use controllers::{
-    gateway::{self, GatewayController},
-    gateway_class::GatewayClassController,
-    http_route::{self, HttpRouteController},
+    gateway::{self, GatewayController}, gateway_class::GatewayClassController, grpc_route::{self, GRPCRouteController}, http_route::{self, HttpRouteController}
 };
 use typed_builder::TypedBuilder;
 
@@ -60,6 +58,7 @@ pub async fn start(args: Args) -> Result<()> {
     let (gateway_patcher_channel_sender, gateway_patcher_channel_receiver) = mpsc::channel(1024);
     let (gateway_class_patcher_channel_sender, gateway_class_patcher_channel_receiver) = mpsc::channel(1024);
     let (http_route_patcher_channel_sender, http_route_patcher_channel_receiver) = mpsc::channel(1024);
+    let (grpc_route_patcher_channel_sender, grpc_route_patcher_channel_receiver) = mpsc::channel(1024);
     let (backend_deployer_channel_sender, backend_deployer_channel_receiver) = mpsc::channel(1024);
     let (backend_response_channel_sender, backend_response_channel_receiver) = mpsc::channel(1024);
 
@@ -84,6 +83,7 @@ pub async fn start(args: Args) -> Result<()> {
         .gateway_patcher_channel_sender(gateway_patcher_channel_sender.clone())
         .gateway_class_patcher_channel_sender(gateway_class_patcher_channel_sender.clone())
         .http_route_patcher_channel_sender(http_route_patcher_channel_sender.clone())
+        .grpc_route_patcher_channel_sender(grpc_route_patcher_channel_sender.clone())
         .controller_name(args.controller_name.clone())
         .build();
 
@@ -100,6 +100,8 @@ pub async fn start(args: Args) -> Result<()> {
     let mut gateway_patcher_service = GatewayPatcherService::builder().client(client.clone()).receiver(gateway_patcher_channel_receiver).build();
     let mut gateway_class_patcher_service = GatewayClassPatcherService::builder().client(client.clone()).receiver(gateway_class_patcher_channel_receiver).build();
     let mut http_route_patcher_service = HttpRoutePatcherService::builder().client(client.clone()).receiver(http_route_patcher_channel_receiver).build();
+    let mut grpc_route_patcher_service = GRPCRoutePatcherService::builder().client(client.clone()).receiver(grpc_route_patcher_channel_receiver).build();
+    
 
     let control_plane_config = ControlPlaneConfig {
         host: args.envoy_control_plane_host.clone(),
@@ -137,6 +139,18 @@ pub async fn start(args: Args) -> Result<()> {
                 .controller_name(args.controller_name.clone())
                 .state(state.clone())
                 .http_route_patcher(http_route_patcher_channel_sender.clone())
+                .validate_references_channel_sender(reference_validate_channel_sender.clone())
+                .build(),
+        ))
+        .build();
+
+    let grpc_route_controller = GRPCRouteController::builder()
+        .ctx(Arc::new(
+            grpc_route::GRPCRouteControllerContext::builder()
+                .client(client.clone())
+                .controller_name(args.controller_name.clone())
+                .state(state.clone())
+                .grpc_route_patcher(grpc_route_patcher_channel_sender.clone())
                 .validate_references_channel_sender(reference_validate_channel_sender)
                 .build(),
         ))
@@ -147,6 +161,7 @@ pub async fn start(args: Args) -> Result<()> {
     let gateway_patcher_service = gateway_patcher_service.start().boxed();
     let gateway_class_patcher_service = gateway_class_patcher_service.start().boxed();
     let http_route_patcher_service = http_route_patcher_service.start().boxed();
+    let grpc_route_patcher_service = grpc_route_patcher_service.start().boxed();
     let envoy_deployer_service = envoy_deployer_service.start().boxed();
     let gateway_class_controller_task = async move {
         info!("Gateway Class controller...started");
@@ -164,9 +179,17 @@ pub async fn start(args: Args) -> Result<()> {
 
     let http_route_controller_task = async move {
         sleep(2 * STARTUP_DURATION).await;
-        info!("Route controller...started");
+        info!("HTTP Route controller...started");
         http_route_controller.get_controller().await;
-        info!("Route controller...stopped");
+        info!("HTTP Route controller...stopped");
+        crate::Result::<()>::Ok(())
+    };
+
+    let grpc_route_controller_task = async move {
+        sleep(2 * STARTUP_DURATION).await;
+        info!("GRPC Route controller...started");
+        grpc_route_controller.get_controller().await;
+        info!("GRPC Route controller...stopped");
         crate::Result::<()>::Ok(())
     };
 
@@ -182,10 +205,12 @@ pub async fn start(args: Args) -> Result<()> {
         gateway_class_patcher_service,
         gateway_patcher_service,
         http_route_patcher_service,
+        grpc_route_patcher_service,
         envoy_deployer_service,
         gateway_class_controller_task.boxed(),
         gateway_controller_task.boxed(),
         http_route_controller_task.boxed(),
+        grpc_route_controller_task.boxed()
     ])
     .await;
     info!("Kubvernor stopped");

@@ -1,4 +1,4 @@
-use std::collections::{btree_map::Values, BTreeMap, BTreeSet};
+use std::collections::{btree_map::Values, BTreeMap, BTreeSet, HashMap};
 
 use envoy_api_rs::{
     envoy::{
@@ -7,11 +7,18 @@ use envoy_api_rs::{
                 cluster::{ClusterDiscoveryType, DiscoveryType, LbPolicy},
                 Cluster as EnvoyCluster,
             },
-            core::v3::{address, header_value_option::HeaderAppendAction, socket_address::PortSpecifier, Address, HeaderValue, HeaderValueOption, SocketAddress, TransportSocket},
+            core::v3::{
+                address, header_value_option::HeaderAppendAction, socket_address::PortSpecifier, Address, HeaderValue, HeaderValueOption, Http2ProtocolOptions, SocketAddress, TransportSocket,
+            },
             endpoint::v3::{lb_endpoint::HostIdentifier, ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints},
             listener::v3::{Filter, FilterChain, Listener as EnvoyListener, ListenerFilter},
             route::v3::{
-                header_matcher::HeaderMatchSpecifier, redirect_action, route::Action, route_action, route_action::ClusterSpecifier, route_match::PathSpecifier, weighted_cluster::ClusterWeight,
+                header_matcher::HeaderMatchSpecifier,
+                redirect_action,
+                route::Action,
+                route_action::{self, ClusterSpecifier},
+                route_match::PathSpecifier,
+                weighted_cluster::ClusterWeight,
                 HeaderMatcher, RedirectAction, Route as EnvoyRoute, RouteAction, RouteConfiguration, RouteMatch, VirtualHost, WeightedCluster,
             },
         },
@@ -25,6 +32,7 @@ use envoy_api_rs::{
                 },
             },
             transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig},
+            upstreams::http::v3::http_protocol_options::{explicit_http_config::ProtocolConfig, ExplicitHttpConfig, UpstreamProtocolOptions},
         },
         r#type::matcher::v3::{string_matcher::MatchPattern, RegexMatcher, StringMatcher},
         service::discovery::v3::Resource as EnvoyDiscoveryResource,
@@ -32,6 +40,7 @@ use envoy_api_rs::{
     google::protobuf::{BoolValue, Duration, UInt32Value},
 };
 use futures::FutureExt;
+use gateway_api::{grpcroutes, httproutes};
 use itertools::Itertools;
 use k8s_openapi::{
     api::{
@@ -63,11 +72,10 @@ use super::{
     server::{start_aggregate_server, AckVersions, ServerAction},
 };
 use crate::{
-    backends,
-    backends::{common::ResourceGenerator, envoy_xds_backend::resources},
+    backends::{self, common::ResourceGenerator, envoy_xds_backend::resources},
     common::{
-        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig, DeletedContext, EffectiveRoutingRule, Gateway,
-        GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType,
+        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig, DeletedContext, EffectiveRoutingRule,
+        GRPCEffectiveRoutingRule, Gateway, GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType,
     },
     Error,
 };
@@ -105,12 +113,14 @@ impl EnvoyDeployerChannelHandlerService {
             loop {
                 tokio::select! {
                         Some(event) = self.backend_deploy_request_channel_receiver.recv() => {
-                            info!("Backend got event {event:#}");
+                            info!("Backend got event {event}");
                             match event{
                                 BackendGatewayEvent::Changed(ctx) => {
                                     let gateway = &ctx.gateway;
                                     let span = span!(parent: &ctx.span, Level::INFO, "EnvoyDeployerService", event="GatewayChanged", id = %gateway.key());
                                     let _entered = span.enter();
+
+
                                     let Resources{listeners, clusters, secrets} = create_resources(gateway);
 
                                     let ack_version = ack_versions.entry(gateway.key().clone()).and_modify(super::server::AckVersions::inc).or_default();
@@ -309,7 +319,7 @@ impl EnvoyDeployerChannelHandlerService {
 }
 
 async fn deploy_envoy(control_plane_config: &ControlPlaneConfig, client: Client, gateway: &Gateway, secrets: &[ResourceKey]) -> std::result::Result<Service, kube::Error> {
-    debug!("Deploying Envoy {gateway:?}");
+    //debug!("Deploying Envoy {gateway:#?}");
     let controller_name = &control_plane_config.controller_name;
     let service_api: Api<Service> = Api::namespaced(client.clone(), gateway.namespace());
     let service_account_api: Api<ServiceAccount> = Api::namespaced(client.clone(), gateway.namespace());
@@ -755,12 +765,13 @@ fn generate_virtual_hosts_from_xds(virtual_hosts: &BTreeSet<backends::common::En
         .map(|vh| VirtualHost {
             name: vh.name.clone(),
             domains: vh.effective_hostnames.clone(),
-            routes: vh.effective_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
+            routes: vh.http_routes.clone().into_iter().chain(vh.grpc_routes.clone()).collect(),
             ..Default::default()
         })
         .collect()
 }
 
+#[derive(Debug)]
 struct ClusterHolder {
     name: String,
     cluster: EnvoyCluster,
@@ -785,53 +796,75 @@ impl Ord for ClusterHolder {
 }
 
 fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) -> Vec<EnvoyCluster> {
+    let grpc_protocol_options = envoy_api_rs::envoy::extensions::upstreams::http::v3::HttpProtocolOptions {
+        upstream_protocol_options: Some(UpstreamProtocolOptions::ExplicitHttpConfig(ExplicitHttpConfig {
+            protocol_config: Some(ProtocolConfig::Http2ProtocolOptions(Http2ProtocolOptions {
+                max_concurrent_streams: Some(UInt32Value { value: 10 }),
+                ..Default::default()
+            })),
+        })),
+        ..Default::default()
+    };
+
+    let grpc_http_configuration = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), &grpc_protocol_options));
+
     let clusters: BTreeSet<ClusterHolder> = listeners
         .flat_map(|listener| {
             listener.http_listener_map.iter().flat_map(|evc| {
                 evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
-                    r.routing_rules().iter().flat_map(|rr| {
-                        rr.backends
-                            .iter()
-                            .filter(|b| b.weight() > 0)
-                            .filter_map(|b| match b {
-                                Backend::Resolved(backend_service_config) => Some(backend_service_config),
-                                _ => None,
-                            })
-                            .map(|r| ClusterHolder {
-                                name: r.cluster_name(),
-                                cluster: EnvoyCluster {
-                                    name: r.cluster_name(),
-                                    cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::StrictDns.into())),
-                                    lb_policy: LbPolicy::RoundRobin.into(),
-                                    connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
-                                    load_assignment: Some(ClusterLoadAssignment {
-                                        cluster_name: r.cluster_name(),
-                                        endpoints: vec![LocalityLbEndpoints {
-                                            lb_endpoints: vec![LbEndpoint {
-                                                host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
-                                                    address: Some(SocketAddressFactory::from_backend(r)),
-                                                    ..Default::default()
-                                                })),
-                                                load_balancing_weight: Some(UInt32Value {
-                                                    value: r.weight.try_into().expect("For time being we expect this to work"),
-                                                }),
+                    let route_type = r.route_type();
 
+                    r.backends()
+                        .iter()
+                        .filter(|b| b.weight() > 0)
+                        .filter_map(|b| match b {
+                            Backend::Resolved(backend_service_config) => Some(backend_service_config),
+                            _ => {
+                                warn!("Filtering out backend not resolved {:?}", b);
+                                None
+                            }
+                        })
+                        .map(|r| ClusterHolder {
+                            name: r.cluster_name(),
+                            cluster: EnvoyCluster {
+                                name: r.cluster_name(),
+                                cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::StrictDns.into())),
+                                lb_policy: LbPolicy::RoundRobin.into(),
+                                connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
+                                load_assignment: Some(ClusterLoadAssignment {
+                                    cluster_name: r.cluster_name(),
+                                    endpoints: vec![LocalityLbEndpoints {
+                                        lb_endpoints: vec![LbEndpoint {
+                                            host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
+                                                address: Some(SocketAddressFactory::from_backend(r)),
                                                 ..Default::default()
-                                            }],
+                                            })),
+                                            load_balancing_weight: Some(UInt32Value {
+                                                value: r.weight.try_into().expect("For time being we expect this to work"),
+                                            }),
+
                                             ..Default::default()
                                         }],
                                         ..Default::default()
-                                    }),
-
+                                    }],
                                     ..Default::default()
+                                }),
+                                typed_extension_protocol_options: match route_type {
+                                    common::RouteType::Http(_) => HashMap::new(),
+                                    common::RouteType::Grpc(_) => vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
+                                        .into_iter()
+                                        .collect(),
                                 },
-                            })
-                    })
+
+                                ..Default::default()
+                            },
+                        })
+                        .collect::<Vec<_>>()
                 })
             })
         })
         .collect();
-
+    warn!("Clusters produced {:?}", clusters);
     clusters.into_iter().map(|c| c.cluster).collect::<Vec<_>>()
 }
 
@@ -840,8 +873,8 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
         let path_specifier = effective_routing_rule.route_matcher.path.clone().and_then(|matcher| {
             let value = matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
             matcher.r#type.map(|t| match t {
-                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::Exact => PathSpecifier::Path(value),
-                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
+                httproutes::HTTPRouteRulesMatchesPathType::Exact => PathSpecifier::Path(value),
+                httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
                     if let Some(val) = matcher.value {
                         if val == "/" {
                             PathSpecifier::Prefix(value)
@@ -852,10 +885,13 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
                         PathSpecifier::Prefix(value)
                     }
                 }
-                gateway_api::apis::standard::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: value, ..Default::default() }),
+                httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: value, ..Default::default() }),
             })
         });
 
+        let path_specifier = if path_specifier.is_none() { Some(PathSpecifier::Path("/".to_owned())) } else { path_specifier };
+
+        warn!("Headers to match {:?}", effective_routing_rule.route_matcher.headers);
         let headers = effective_routing_rule.route_matcher.headers.map_or(vec![], |headers| {
             headers
                 .iter()
@@ -872,6 +908,7 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
 
         let route_match = RouteMatch {
             path_specifier,
+            grpc: None,
             headers,
             ..Default::default()
         };
@@ -944,6 +981,111 @@ impl From<EffectiveRoutingRule> for EnvoyRoute {
 
         EnvoyRoute {
             name: format!("{}-route", effective_routing_rule.name),
+            r#match: Some(route_match),
+            request_headers_to_add,
+            request_headers_to_remove,
+            action: Some(action),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
+    fn from(effective_routing_rule: GRPCEffectiveRoutingRule) -> Self {
+        warn!("Headers to match {:?}", effective_routing_rule.route_matcher.headers);
+
+        let headers = effective_routing_rule.route_matcher.headers.map_or(vec![], |headers| {
+            headers
+                .iter()
+                .map(|header| HeaderMatcher {
+                    name: header.name.clone(),
+                    header_match_specifier: Some(HeaderMatchSpecifier::StringMatch(StringMatcher {
+                        match_pattern: Some(MatchPattern::Exact(header.value.clone())),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })
+                .collect()
+        });
+
+        let path_specifier = effective_routing_rule.route_matcher.method.clone().and_then(|matcher| {
+            let service = matcher.service.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
+
+            let path = if let Some(method) = matcher.method {
+                "/".to_owned() + &service + "/" + &method
+            } else {
+                "/".to_owned() + &service
+            };
+
+            matcher.r#type.map(|t| match t {
+                grpcroutes::GRPCRouteRulesMatchesMethodType::Exact => PathSpecifier::Path(path),
+                grpcroutes::GRPCRouteRulesMatchesMethodType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: path, ..Default::default() }),
+            })
+        });
+
+        let path_specifier = if path_specifier.is_none() { Some(PathSpecifier::Prefix("/".to_owned())) } else { path_specifier };
+
+        //let route_match = RouteMatch { headers, path_specifier, grpc: Some(GrpcRouteMatchOptions::default()), ..Default::default() };
+        let route_match = RouteMatch {
+            headers,
+            path_specifier,
+            grpc: None,
+            ..Default::default()
+        };
+
+        let request_filter_headers = effective_routing_rule.request_headers;
+
+        let request_headers_to_add = request_filter_headers
+            .add
+            .clone()
+            .into_iter()
+            .map(|h| HeaderValueOption {
+                header: Some(HeaderValue {
+                    key: h.name,
+                    value: h.value,
+                    ..Default::default()
+                }),
+                append_action: HeaderAppendAction::AppendIfExistsOrAdd.into(),
+                ..Default::default()
+            })
+            .chain(request_filter_headers.set.clone().into_iter().map(|h| HeaderValueOption {
+                header: Some(HeaderValue {
+                    key: h.name,
+                    value: h.value,
+                    ..Default::default()
+                }),
+                append_action: HeaderAppendAction::OverwriteIfExistsOrAdd.into(),
+                ..Default::default()
+            }))
+            .collect();
+
+        let request_headers_to_remove = request_filter_headers.remove;
+
+        let cluster_names: Vec<_> = effective_routing_rule
+            .backends
+            .iter()
+            .filter(|b| b.weight() > 0)
+            .map(|b| ClusterWeight {
+                name: b.cluster_name(),
+                weight: Some(UInt32Value {
+                    value: b.weight().try_into().expect("We do expect this to work for time being"),
+                }),
+                ..Default::default()
+            })
+            .collect();
+        let cluster_action = RouteAction {
+            cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::NotFound.into(),
+            cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
+                clusters: cluster_names,
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        let action: Action = Action::Route(cluster_action);
+
+        EnvoyRoute {
+            name: format!("{}-grpc-route", effective_routing_rule.name),
             r#match: Some(route_match),
             request_headers_to_add,
             request_headers_to_remove,

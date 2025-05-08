@@ -20,14 +20,12 @@ use super::{
     ControllerError, RECONCILE_ERROR_WAIT,
 };
 use crate::{
-    common::{
-        gateway_api::gatewayclasses::{GatewayClass, GatewayClassStatus},
-        ResourceKey,
-    },
+    common::ResourceKey,
     controllers::{handlers::ResourceHandler, RECONCILE_LONG_WAIT},
     services::patchers::{DeleteContext, Operation, PatchContext},
     state::State,
 };
+use gateway_api::gatewayclasses::{GatewayClass, GatewayClassStatus};
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
 struct Context {

@@ -6,26 +6,24 @@
 // The full text of the Apache license is available in the LICENSE file at
 // the root of the repo.
 
-
-
-
 package conformance
 
 import (
 	"flag"
+	"kubvernor_conformance_test/settings"
 	"os"
 	"testing"
-	"kubvernor_conformance_test/settings"
+
+	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/util/sets"
-	conformancev1 "sigs.k8s.io/gateway-api/conformance/apis/v1"
-	"sigs.k8s.io/gateway-api/conformance"
-	"sigs.k8s.io/gateway-api/conformance/tests"
-	"sigs.k8s.io/gateway-api/conformance/utils/suite"
-	"sigs.k8s.io/gateway-api/conformance/utils/flags"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/gateway-api/conformance"
+	conformancev1 "sigs.k8s.io/gateway-api/conformance/apis/v1"
+	"sigs.k8s.io/gateway-api/conformance/tests"
+	"sigs.k8s.io/gateway-api/conformance/utils/flags"
+	"sigs.k8s.io/gateway-api/conformance/utils/suite"
 	"sigs.k8s.io/yaml"
-	"github.com/stretchr/testify/require"
 )
 
 func TestKubvernorGatewayAPIConformanceExperimental(t *testing.T) {
@@ -36,14 +34,14 @@ func TestKubvernorGatewayAPIConformanceExperimental(t *testing.T) {
 	opts.SkipTests = settings.KubvernorGatewaySuite.SkipTests
 	// opts.SupportedFeatures = settings.KubvernorGatewaySuite.SupportedFeatures
 	// opts.ExemptFeatures = settings.KubvernorGatewaySuite.ExemptFeatures
-		
+
 	opts.GatewayClassName = "kubvernor-gateway"
 	opts.CleanupBaseResources = false
-	
+
 	opts.ConformanceProfiles = sets.New(
 		suite.GatewayHTTPConformanceProfileName,
 		//suite.GatewayTLSConformanceProfileName,
-		//suite.GatewayGRPCConformanceProfileName,
+		suite.GatewayGRPCConformanceProfileName,
 	)
 
 	t.Logf("Running experimental conformance tests with %s GatewayClass\n cleanup: %t\n debug: %t\n enable all features: %t \n conformance profiles: [%v]",
@@ -83,6 +81,3 @@ func experimentalConformanceReport(logf func(string, ...any), report conformance
 
 	return nil
 }
-
-
-

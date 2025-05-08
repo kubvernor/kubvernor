@@ -14,28 +14,13 @@ use std::{
 
 pub use gateway::{ChangedContext, Gateway};
 
-cfg_if::cfg_if! {
-    if #[cfg(feature="standard")] {
-        pub use gateway_api::{
-            apis::standard as gateway_api,
-            gatewayclasses::GatewayClass,
-            gateways::{Gateway as KubeGateway, GatewayListeners},
-        };
-    } else if #[cfg(feature = "experimental")] {
-        pub use gateway_api::{
-            apis::experimental as gateway_api,
-            gatewayclasses::GatewayClass,
-            gateways::{Gateway as KubeGateway, GatewayListeners},
-        };
-    } else {
+pub use gateway_api::gateways::Gateway as KubeGateway;
 
-    }
-}
-
+use gateway_api::{gatewayclasses::GatewayClass, gateways::GatewayListeners};
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};
 pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE};
-pub use route::{EffectiveRoutingRule, HttpHeader, NotResolvedReason, ResolutionStatus, Route, RouteStatus};
+pub use route::{EffectiveRoutingRule, GRPCEffectiveRoutingRule, HttpHeader, NotResolvedReason, ResolutionStatus, Route, RouteParentRefs, RouteStatus, RouteType};
 use tokio::sync::{mpsc, oneshot};
 use tracing::Span;
 use typed_builder::TypedBuilder;
@@ -210,18 +195,9 @@ pub enum BackendGatewayEvent {
 impl Display for BackendGatewayEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BackendGatewayEvent::Changed(ctx) => write!(
-                f,
-                "GatewayEvent::GatewayChanged
-                {ctx}"
-            ),
+            BackendGatewayEvent::Changed(ctx) => write!(f, "GatewayEvent::GatewayChanged {ctx}"),
             BackendGatewayEvent::Deleted(ctx) => {
-                write!(
-                    f,
-                    "GatewayEvent::GatewayDeleted
-                gateway {:?}",
-                    ctx.gateway
-                )
+                write!(f, "GatewayEvent::GatewayDeleted gateway {:?}", ctx.gateway)
             }
         }
     }

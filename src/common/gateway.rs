@@ -1,5 +1,4 @@
 use std::{
-    cmp,
     collections::{btree_map, BTreeMap, BTreeSet},
     fmt::Display,
 };
@@ -9,7 +8,7 @@ use tracing::Span;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-use super::{EffectiveRoutingRule, GatewayAddress, Listener, ResourceKey, Route, VerifiyItems};
+use super::{GatewayAddress, Listener, ResourceKey, Route, VerifiyItems};
 use crate::common::KubeGateway;
 
 #[derive(Clone, Debug)]
@@ -83,13 +82,13 @@ impl Gateway {
         (resolved_routes, unresolved_routes)
     }
 
-    pub fn effective_matching_rules(&self) -> Vec<&EffectiveRoutingRule> {
-        let (resolved_routes, unresolved) = self.routes();
-        let mut matching_rules: Vec<_> = resolved_routes.iter().chain(unresolved.iter()).flat_map(|r| r.effective_routing_rules()).collect();
-        matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
-        //matching_rules.reverse();
-        matching_rules
-    }
+    // pub fn effective_matching_rules(&self) -> Vec<&EffectiveRoutingRule> {
+    //     let (resolved_routes, unresolved) = self.routes();
+    //     let mut matching_rules: Vec<_> = resolved_routes.iter().chain(unresolved.iter()).flat_map(|r| r.effective_routing_rules()).collect();
+    //     matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
+    //     //matching_rules.reverse();
+    //     matching_rules
+    // }
 
     pub fn orphaned_routes_mut(&mut self) -> &mut BTreeSet<Route> {
         &mut self.orphaned_routes

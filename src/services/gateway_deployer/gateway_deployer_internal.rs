@@ -1,5 +1,16 @@
 use std::sync::Arc;
 
+use crate::{
+    common::{self, BackendGatewayEvent, ChangedContext, KubeGateway, ListenerCondition, ResolvedRefs, ResourceKey},
+    controllers::ControllerError,
+    services::patchers::Operation,
+    state::State,
+};
+use gateway_api::{
+    constants,
+    gatewayclasses::GatewayClass,
+    gateways::{GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
+};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
@@ -7,20 +18,6 @@ use k8s_openapi::{
 use tokio::sync::mpsc::{self, Sender};
 use tracing::{debug, error, info, Instrument, Span};
 use typed_builder::TypedBuilder;
-
-use crate::{
-    common::{
-        self,
-        gateway_api::{
-            gatewayclasses::GatewayClass,
-            gateways::{GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
-        },
-        BackendGatewayEvent, ChangedContext, KubeGateway, ListenerCondition, ResolvedRefs, ResourceKey,
-    },
-    controllers::ControllerError,
-    services::patchers::Operation,
-    state::State,
-};
 
 #[derive(TypedBuilder)]
 pub struct GatewayDeployerServiceInternal<'a> {
@@ -35,7 +32,7 @@ impl GatewayDeployerServiceInternal<'_> {
         let controller_name = &self.controller_name;
         if let Some(status) = &resource.status {
             if let Some(conditions) = &status.conditions {
-                if conditions.iter().any(|c| c.type_ == crate::common::gateway_api::constants::GatewayConditionType::Ready.to_string()) {
+                if conditions.iter().any(|c| c.type_ == constants::GatewayConditionType::Ready.to_string()) {
                     self.state.save_gateway(gateway_id.clone(), resource).expect("We expect the lock to work");
                     common::add_finalizer_to_gateway_class(&self.gateway_class_patcher_channel_sender, gateway_class_name, controller_name)
                         .instrument(Span::current().clone())

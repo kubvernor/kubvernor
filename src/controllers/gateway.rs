@@ -20,14 +20,11 @@ use super::{
     ControllerError, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{
-        self,
-        gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway},
-        BackendGatewayEvent, DeletedContext, ReferenceValidateRequest, RequestContext, ResourceKey,
-    },
+    common::{self, BackendGatewayEvent, DeletedContext, ReferenceValidateRequest, RequestContext, ResourceKey},
     services::patchers::{DeleteContext, Operation},
     state::State,
 };
+use gateway_api::{constants, gatewayclasses::GatewayClass, gateways::Gateway};
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
@@ -278,7 +275,7 @@ impl GatewayResourceHandler<Gateway> {
         let gateway_class_name = &self.gateway_class_name;
         if let Some(status) = &resource.status {
             if let Some(conditions) = &status.conditions {
-                if conditions.iter().any(|c| c.type_ == crate::common::gateway_api::constants::GatewayConditionType::Ready.to_string()) {
+                if conditions.iter().any(|c| c.type_ == constants::GatewayConditionType::Ready.to_string()) {
                     let () = state.save_gateway(gateway_id.clone(), resource).expect("We expect the lock to work");
                     common::add_finalizer_to_gateway_class(&self.gateway_class_patcher, gateway_class_name, controller_name)
                         .instrument(Span::current().clone())
@@ -294,10 +291,10 @@ impl GatewayResourceHandler<Gateway> {
                     }
 
                     return Ok(Action::requeue(RECONCILE_LONG_WAIT));
-                } else if conditions.iter().any(|c| {
-                    c.type_ == crate::common::gateway_api::constants::GatewayConditionType::Programmed.to_string()
-                        && c.status == crate::common::gateway_api::constants::GatewayConditionReason::Pending.to_string()
-                }) {
+                } else if conditions
+                    .iter()
+                    .any(|c| c.type_ == constants::GatewayConditionType::Programmed.to_string() && c.status == constants::GatewayConditionReason::Pending.to_string())
+                {
                     return self.on_new_or_changed(gateway_id, resource, state).await;
                 }
             }
