@@ -227,9 +227,11 @@ impl<'a> EnvoyXDSGenerator<'a> {
             acc
         });
 
-        match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
-            (true, false) => Vec::from_iter(routes_hostnames),
-            (_, _) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
+        match (listener_hostname, routes_hostnames.is_empty()) {
+            (None, false) => Vec::from_iter(routes_hostnames),            
+            (None, true) => vec!["*".to_owned()],
+            (Some(hostname), _) if hostname == "*" => vec!["*".to_owned()],
+            (Some(hostname), _) => vec![format!("{hostname}:*")]            
         }
     }
 

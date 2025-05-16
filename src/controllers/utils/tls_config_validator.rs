@@ -60,7 +60,7 @@ impl<'a> ListenerTlsConfigValidator<'a> {
                                                 debug!("{log_context} Key and cer certificate are invalid {e_cert}{e_key}");
                                                 _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
                                             }
-                                        };
+                                        }
                                     }
                                     _ => {
                                         _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));

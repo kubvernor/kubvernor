@@ -41,7 +41,7 @@ pub struct GatewayDeployer<'a> {
     pub http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
     pub controller_name: &'a str,
 }
-impl<'a> GatewayDeployer<'a> {
+impl GatewayDeployer<'_> {
     pub async fn deploy_gateway(&mut self) -> Result<Gateway> {
         let log_context = self.log_context;
         let mut updated_kube_gateway = (**self.kube_gateway).clone();
@@ -108,7 +108,7 @@ impl<'a> GatewayDeployer<'a> {
                         conditions.replace(ListenerCondition::NotProgrammed);
                     }
                 }
-            };
+            }
 
             if conditions.contains(&ListenerCondition::UnresolvedRouteRefs) {
                 if resolved_count == 0 {
@@ -116,7 +116,7 @@ impl<'a> GatewayDeployer<'a> {
                     conditions.replace(ListenerCondition::NotAccepted);
                 }
                 conditions.remove(&ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes));
-            };
+            }
 
             debug!("Adjusted  conditions {conditions:#?}");
         });

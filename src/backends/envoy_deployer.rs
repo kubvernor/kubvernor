@@ -17,7 +17,9 @@ use kube::{
     Api, Client,
 };
 use kube_core::ObjectMeta;
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
+//use lazy_static::lazy_static;
+
 
 use tera::Tera;
 use tokio::sync::mpsc::{self, Receiver};
@@ -29,17 +31,18 @@ use crate::{
     common::{ChangedContext, DeletedContext, Gateway, GatewayAddress, GatewayEvent, GatewayResponse, Listener, ResourceKey, TlsType},
 };
 
-lazy_static! {
-    pub static ref TEMPLATES: Tera = {
-        match Tera::new("templates/**.tera") {
-            Ok(t) => t,
-            Err(e) => {
-                warn!("Parsing error(s): {}", e);
-                ::std::process::exit(1);
-            }
+
+pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(||{
+    match Tera::new("templates/**.tera") {
+        Ok(t) => t,
+        Err(e) => {
+            warn!("Parsing error(s): {}", e);
+            ::std::process::exit(1);
         }
-    };
+    }
 }
+);
+
 
 pub struct EnvoyDeployerChannelHandler {
     controller_name: String,
@@ -90,7 +93,7 @@ impl EnvoyDeployerChannelHandler {
                                 }else{
                                     warn!("Problem {maybe_service:?}");
                                     let _res = response_sender.send(GatewayResponse::GatewayProcessingError);
-                                };
+                                }
                             }
 
                         }
@@ -217,7 +220,7 @@ impl EnvoyDeployerChannelHandler {
                     }
                 }
             }
-        };
+        }
         ips.into_iter().flatten().collect::<Vec<_>>()
     }
 

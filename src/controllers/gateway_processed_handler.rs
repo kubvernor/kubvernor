@@ -30,7 +30,7 @@ pub struct GatewayProcessedHandler<'a> {
     pub controller_name: String,
 }
 
-impl<'a> GatewayProcessedHandler<'a> {
+impl GatewayProcessedHandler<'_> {
     pub async fn deploy_gateway(mut self) -> Result<Gateway> {
         self.update_gateway_resource();
         self.update_routes().await;
