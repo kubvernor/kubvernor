@@ -59,12 +59,13 @@ impl ReferenceValidatorService {
 impl ReferenceResolverHandler {
     async fn handle(&self, resolve_event: ReferenceValidateRequest) {
         match resolve_event {
-            ReferenceValidateRequest::AddGateway(RequestContext {
-                gateway,
-                kube_gateway,
-                gateway_class_name,
-                span,
-            }) => {
+            ReferenceValidateRequest::AddGateway(boxed) => {
+                let RequestContext {
+                    gateway,
+                    kube_gateway,
+                    gateway_class_name,
+                    span,
+                } = *boxed;
                 let span = span!(parent: &span, Level::INFO, "ReferenceResolverService", action = "AddGateway", id = %gateway.key());
                 let _entered = span.enter();
                 let key = gateway.key().clone();

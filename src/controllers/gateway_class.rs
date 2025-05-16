@@ -96,7 +96,7 @@ impl GatewayClassController {
         if *configured_controller_name != *controller_name {
             warn!("reconcile_gateway_class: Name don't match {configured_controller_name} {controller_name}");
             return Err(ControllerError::InvalidRecipent);
-        };
+        }
 
         let maybe_stored_gateway_class = ctx.state.get_gateway_class_by_id(&resource_key).expect("We expect the lock to work");
 

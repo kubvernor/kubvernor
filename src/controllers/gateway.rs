@@ -96,7 +96,7 @@ impl GatewayController {
                 .get_gateway_classes()
                 .expect("We expect the lock to work")
                 .into_iter()
-                .any(|gc| gc.metadata.name == Some(gateway_class_name.to_string()))
+                .any(|gc| gc.metadata.name == Some(gateway_class_name.clone()))
             {
                 warn!("reconcile_gateway: {controller_name} {name} Unknown gateway class name {gateway_class_name}");
                 return Err(ControllerError::UnknownGatewayClass(gateway_class_name.clone()));
@@ -225,13 +225,13 @@ impl GatewayResourceHandler<Gateway> {
         };
 
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = BackendGatewayEvent::Deleted(
+        let listener_event = BackendGatewayEvent::Deleted(Box::new(
             DeletedContext::builder()
                 .response_sender(response_sender)
                 .gateway(backend_gateway.clone())
                 .span(Span::current().clone())
                 .build(),
-        );
+        ));
 
         let _ = self
             .validate_references_channel_sender
@@ -257,14 +257,14 @@ impl GatewayResourceHandler<Gateway> {
 
         let _ = self
             .validate_references_channel_sender
-            .send(ReferenceValidateRequest::AddGateway(
+            .send(ReferenceValidateRequest::AddGateway(Box::new(
                 RequestContext::builder()
                     .gateway(backend_gateway)
                     .kube_gateway(kube_gateway)
                     .gateway_class_name(self.gateway_class_name.clone())
                     .span(Span::current())
                     .build(),
-            ))
+            )))
             .await;
 
         Ok(Action::requeue(RECONCILE_LONG_WAIT))

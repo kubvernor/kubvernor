@@ -497,7 +497,7 @@ impl RouteConfig {
                 routing_rules: _,
                 effective_routing_rules,
             }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
-        };
+        }
     }
 }
 

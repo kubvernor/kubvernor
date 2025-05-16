@@ -57,7 +57,6 @@ use kube::{
     Api, Client,
 };
 use kube_core::ObjectMeta;
-use lazy_static::lazy_static;
 use tera::Tera;
 use tokio::{
     sync::mpsc::{self, Receiver, Sender},
@@ -74,23 +73,21 @@ use super::{
 use crate::{
     backends::{self, common::ResourceGenerator, envoy_xds_backend::resources},
     common::{
-        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig, DeletedContext, EffectiveRoutingRule,
+        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig,  EffectiveRoutingRule,
         GRPCEffectiveRoutingRule, Gateway, GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType,
     },
     Error,
 };
 
-lazy_static! {
-    pub static ref TEMPLATES: Tera = {
-        match Tera::new("templates/**.tera") {
-            Ok(t) => t,
-            Err(e) => {
-                warn!("Parsing error(s): {}", e);
-                ::std::process::exit(1);
-            }
-        }
-    };
-}
+use std::sync::LazyLock;
+
+pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templates/**.tera") {
+    Ok(t) => t,
+    Err(e) => {
+        warn!("Parsing error(s): {}", e);
+        ::std::process::exit(1);
+    }
+});
 
 #[derive(TypedBuilder)]
 pub struct EnvoyDeployerChannelHandlerService {
@@ -131,14 +128,17 @@ impl EnvoyDeployerChannelHandlerService {
                                         let _ = stream_resource_sender.send(ServerAction::UpdateClusters{gateway_id: gateway.key().clone(), resources: clusters, ack_version: ack_version.cluster()}).await;
                                         let _ = stream_resource_sender.send(ServerAction::UpdateListeners{gateway_id: gateway.key().clone(), resources: listeners, ack_version: ack_version.listener()}).await;
 
-                                        self.update_address_with_polling(&service, ctx, &span).await;
+                                        self.update_address_with_polling(&service, *ctx, &span).await;
                                     }else{
                                         warn!("Problem {maybe_service:?}");
-                                        let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(gateway.clone())).await;
+                                        let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                                     }
                                 }
 
-                                BackendGatewayEvent::Deleted(DeletedContext{ response_sender, gateway, span }) => {
+                                BackendGatewayEvent::Deleted(boxed) => {
+                                    let span = boxed.span;
+                                    let response_sender = boxed.response_sender;
+                                    let gateway  = boxed.gateway;                                    
                                     let _ = ack_versions.remove(gateway.key());
                                     let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="GatewayDeleted", id = %gateway.key());
                                     let _entered = span.enter();
@@ -234,8 +234,8 @@ impl EnvoyDeployerChannelHandlerService {
             let _res = self
                 .backend_response_channel_sender
                 .send(BackendGatewayResponse::ProcessedWithContext {
-                    gateway: gateway.clone(),
-                    kube_gateway,
+                    gateway: Box::new(gateway.clone()),
+                    kube_gateway: Box::new(kube_gateway),
                     span,
                     gateway_class_name,
                 })
@@ -264,8 +264,8 @@ impl EnvoyDeployerChannelHandlerService {
                             if Self::update_addresses(&mut gateway, &service) {
                                 let _res = backend_response_channel_sender
                                     .send(BackendGatewayResponse::ProcessedWithContext {
-                                        gateway: gateway.clone(),
-                                        kube_gateway: kube_gateway.clone(),
+                                        gateway: Box::new(gateway.clone()),
+                                        kube_gateway: Box::new(kube_gateway.clone()),
                                         span: span.clone(),
                                         gateway_class_name: gateway_class_name.clone(),
                                     })
@@ -274,7 +274,7 @@ impl EnvoyDeployerChannelHandlerService {
                             }
                         } else {
                             warn!("Problem {maybe_service:?}");
-                            let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(gateway.clone())).await;
+                            let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                         }
                     }
                     debug!("Task completed for gateway {} service {}", gateway.key(), resource_key);
@@ -294,7 +294,7 @@ impl EnvoyDeployerChannelHandlerService {
                     }
                 }
             }
-        };
+        }
         let ips = ips.into_iter().flatten().collect::<Vec<_>>();
         if ips.is_empty() {
             None
@@ -817,9 +817,10 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
                     r.backends()
                         .iter()
                         .filter(|b| b.weight() > 0)
-                        .filter_map(|b| match b {
-                            Backend::Resolved(backend_service_config) => Some(backend_service_config),
-                            _ => {
+                        .filter_map(|b| {
+                            if let Backend::Resolved(backend_service_config) = b {
+                                Some(backend_service_config)
+                            } else {
                                 warn!("Filtering out backend not resolved {:?}", b);
                                 None
                             }

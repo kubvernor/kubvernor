@@ -47,7 +47,7 @@ impl GatewayDeployerServiceInternal<'_> {
                         let () = common::add_finalizer(&self.gateway_patcher_channel_sender, gateway_id, controller_name)
                             .instrument(Span::current().clone())
                             .await;
-                    };
+                    }
                 }
             }
         }
@@ -74,14 +74,14 @@ impl GatewayDeployer {
         Self::resolve_listeners_statuses(&backend_gateway, &mut updated_kube_gateway);
         info!("Effective gateway {}-{} {:#?}", backend_gateway.name(), backend_gateway.namespace(), backend_gateway);
 
-        let listener_event = BackendGatewayEvent::Changed(
+        let listener_event = BackendGatewayEvent::Changed(Box::new(
             ChangedContext::builder()
                 .kube_gateway(updated_kube_gateway.clone())
                 .gateway(backend_gateway)
                 .gateway_class_name(self.gateway_class_name)
                 .span(Span::current().clone())
                 .build(),
-        );
+        ));
         let _ = self.sender.send(listener_event).await;
         Ok(())
     }
@@ -116,7 +116,7 @@ impl GatewayDeployer {
                         conditions.replace(ListenerCondition::NotProgrammed);
                     }
                 }
-            };
+            }
 
             if conditions.contains(&ListenerCondition::UnresolvedRouteRefs) {
                 if resolved_count == 0 {
@@ -124,7 +124,7 @@ impl GatewayDeployer {
                     conditions.replace(ListenerCondition::NotAccepted);
                 }
                 conditions.remove(&ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes));
-            };
+            }
 
             debug!("Adjusted  conditions {conditions:#?}");
         });

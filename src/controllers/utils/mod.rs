@@ -180,8 +180,8 @@ pub async fn resolve_namespaces(client: Client) -> BTreeMap<String, BTreeMap<Str
                 if let Some(namesapce_name) = labels.get("kubernetes.io/metadata.name") {
                     namespace_map.insert(namesapce_name.clone(), labels);
                 }
-            };
+            }
         }
-    };
+    }
     namespace_map
 }

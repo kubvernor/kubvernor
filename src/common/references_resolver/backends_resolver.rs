@@ -30,7 +30,7 @@ impl BackendReferenceResolver {
                 for backend in &route.backends() {
                     if let Backend::Maybe(backend_service_config) = backend {
                         backend_reference_keys.insert(backend_service_config.resource_key.clone());
-                    };
+                    }
                 }
             }
             backend_reference_keys
@@ -62,7 +62,7 @@ impl BackendReferenceResolver {
                 for backend in &route.backends() {
                     if let Backend::Maybe(backend_service_config) = backend {
                         backend_reference_keys.insert(backend_service_config.resource_key.clone());
-                    };
+                    }
                 }
             }
             backend_reference_keys

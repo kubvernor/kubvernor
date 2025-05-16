@@ -17,7 +17,6 @@ use kube::{
     Api, Client,
 };
 use kube_core::ObjectMeta;
-use lazy_static::lazy_static;
 use tera::Tera;
 use tokio::{
     sync::mpsc::{Receiver, Sender},
@@ -28,19 +27,16 @@ use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use super::xds_generator::{self, RdsData};
-use crate::common::{BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, DeletedContext, Gateway, GatewayAddress, Listener, ResourceKey, TlsType};
+use crate::common::{BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, Gateway, GatewayAddress, Listener, ResourceKey, TlsType};
+use std::sync::LazyLock;
 
-lazy_static! {
-    pub static ref TEMPLATES: Tera = {
-        match Tera::new("templates/**.tera") {
-            Ok(t) => t,
-            Err(e) => {
-                warn!("Parsing error(s): {}", e);
-                ::std::process::exit(1);
-            }
-        }
-    };
-}
+pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templates/**.tera") {
+    Ok(t) => t,
+    Err(e) => {
+        warn!("Parsing error(s): {}", e);
+        ::std::process::exit(1);
+    }
+});
 
 #[derive(TypedBuilder)]
 pub struct EnvoyDeployerChannelHandlerService {
@@ -64,14 +60,17 @@ impl EnvoyDeployerChannelHandlerService {
                                 let _entered = span.enter();
                                 let maybe_service = self.deploy_envoy(gateway).instrument(span.clone()).await;
                                 if let Ok(service) = maybe_service{
-                                    self.update_address_with_polling(&service, ctx, &span).await;
+                                    self.update_address_with_polling(&service, *ctx, &span).await;
                                 }else{
                                     warn!("Problem {maybe_service:?}");
-                                    let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(gateway.clone())).await;
+                                    let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                                 }
                             }
 
-                            BackendGatewayEvent::Deleted(DeletedContext{ response_sender, gateway, span }) => {
+                            BackendGatewayEvent::Deleted(boxed) => {
+                                let span = boxed.span;
+                                let response_sender = boxed.response_sender;
+                                let gateway  = boxed.gateway;
                                 let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="GatewayDeleted", id = %gateway.key());
                                 let _entered = span.enter();
                                 self.delete_envoy(&gateway).instrument(span.clone()).await;
@@ -204,7 +203,7 @@ impl EnvoyDeployerChannelHandlerService {
                     }
                 }
             }
-        };
+        }
         let ips = ips.into_iter().flatten().collect::<Vec<_>>();
         if ips.is_empty() {
             None
@@ -414,8 +413,8 @@ impl EnvoyDeployerChannelHandlerService {
             let _res = self
                 .backend_response_channel_sender
                 .send(BackendGatewayResponse::ProcessedWithContext {
-                    gateway: gateway.clone(),
-                    kube_gateway,
+                    gateway: Box::new(gateway.clone()),
+                    kube_gateway: Box::new(kube_gateway),
                     span,
                     gateway_class_name,
                 })
@@ -444,8 +443,8 @@ impl EnvoyDeployerChannelHandlerService {
                             if Self::update_addresses(&mut gateway, &service) {
                                 let _res = backend_response_channel_sender
                                     .send(BackendGatewayResponse::ProcessedWithContext {
-                                        gateway: gateway.clone(),
-                                        kube_gateway: kube_gateway.clone(),
+                                        gateway: Box::new(gateway.clone()),
+                                        kube_gateway: Box::new(kube_gateway.clone()),
                                         span: span.clone(),
                                         gateway_class_name: gateway_class_name.clone(),
                                     })
@@ -454,7 +453,7 @@ impl EnvoyDeployerChannelHandlerService {
                             }
                         } else {
                             warn!("Problem {maybe_service:?}");
-                            let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(gateway.clone())).await;
+                            let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                         }
                     }
                     debug!("Task completed for gateway {} service {}", gateway.key(), resource_key);

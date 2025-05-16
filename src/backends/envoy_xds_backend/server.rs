@@ -251,7 +251,7 @@ impl AggregateServerService {
 
                                 };
 
-                                
+
 
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
                                 info!("Sending listener discovery response {gateway_id} clients {}", clients.len());
@@ -375,7 +375,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                                         ..Default::default()
                                     };
                                     let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                };
+                                }
                             }
                         }
                         Ok(TypeUrl::Listener) => {
@@ -415,7 +415,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                                         ..Default::default()
                                     };
                                     let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                };
+                                }
                             }
                         }
                         _ => {
