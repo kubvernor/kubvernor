@@ -6,8 +6,7 @@ use tracing::{debug, info, warn};
 
 use super::envoy_deployer::{create_certificate_name, create_key_name, create_secret_name, TEMPLATES};
 use crate::{
-    common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, RouteType, TlsType, DEFAULT_ROUTE_HOSTNAME},
-    controllers::HostnameMatchFilter,
+    backends::common::calculate_hostnames_common, common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, RouteType, TlsType, DEFAULT_ROUTE_HOSTNAME}, controllers::HostnameMatchFilter
 };
 #[derive(Debug)]
 pub struct RdsData {
@@ -210,27 +209,12 @@ impl<'a> EnvoyXDSGenerator<'a> {
     }
 
     fn calculate_potential_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
-        let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {
-            acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
-            acc
-        });
-
-        match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
-            (true, false) => Vec::from_iter(routes_hostnames),
-            (..) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![hostname]),
-        }
+        calculate_hostnames_common(routes, listener_hostname, | h| {vec![h]})
+        
     }
 
     fn calculate_effective_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
-        let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {
-            acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
-            acc
-        });
-
-        match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
-            (true, false) => Vec::from_iter(routes_hostnames),
-            (..) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
-        }
+        calculate_hostnames_common(routes, listener_hostname, | h| {vec![format!("{h}:*"), h]})        
     }
 
     #[allow(clippy::too_many_lines)]
