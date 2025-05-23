@@ -23,6 +23,6 @@ jobs:
     - uses: actions/upload-artifact@v4
       with:
         name: kubvernor
-        path: $GITHUB_WORKSPACE/target/release/kubvernor
+        path: ${{ github.workspace }}/target/release/kubvernor
 #    - name: Run tests
 #      run: cargo test --verbose
