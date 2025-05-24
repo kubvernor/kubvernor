@@ -30,7 +30,7 @@ jobs:
         if: github.ref_type == 'tag'
         with:
           prerelease: true
-          draft: true
+          draft: false
           files: |
             ${{ github.workspace }}/releases/0.1.0
             ${{ github.workspace }}/target/release/kubvernor
