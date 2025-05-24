@@ -3,6 +3,7 @@ pub mod gateway_processed_handler;
 
 use std::sync::Arc;
 
+use gateway_api::{gatewayclasses::GatewayClass, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
 use gateway_deployer_internal::{GatewayDeployer, GatewayDeployerServiceInternal};
 pub(crate) use gateway_processed_handler::GatewayProcessedHandler;
 use tokio::sync::oneshot;
@@ -15,7 +16,6 @@ use crate::{
     state::State,
     Result,
 };
-use gateway_api::{gatewayclasses::GatewayClass, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
 
 #[derive(TypedBuilder)]
 pub struct GatewayDeployerService {

@@ -1,11 +1,5 @@
 use std::{cmp, net::IpAddr};
 
-use kube::ResourceExt;
-use thiserror::Error;
-use tracing::debug;
-
-use super::{Backend, BackendServiceConfig, ResourceKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME};
-use crate::controllers::ControllerError;
 use gateway_api::{
     grpcroutes::{
         GRPCRoute, GRPCRouteParentRefs, GRPCRouteRules, GRPCRouteRulesFilters, GRPCRouteRulesFiltersRequestHeaderModifierAdd, GRPCRouteRulesFiltersRequestHeaderModifierSet, GRPCRouteRulesFiltersType,
@@ -16,6 +10,12 @@ use gateway_api::{
         HTTPRouteRulesFiltersRequestRedirect, HTTPRouteRulesFiltersType, HTTPRouteRulesMatches, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType,
     },
 };
+use kube::ResourceExt;
+use thiserror::Error;
+use tracing::debug;
+
+use super::{Backend, BackendServiceConfig, ResourceKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME};
+use crate::controllers::ControllerError;
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum RouteStatus {

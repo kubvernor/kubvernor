@@ -32,6 +32,6 @@ go test -v -count=1 -timeout=3h ./conformance --debug -run TestKubvernorGatewayA
 ```
 
 ## Conformance report
-[1.2.1](./conformance/kubernor-conformance-output-1.2.1.yaml)  
-[1.2.0](./conformance/kubernor-conformance-output-1.2.0.yaml)
+[1.2.1](./conformance/kubvernor-conformance-output-1.2.1.yaml)  
+[1.2.0](./conformance/kubvernor-conformance-output-1.2.0.yaml)
 

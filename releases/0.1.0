@@ -1,0 +1,4 @@
+Kubvernor is a higlhy advanced proof of concept and definitely not ready for the commercial use.
+In this release:
+* support for standard GATEWAY-HTTP conformance profile
+* support for standard GATEWAY-GRPC conformance profile

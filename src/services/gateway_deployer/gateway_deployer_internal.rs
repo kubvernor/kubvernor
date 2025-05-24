@@ -1,11 +1,5 @@
 use std::sync::Arc;
 
-use crate::{
-    common::{self, BackendGatewayEvent, ChangedContext, KubeGateway, ListenerCondition, ResolvedRefs, ResourceKey},
-    controllers::ControllerError,
-    services::patchers::Operation,
-    state::State,
-};
 use gateway_api::{
     constants,
     gatewayclasses::GatewayClass,
@@ -18,6 +12,13 @@ use k8s_openapi::{
 use tokio::sync::mpsc::{self, Sender};
 use tracing::{debug, error, info, Instrument, Span};
 use typed_builder::TypedBuilder;
+
+use crate::{
+    common::{self, BackendGatewayEvent, ChangedContext, KubeGateway, ListenerCondition, ResolvedRefs, ResourceKey},
+    controllers::ControllerError,
+    services::patchers::Operation,
+    state::State,
+};
 
 #[derive(TypedBuilder)]
 pub struct GatewayDeployerServiceInternal<'a> {

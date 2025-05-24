@@ -13,9 +13,7 @@ use std::{
 };
 
 pub use gateway::{ChangedContext, Gateway};
-
 pub use gateway_api::gateways::Gateway as KubeGateway;
-
 use gateway_api::{gatewayclasses::GatewayClass, gateways::GatewayListeners};
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};

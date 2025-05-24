@@ -1,21 +1,18 @@
-use gateway_api::referencegrants::ReferenceGrant;
-
 use std::{collections::BTreeSet, sync::Arc};
+
+use futures::{future::BoxFuture, FutureExt};
+use gateway_api::referencegrants::{ReferenceGrant, ReferenceGrantFrom, ReferenceGrantTo};
+use kube::{api::ListParams, Api, Client, ResourceExt};
+use kube_core::ObjectList;
+use tokio::time;
+use tracing::{info, span, warn, Level};
+use typed_builder::TypedBuilder;
 
 use crate::{
     common::{resource_key::DEFAULT_GROUP_NAME, Backend, Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey, TlsType},
     controllers::find_linked_routes,
     state::State,
 };
-use futures::future::BoxFuture;
-use futures::FutureExt;
-
-use gateway_api::referencegrants::{ReferenceGrantFrom, ReferenceGrantTo};
-use kube::{api::ListParams, Api, Client, ResourceExt};
-use kube_core::ObjectList;
-use tokio::time;
-use tracing::{info, span, warn, Level};
-use typed_builder::TypedBuilder;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, TypedBuilder)]
 pub struct ReferenceGrantRef {

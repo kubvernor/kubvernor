@@ -6,7 +6,9 @@ use tracing::{debug, info, warn};
 
 use super::envoy_deployer::{create_certificate_name, create_key_name, create_secret_name, TEMPLATES};
 use crate::{
-    backends::common::calculate_hostnames_common, common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, RouteType, TlsType, DEFAULT_ROUTE_HOSTNAME}, controllers::HostnameMatchFilter
+    backends::common::calculate_hostnames_common,
+    common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, RouteType, TlsType},
+    controllers::HostnameMatchFilter,
 };
 #[derive(Debug)]
 pub struct RdsData {
@@ -209,12 +211,11 @@ impl<'a> EnvoyXDSGenerator<'a> {
     }
 
     fn calculate_potential_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
-        calculate_hostnames_common(routes, listener_hostname, | h| {vec![h]})
-        
+        calculate_hostnames_common(routes, listener_hostname, |h| vec![h])
     }
 
     fn calculate_effective_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
-        calculate_hostnames_common(routes, listener_hostname, | h| {vec![format!("{h}:*"), h]})        
+        calculate_hostnames_common(routes, listener_hostname, |h| vec![format!("{h}:*"), h])
     }
 
     #[allow(clippy::too_many_lines)]

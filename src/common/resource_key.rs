@@ -1,17 +1,16 @@
 use std::fmt::Display;
 
-use k8s_openapi::api::core::v1::Service;
-use kube::{Resource, ResourceExt};
-
-use crate::common::create_id;
 use gateway_api::{
     gatewayclasses::GatewayClass,
     gateways,
     grpcroutes::{GRPCRoute, GRPCRouteParentRefs, GRPCRouteRulesBackendRefs},
     httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRulesBackendRefs},
 };
+use k8s_openapi::api::core::v1::Service;
+use kube::{Resource, ResourceExt};
 
 use super::RouteParentRefs;
+use crate::common::create_id;
 
 pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";
 pub const DEFAULT_NAMESPACE_NAME: &str = "default";

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
+use gateway_api::{constants, gatewayclasses::GatewayClass, gateways::Gateway};
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource,
@@ -24,7 +25,6 @@ use crate::{
     services::patchers::{DeleteContext, Operation},
     state::State,
 };
-use gateway_api::{constants, gatewayclasses::GatewayClass, gateways::Gateway};
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 

@@ -1,14 +1,13 @@
 use std::{collections::BTreeSet, fmt::Display};
 
-use thiserror::Error;
-
-use super::{Certificate, NotResolvedReason, ResolutionStatus, ResolvedRefs, ResourceKey, Route};
-use crate::controllers::ControllerError;
-
 use gateway_api::{
     constants,
     gateways::{self, GatewayListeners},
 };
+use thiserror::Error;
+
+use super::{Certificate, NotResolvedReason, ResolutionStatus, ResolvedRefs, ResourceKey, Route};
+use crate::controllers::ControllerError;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Hash, Eq)]
 pub enum ProtocolType {

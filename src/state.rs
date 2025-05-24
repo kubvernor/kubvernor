@@ -1,9 +1,11 @@
-use crate::common::ResourceKey;
-use gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
 use std::{
     collections::{BTreeSet, HashMap},
     sync::{Arc, Mutex, MutexGuard},
 };
+
+use gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
+
+use crate::common::ResourceKey;
 
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]
 pub enum StorageError {

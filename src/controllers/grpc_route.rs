@@ -2,6 +2,10 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
+use gateway_api::{
+    gateways::Gateway,
+    grpcroutes::{self, GRPCRoute, GRPCRouteParentRefs, GRPCRouteStatus, GRPCRouteStatusParents, GRPCRouteStatusParentsParentRef},
+};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
@@ -20,15 +24,10 @@ use super::{
     utils::{ResourceCheckerArgs, ResourceState, RouteListenerMatcher},
     ControllerError, RECONCILE_LONG_WAIT,
 };
-
 use crate::{
     common::{self, Backend, ReferenceValidateRequest, RequestContext, ResourceKey, Route, RouteRefKey, VerifiyItems},
     services::patchers::{DeleteContext, FinalizerContext, Operation},
     state::State,
-};
-use gateway_api::{
-    gateways::Gateway,
-    grpcroutes::{self, GRPCRoute, GRPCRouteParentRefs, GRPCRouteStatus, GRPCRouteStatusParents, GRPCRouteStatusParentsParentRef},
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;

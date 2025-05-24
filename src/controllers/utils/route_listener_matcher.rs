@@ -1,14 +1,16 @@
 use std::{collections::BTreeMap, sync::Arc};
 
+use gateway_api::{
+    gateways::{self, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom},
+    grpcroutes::GRPCRouteParentRefs,
+    httproutes::HTTPRouteParentRefs,
+};
 use tracing::debug;
 
 use super::HostnameMatchFilter;
 use crate::{
     common::{NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteParentRefs, RouteRefKey, RouteToListenersMapping},
     state::State,
-};
-use gateway_api::{
-    gateways::{self, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom}, grpcroutes::GRPCRouteParentRefs, httproutes::HTTPRouteParentRefs
 };
 
 pub struct RouteListenerMatcher<'a> {
