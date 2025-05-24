@@ -1,9 +1,9 @@
+use gateway_api::gatewayclasses::GatewayClass;
 use kube::{Api, Client};
 use tokio::sync::mpsc;
 use typed_builder::TypedBuilder;
 
 use super::patcher::{Operation, Patcher};
-use gateway_api::gatewayclasses::GatewayClass;
 
 #[derive(TypedBuilder)]
 pub struct GatewayClassPatcherService {

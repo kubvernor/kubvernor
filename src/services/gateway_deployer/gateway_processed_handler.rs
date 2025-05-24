@@ -1,3 +1,9 @@
+use gateway_api::{
+    constants,
+    gateways::{Gateway, GatewayStatusAddresses},
+    grpcroutes::{GRPCRoute, GRPCRouteStatus, GRPCRouteStatusParents, GRPCRouteStatusParentsParentRef},
+    httproutes::{HTTPRoute, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
+};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
@@ -11,12 +17,6 @@ use crate::{
     controllers::ControllerError,
     services::patchers::{Operation, PatchContext},
     state::State,
-};
-use gateway_api::{
-    constants,
-    gateways::{Gateway, GatewayStatusAddresses},
-    grpcroutes::{GRPCRoute, GRPCRouteStatus, GRPCRouteStatusParents, GRPCRouteStatusParentsParentRef},
-    httproutes::{HTTPRoute, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;

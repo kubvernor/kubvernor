@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
+use gateway_api::gatewayclasses::{GatewayClass, GatewayClassStatus};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
@@ -25,7 +26,6 @@ use crate::{
     services::patchers::{DeleteContext, Operation, PatchContext},
     state::State,
 };
-use gateway_api::gatewayclasses::{GatewayClass, GatewayClassStatus};
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
 struct Context {

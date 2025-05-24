@@ -1,9 +1,11 @@
-use crate::common::ResourceKey;
-use gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
 use std::{
     collections::{BTreeSet, HashMap},
     sync::{Arc, Mutex, MutexGuard},
 };
+
+use gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
+
+use crate::common::ResourceKey;
 
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]
 pub enum StorageError {
@@ -158,7 +160,6 @@ impl State {
         let lock = self.http_routes.lock().map_err(|_| StorageError::LockingError)?;
         Ok(lock.get(id).cloned())
     }
-
 
     pub fn maybe_save_grpc_route(&self, id: ResourceKey, route: &Arc<GRPCRoute>) -> Result<(), StorageError> {
         let mut lock = self.grpc_routes.lock().map_err(|_| StorageError::LockingError)?;
