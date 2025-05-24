@@ -16,13 +16,24 @@ jobs:
     - run: |
         echo $GITHUB_WORKSPACE
     - uses: actions/checkout@v4
+    - name: Check format
+      run: cargo fmt      
     - name: Build
       run: cargo build --release
     - run: |
         ls $GITHUB_WORKSPACE/target/release/*
-    - uses: actions/upload-artifact@v4
-      with:
-        name: kubvernor
-        path: ${{ github.workspace }}/target/release/kubvernor
+    # - uses: actions/upload-artifact@v4
+    #   with:
+    #     name: kubvernor
+    #     path: ${{ github.workspace }}/target/release/kubvernor        
+    - name: Release
+        uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
+        with:
+          prerelease: true
+          draft: true
+          files: |
+            ${{ github.workspace }}/releases/0.1.0
+            ${{ github.workspace }}/target/release/kubvernor        
 #    - name: Run tests
 #      run: cargo test --verbose
