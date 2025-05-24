@@ -1,4 +1,7 @@
-use std::collections::{btree_map::Values, BTreeMap, BTreeSet, HashMap};
+use std::{
+    collections::{btree_map::Values, BTreeMap, BTreeSet, HashMap},
+    sync::LazyLock,
+};
 
 use envoy_api_rs::{
     envoy::{
@@ -73,13 +76,11 @@ use super::{
 use crate::{
     backends::{self, common::ResourceGenerator, envoy_xds_backend::resources},
     common::{
-        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig,  EffectiveRoutingRule,
-        GRPCEffectiveRoutingRule, Gateway, GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType,
+        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig, EffectiveRoutingRule, GRPCEffectiveRoutingRule, Gateway,
+        GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType,
     },
     Error,
 };
-
-use std::sync::LazyLock;
 
 pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templates/**.tera") {
     Ok(t) => t,
@@ -138,7 +139,7 @@ impl EnvoyDeployerChannelHandlerService {
                                 BackendGatewayEvent::Deleted(boxed) => {
                                     let span = boxed.span;
                                     let response_sender = boxed.response_sender;
-                                    let gateway  = boxed.gateway;                                    
+                                    let gateway  = boxed.gateway;
                                     let _ = ack_versions.remove(gateway.key());
                                     let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="GatewayDeleted", id = %gateway.key());
                                     let _entered = span.enter();
@@ -562,55 +563,6 @@ fn bootstrap_content(control_plane_config: &ControlPlaneConfig) -> Result<String
     tera_context.insert("control_plane_port", &control_plane_config.port);
 
     Ok(TEMPLATES.render("envoy-bootstrap-dynamic.yaml.tera", &tera_context)?)
-
-    //     r#"
-    // admin:
-    //   address:
-    //     socket_address:
-    //       address: 0.0.0.0
-    //       port_value: 9901
-
-    // dynamic_resources:
-    //   ads_config:
-    //     api_type: GRPC
-    //     grpc_services:
-    //       - envoy_grpc:
-    //           cluster_name: xds_cluster
-    //   cds_config:
-    //     ads: {}
-    //   lds_config:
-    //     ads: {}
-
-    // static_resources:
-    //   clusters:
-    //   - name: xds_cluster
-    //     connect_timeout: 5s
-    //     type: STATIC
-    //     lb_policy: ROUND_ROBIN
-    //     typed_extension_protocol_options:
-    //       envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
-    //         "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
-    //         explicit_http_config:
-    //           common_http_protocol_options:
-    //             idle_timeout: 30s
-    //             max_requests_per_connection: 2
-    //           http2_protocol_options:
-    //             # Configure an HTTP/2 keep-alive to detect connection issues and reconnect
-    //             # to the admin server if the connection is no longer responsive.
-    //             max_concurrent_streams: 1
-    //             connection_keepalive:
-    //               interval: 30s
-    //               timeout: 5s
-    //     load_assignment:
-    //       cluster_name: xds_cluster
-    //       endpoints:
-    //       - lb_endpoints:
-    //         - endpoint:
-    //             address:
-    //               socket_address:
-    //                 address: 192.168.1.10
-    //                 port_value: 50051
-    //     "#
 }
 
 fn config_map_names(gateway: &Gateway) -> (String, String) {

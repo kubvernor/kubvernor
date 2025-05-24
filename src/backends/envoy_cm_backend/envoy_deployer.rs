@@ -1,4 +1,7 @@
-use std::collections::{btree_map::Values, BTreeMap, BTreeSet};
+use std::{
+    collections::{btree_map::Values, BTreeMap, BTreeSet},
+    sync::LazyLock,
+};
 
 use futures::FutureExt;
 use itertools::Itertools;
@@ -28,7 +31,6 @@ use uuid::Uuid;
 
 use super::xds_generator::{self, RdsData};
 use crate::common::{BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, Gateway, GatewayAddress, Listener, ResourceKey, TlsType};
-use std::sync::LazyLock;
 
 pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templates/**.tera") {
     Ok(t) => t,
