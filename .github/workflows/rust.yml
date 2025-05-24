@@ -27,12 +27,12 @@ jobs:
         path: ${{ github.workspace }}/target/release/kubvernor        
     - name: Release
       uses: softprops/action-gh-release@v2
-        if: github.ref_type == 'tag'
-        with:
-          prerelease: true
-          draft: false
-          files: |
-            ${{ github.workspace }}/releases/0.1.0
-            ${{ github.workspace }}/target/release/kubvernor
+      if: github.ref_type == 'tag'
+      with:
+        prerelease: true
+        draft: false
+        files: |
+          ${{ github.workspace }}/releases/0.1.0
+          ${{ github.workspace }}/target/release/kubvernor
 #    - name: Run tests
 #      run: cargo test --verbose
