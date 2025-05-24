@@ -251,7 +251,7 @@ impl AggregateServerService {
 
                                 };
 
-                                
+
 
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
                                 info!("Sending listener discovery response {gateway_id} clients {}", clients.len());

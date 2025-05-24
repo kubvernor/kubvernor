@@ -34,7 +34,10 @@ cfg_if::cfg_if! {
 }
 
 use controllers::{
-    gateway::{self, GatewayController}, gateway_class::GatewayClassController, grpc_route::{self, GRPCRouteController}, http_route::{self, HttpRouteController}
+    gateway::{self, GatewayController},
+    gateway_class::GatewayClassController,
+    grpc_route::{self, GRPCRouteController},
+    http_route::{self, HttpRouteController},
 };
 use typed_builder::TypedBuilder;
 
@@ -101,7 +104,6 @@ pub async fn start(args: Args) -> Result<()> {
     let mut gateway_class_patcher_service = GatewayClassPatcherService::builder().client(client.clone()).receiver(gateway_class_patcher_channel_receiver).build();
     let mut http_route_patcher_service = HttpRoutePatcherService::builder().client(client.clone()).receiver(http_route_patcher_channel_receiver).build();
     let mut grpc_route_patcher_service = GRPCRoutePatcherService::builder().client(client.clone()).receiver(grpc_route_patcher_channel_receiver).build();
-    
 
     let control_plane_config = ControlPlaneConfig {
         host: args.envoy_control_plane_host.clone(),
@@ -210,7 +212,7 @@ pub async fn start(args: Args) -> Result<()> {
         gateway_class_controller_task.boxed(),
         gateway_controller_task.boxed(),
         http_route_controller_task.boxed(),
-        grpc_route_controller_task.boxed()
+        grpc_route_controller_task.boxed(),
     ])
     .await;
     info!("Kubvernor stopped");

@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
+use gateway_api::gateways::Gateway;
 use k8s_openapi::api::core::v1::Service;
 use kube::Client;
 use tracing::{debug, info, warn, Instrument, Span};
@@ -11,7 +12,6 @@ use crate::{
     controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };
-use gateway_api::gateways::Gateway;
 
 #[derive(TypedBuilder)]
 pub struct RouteResolver<'a> {

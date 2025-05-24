@@ -1,3 +1,4 @@
+use gateway_api::gateways::Gateway;
 use kube::Client;
 use tracing::{debug, info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
@@ -7,7 +8,6 @@ use crate::{
     controllers::{ListenerTlsConfigValidator, RoutesResolver},
     state::State,
 };
-use gateway_api::gateways::Gateway;
 
 #[derive(TypedBuilder)]
 pub struct ReferenceValidatorService {

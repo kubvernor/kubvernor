@@ -214,10 +214,13 @@ impl<'a> ResourceGenerator<'a> {
             acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
             acc
         });
+        let hostname = listener_hostname.clone();
 
-        match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
+        let effective_hostnames = match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
             (true, false) => Vec::from_iter(routes_hostnames),
-            (..) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![format!("{hostname}:*"), hostname]),
-        }
+            (..) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![hostname]),
+        };
+        debug!("Effective hostnames {effective_hostnames:?} for {routes:?} listener hostname {hostname:?}");
+        effective_hostnames
     }
 }
