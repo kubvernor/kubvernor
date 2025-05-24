@@ -26,7 +26,7 @@ jobs:
         name: kubvernor
         path: ${{ github.workspace }}/target/release/kubvernor        
     - name: Release
-        uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
         with:
           prerelease: true
