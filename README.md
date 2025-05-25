@@ -1,37 +1,46 @@
 # Kubvernor
 Generic Gateway API Manager for Kubernetes
 
-## Install Kubernetes cluster
-A handy way of starting a cluster with Kind is to use [create-cluster.sh](https://github.com/kubernetes-sigs/gateway-api/blob/main/hack/implementations/common/create-cluster.sh) script.
+>[!CAUTION]
+This project is still very unstable and not ready for use in production environments. 
 
-## Install CRDs
-```
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
-```
-
-## Running
-```
-export RUST_FILE_LOG=info,kubvernor=debug
-export RUST_LOG=info,kubvernor=info
-export RUST_TRACE_LOG=info,kubvernor=debug
-kubectl apply -f resources/gateway_class.yaml
-cargo run -- --controller-name "kubvernor.com/proxy-controller" --with-opentelemetry false --envoy-control-plane-hostname <ip or hostname which can be resolved from the pods, not 127.0.0.1 and not 0.0.0.0>>  --envoy-control-plane-port 50051
-```
+Kubvernor is a Rust implementation of Kubernetes Gateway APIs. The aim of the project is to be as generic as possible so Kubvernor could be used to manage/deploy different gateways (Envoy, Nginx, HAProxy, etc.)
 
 
+## Running 
 
-## Run conformance suite
-```
-cd conformance
-go test -v -count=1 -timeout=3h ./conformance --debug -run TestKubvernorGatewayAPIConformance
-```
+0. Install Rust, Docker and Kind
 
-```
-cd conformance
-go test -v -count=1 -timeout=3h ./conformance --debug -run TestKubvernorGatewayAPIConformanceExperimental --report-output="../kubernor-conformance-output.yaml" --organization=kubvernor --project=kubvernor --url=https://github.com/kubvernor --version=latest  --contact=nowakd@gmail.com
-```
+1. Clone the Kubvernor GitHub repository
+   ```bash
+   git clone https://github.com/kubvernor/kubvernor && cd kubvernor
+   ```
 
-## Conformance report
+2. Deploy your cluster
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://github.com/kubernetes-sigs/gateway-api/blob/main/hack/implementations/common/create-cluster.sh | sh
+
+   ```
+
+3. Install required CRDs
+    ```bash
+    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+    ```
+
+
+4. Compile and run Kubvernor
+    ```bash         
+   export CONTROL_PLANE_IP=<IP>
+   ./run_kubvernor.sh 
+   
+   ```
+5. Run conformance suite
+    ```bash
+    ./run_conformance_tests.sh
+    ```
+
+
+## Conformance reports
 [1.2.1](./conformance/kubvernor-conformance-output-1.2.1.yaml)  
 [1.2.0](./conformance/kubvernor-conformance-output-1.2.0.yaml)
 
