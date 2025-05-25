@@ -51,6 +51,7 @@ pub struct Args {
     control_plane_socket: SocketAddr,
 }
 
+#[allow(clippy::too_many_lines)]
 pub async fn start(args: Args) -> Result<()> {
     info!("Kubvernor started");
     let state = State::new();

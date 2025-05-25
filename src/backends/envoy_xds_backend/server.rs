@@ -375,7 +375,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                                         ..Default::default()
                                     };
                                     let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                };
+                                }
                             }
                         }
                         Ok(TypeUrl::Listener) => {
@@ -415,7 +415,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                                         ..Default::default()
                                     };
                                     let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                };
+                                }
                             }
                         }
                         _ => {

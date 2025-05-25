@@ -198,29 +198,42 @@ impl<'a> ResourceGenerator<'a> {
     }
 
     fn calculate_potential_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
-        let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {
-            acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
-            acc
-        });
-
-        match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
-            (true, false) => Vec::from_iter(routes_hostnames),
-            (..) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![hostname]),
-        }
+        calculate_hostnames_common(routes, listener_hostname, |h| vec![h])
     }
 
     fn calculate_effective_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
-        let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {
-            acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
-            acc
-        });
-        let hostname = listener_hostname.clone();
+        calculate_hostnames_common(routes, listener_hostname, |h| vec![format!("{h}:*"), h])
+    }
+}
 
-        let effective_hostnames = match (listener_hostname.is_none(), routes_hostnames.is_empty()) {
-            (true, false) => Vec::from_iter(routes_hostnames),
-            (..) => listener_hostname.map_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()], |hostname| vec![hostname]),
-        };
-        debug!("Effective hostnames {effective_hostnames:?} for {routes:?} listener hostname {hostname:?}");
-        effective_hostnames
+pub fn calculate_hostnames_common(routes: &[&Route], listener_hostname: Option<String>, create_hostnames: impl Fn(String) -> Vec<String>) -> Vec<String> {
+    let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {
+        acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
+        acc
+    });
+
+    match (listener_hostname, routes_hostnames.is_empty()) {
+        (None, false) => Vec::from_iter(routes_hostnames),
+        (Some(hostname), _) if !hostname.is_empty() && hostname != DEFAULT_ROUTE_HOSTNAME => create_hostnames(hostname),
+        (None, true) | (Some(_), _) => vec![DEFAULT_ROUTE_HOSTNAME.to_owned()],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_effective_hostnames() {
+        let routes = vec![];
+        let hostname = Some("*".to_owned());
+        let hostnames = ResourceGenerator::calculate_effective_hostnames(&routes, hostname);
+        assert_eq!(hostnames, vec!["*".to_owned()]);
+        let hostname = Some("host.blah".to_owned());
+        let hostnames: BTreeSet<String> = ResourceGenerator::calculate_effective_hostnames(&routes, hostname).into_iter().collect();
+        assert_eq!(hostnames, vec!["host.blah".to_owned(), "host.blah:*".to_owned()].into_iter().collect::<BTreeSet<_>>());
+        let hostname = Some("host.blah".to_owned());
+        let hostnames = calculate_hostnames_common(&routes, hostname, |h| vec![format!("{h}:*"), h]).into_iter().collect::<BTreeSet<_>>();
+        assert_eq!(hostnames, vec!["host.blah".to_owned(), "host.blah:*".to_owned()].into_iter().collect::<BTreeSet<_>>());
     }
 }

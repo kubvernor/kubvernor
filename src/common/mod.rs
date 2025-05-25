@@ -141,10 +141,10 @@ pub struct DeployedGatewayStatus {
 
 #[derive(Debug)]
 pub enum BackendGatewayResponse {
-    Processed(Gateway),
+    Processed(Box<Gateway>),
     ProcessedWithContext {
-        gateway: Gateway,
-        kube_gateway: KubeGateway,
+        gateway: Box<Gateway>,
+        kube_gateway: Box<KubeGateway>,
         span: Span,
         gateway_class_name: String,
     },
@@ -186,8 +186,8 @@ pub struct DeletedContext {
 
 #[derive(Debug)]
 pub enum BackendGatewayEvent {
-    Changed(ChangedContext),
-    Deleted(DeletedContext),
+    Changed(Box<ChangedContext>),
+    Deleted(Box<DeletedContext>),
 }
 
 impl Display for BackendGatewayEvent {
@@ -267,7 +267,7 @@ pub struct RequestContext {
 }
 
 pub enum ReferenceValidateRequest {
-    AddGateway(RequestContext),
+    AddGateway(Box<RequestContext>),
     AddRoute { references: BTreeSet<ResourceKey>, span: Span },
     UpdatedGateways { reference: ResourceKey, gateways: BTreeSet<ResourceKey> },
     DeleteRoute { references: BTreeSet<ResourceKey>, span: Span },

@@ -79,7 +79,7 @@ where
                     reference_lock.remove(reference_key);
                 }
                 debug!("Removed reference {reference_key} for Gateway {gateway_key}");
-            };
+            }
         }
     }
 

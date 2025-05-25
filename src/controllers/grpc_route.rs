@@ -215,7 +215,7 @@ impl GRPCRouteHandler<GRPCRoute> {
                     .get_gateway_classes()
                     .expect("We expect the lock to work")
                     .into_iter()
-                    .any(|gc| gc.metadata.name == Some(gateway_class_name.to_string()))
+                    .any(|gc| gc.metadata.name == Some(gateway_class_name.clone()))
                 {
                     warn!(
                         "reconcile_gateway: {} {:?} Unknown gateway class name {gateway_class_name}",
@@ -229,14 +229,14 @@ impl GRPCRouteHandler<GRPCRoute> {
             let kube_gateway = (*kube_gateway).clone();
             let _ = self
                 .validate_references_channel_sender
-                .send(ReferenceValidateRequest::AddGateway(
+                .send(ReferenceValidateRequest::AddGateway(Box::new(
                     RequestContext::builder()
                         .gateway(common::Gateway::try_from(&kube_gateway).expect("We expect the lock to work"))
                         .kube_gateway(kube_gateway)
                         .gateway_class_name(gateway_class_name)
                         .span(Span::current())
                         .build(),
-                ))
+                )))
                 .await;
         }
 
@@ -309,7 +309,7 @@ impl GRPCRouteHandler<GRPCRoute> {
 
     async fn add_finalizer(&self, resource: &Arc<GRPCRoute>) -> Result<Action> {
         let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
-            finalizers.iter().any(|f| *f == self.controller_name)
+            finalizers.contains(&self.controller_name)
         } else {
             false
         };
@@ -324,7 +324,7 @@ impl GRPCRouteHandler<GRPCRoute> {
                     span: Span::current().clone(),
                 }))
                 .await;
-        };
+        }
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 
@@ -334,7 +334,7 @@ impl GRPCRouteHandler<GRPCRoute> {
         for backend in &route.backends() {
             if let Backend::Maybe(backend_service_config) = backend {
                 backend_reference_keys.insert(backend_service_config.resource_key.clone());
-            };
+            }
         }
 
         backend_reference_keys

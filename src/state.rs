@@ -46,7 +46,7 @@ impl State {
         let mut lock = self.gateways.lock().map_err(|_| StorageError::LockingError)?;
         if lock.contains_key(&id) {
             lock.insert(id, Arc::clone(gateway));
-        };
+        }
         Ok(())
     }
 
@@ -88,7 +88,7 @@ impl State {
         let mut gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
         if let Some(routes) = gateways_with_routes.get_mut(gateway_id) {
             routes.retain(|key| key != route_id);
-        };
+        }
         Ok(())
     }
 
@@ -96,7 +96,7 @@ impl State {
         let mut gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
         if let Some(routes) = gateways_with_routes.get_mut(gateway_id) {
             routes.retain(|key| key != route_id);
-        };
+        }
         Ok(())
     }
 
@@ -142,7 +142,7 @@ impl State {
         let mut lock = self.http_routes.lock().map_err(|_| StorageError::LockingError)?;
         if lock.contains_key(&id) {
             lock.insert(id, Arc::clone(route));
-        };
+        }
         Ok(())
     }
     pub fn save_http_route(&self, id: ResourceKey, route: &Arc<HTTPRoute>) -> Result<(), StorageError> {
@@ -165,7 +165,7 @@ impl State {
         let mut lock = self.grpc_routes.lock().map_err(|_| StorageError::LockingError)?;
         if lock.contains_key(&id) {
             lock.insert(id, Arc::clone(route));
-        };
+        }
         Ok(())
     }
     pub fn save_grpc_route(&self, id: ResourceKey, route: &Arc<GRPCRoute>) -> Result<(), StorageError> {

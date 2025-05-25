@@ -127,7 +127,7 @@ impl ReferenceGrantsResolver {
                             .gateway_key(gateway_key.clone())
                             .build(),
                     );
-                };
+                }
             }
         }
 

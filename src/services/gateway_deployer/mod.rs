@@ -58,8 +58,8 @@ impl GatewayDeployerService {
                             let _entered = span.enter();
                             let gateway_id = gateway.key().clone();
                             let gateway_event_handler = GatewayProcessedHandler {
-                                effective_gateway: gateway,
-                                gateway: kube_gateway.clone(),
+                                effective_gateway: *gateway,
+                                gateway: *kube_gateway.clone(),
                                 state: &self.state.clone(),
                                 http_route_patcher: self.http_route_patcher_channel_sender.clone(),
                                 grpc_route_patcher: self.grpc_route_patcher_channel_sender.clone(),
@@ -67,7 +67,7 @@ impl GatewayDeployerService {
                             };
 
                             if let Ok(updated_gateway) = gateway_event_handler.deploy_gateway().instrument(Span::current().clone()).await{
-                                self.state.save_gateway(gateway_id.clone(), &Arc::new(kube_gateway)).expect("We expect the lock to work");
+                                self.state.save_gateway(gateway_id.clone(), &Arc::new(*kube_gateway)).expect("We expect the lock to work");
                                 let (sender, receiver) = oneshot::channel();
                                 let _res = self
                                     .gateway_patcher_channel_sender
