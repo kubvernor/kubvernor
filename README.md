@@ -18,7 +18,7 @@ Kubvernor is a Rust implementation of Kubernetes Gateway APIs. The aim of the pr
 
 2. Deploy your cluster
    ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://github.com/kubernetes-sigs/gateway-api/blob/main/hack/implementations/common/create-cluster.sh | sh
+   curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/refs/heads/main/hack/implementations/common/create-cluster.sh | sh
 
    ```
 
