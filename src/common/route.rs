@@ -1,14 +1,9 @@
 use std::{cmp, net::IpAddr};
 
 use gateway_api::{
-    grpcroutes::{
-        GRPCRoute, GRPCRouteParentRefs, GRPCRouteRules, GRPCRouteRulesFilters, GRPCRouteRulesFiltersRequestHeaderModifierAdd, GRPCRouteRulesFiltersRequestHeaderModifierSet, GRPCRouteRulesFiltersType,
-        GRPCRouteRulesMatches,
-    },
-    httproutes::{
-        HTTPRoute, HTTPRouteParentRefs, HTTPRouteRules, HTTPRouteRulesFilters, HTTPRouteRulesFiltersRequestHeaderModifierAdd, HTTPRouteRulesFiltersRequestHeaderModifierSet,
-        HTTPRouteRulesFiltersRequestRedirect, HTTPRouteRulesFiltersType, HTTPRouteRulesMatches, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType,
-    },
+    common_types::{GRPCFilterType, GRPCRouteFilter, HTTPFilterType, HTTPRequestRedirect, HTTPRouteFilter, RouteRef},
+    grpcroutes::{GRPCRoute, GRPCRouteRules, GRPCRouteRulesMatches},
+    httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesMatches, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType},
 };
 use kube::ResourceExt;
 use thiserror::Error;
@@ -50,7 +45,7 @@ impl Route {
         &self.config.hostnames
     }
 
-    pub fn parents(&self) -> Option<&Vec<RouteParentRefs>> {
+    pub fn parents(&self) -> Option<&Vec<RouteRef>> {
         self.config.parents.as_ref()
     }
 
@@ -170,9 +165,9 @@ impl TryFrom<&HTTPRoute> for Route {
                             .filters
                             .iter()
                             .filter_map(|f| {
-                                if f.r#type == HTTPRouteRulesFiltersType::RequestHeaderModifier {
+                                if f.r#type == HTTPFilterType::RequestHeaderModifier {
                                     if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.add.as_ref().map(|to_add| to_add.iter().map(HttpHeader::from))
+                                        modifier.add.as_ref().map(|headers| HttpHeader::from_vec(headers).into_iter())
                                     } else {
                                         None
                                     }
@@ -186,7 +181,7 @@ impl TryFrom<&HTTPRoute> for Route {
                             .filters
                             .iter()
                             .filter_map(|f| {
-                                if f.r#type == HTTPRouteRulesFiltersType::RequestHeaderModifier {
+                                if f.r#type == HTTPFilterType::RequestHeaderModifier {
                                     if let Some(modifier) = &f.request_header_modifier {
                                         modifier.remove.as_ref().map(|to_remove| to_remove.clone().into_iter())
                                     } else {
@@ -202,9 +197,9 @@ impl TryFrom<&HTTPRoute> for Route {
                             .filters
                             .iter()
                             .filter_map(|f| {
-                                if f.r#type == HTTPRouteRulesFiltersType::RequestHeaderModifier {
+                                if f.r#type == HTTPFilterType::RequestHeaderModifier {
                                     if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.set.as_ref().map(|to_set| to_set.iter().map(HttpHeader::from))
+                                        modifier.set.as_ref().map(|headers| HttpHeader::from_vec(headers).into_iter())
                                     } else {
                                         None
                                     }
@@ -216,20 +211,17 @@ impl TryFrom<&HTTPRoute> for Route {
                             .collect(),
                     },
                     response_headers: FilterHeaders::default(),
-                    redirect_filter: rr.filters.iter().find_map(|f| {
-                        if f.r#type == HTTPRouteRulesFiltersType::RequestRedirect {
-                            f.request_redirect.clone()
-                        } else {
-                            None
-                        }
-                    }),
+                    redirect_filter: rr
+                        .filters
+                        .iter()
+                        .find_map(|f| if f.r#type == HTTPFilterType::RequestRedirect { f.request_redirect.clone() } else { None }),
                 })
             })
             .collect();
 
         let config = RouteConfig {
             resource_key: key,
-            parents: parents.map(|parents| parents.into_iter().map(RouteParentRefs::from).collect()),
+            parents,
             hostnames,
             resolution_status: if has_invalid_backends {
                 ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend)
@@ -329,9 +321,9 @@ impl TryFrom<&GRPCRoute> for Route {
                             .filters
                             .iter()
                             .filter_map(|f| {
-                                if f.r#type == GRPCRouteRulesFiltersType::RequestHeaderModifier {
+                                if f.r#type == GRPCFilterType::RequestHeaderModifier {
                                     if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.add.as_ref().map(|to_add| to_add.iter().map(HttpHeader::from))
+                                        modifier.add.as_ref().map(|headers| HttpHeader::from_vec(headers).into_iter())
                                     } else {
                                         None
                                     }
@@ -345,7 +337,7 @@ impl TryFrom<&GRPCRoute> for Route {
                             .filters
                             .iter()
                             .filter_map(|f| {
-                                if f.r#type == GRPCRouteRulesFiltersType::RequestHeaderModifier {
+                                if f.r#type == GRPCFilterType::RequestHeaderModifier {
                                     if let Some(modifier) = &f.request_header_modifier {
                                         modifier.remove.as_ref().map(|to_remove| to_remove.clone().into_iter())
                                     } else {
@@ -361,9 +353,9 @@ impl TryFrom<&GRPCRoute> for Route {
                             .filters
                             .iter()
                             .filter_map(|f| {
-                                if f.r#type == GRPCRouteRulesFiltersType::RequestHeaderModifier {
+                                if f.r#type == GRPCFilterType::RequestHeaderModifier {
                                     if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.set.as_ref().map(|to_set| to_set.iter().map(HttpHeader::from))
+                                        modifier.set.as_ref().map(|headers| HttpHeader::from_vec(headers).into_iter())
                                     } else {
                                         None
                                     }
@@ -381,7 +373,7 @@ impl TryFrom<&GRPCRoute> for Route {
 
         let config = RouteConfig {
             resource_key: key,
-            parents: parents.map(|parents| parents.into_iter().map(RouteParentRefs::from).collect()),
+            parents,
             hostnames,
             resolution_status: if has_invalid_backends {
                 ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend)
@@ -419,7 +411,7 @@ pub enum RouteType {
 #[derive(Clone, Debug)]
 pub struct RouteConfig {
     pub resource_key: ResourceKey,
-    parents: Option<Vec<RouteParentRefs>>,
+    parents: Option<Vec<RouteRef>>,
     hostnames: Vec<String>,
     pub resolution_status: ResolutionStatus,
     pub route_type: RouteType,
@@ -430,58 +422,6 @@ impl RouteConfig {
         match &self.route_type {
             RouteType::Http(routing_rules_configuration) => routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect(),
             RouteType::Grpc(routing_rules_configuration) => routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect(),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct RouteParentRefs {
-    pub group: Option<String>,
-    pub kind: Option<String>,
-    pub name: String,
-    pub namespace: Option<String>,
-    pub port: Option<i32>,
-    pub section_name: Option<String>,
-}
-
-impl From<GRPCRouteParentRefs> for RouteParentRefs {
-    fn from(value: GRPCRouteParentRefs) -> Self {
-        let GRPCRouteParentRefs {
-            group,
-            kind,
-            name,
-            namespace,
-            port,
-            section_name,
-        } = value;
-        Self {
-            group,
-            kind,
-            name,
-            namespace,
-            port,
-            section_name,
-        }
-    }
-}
-
-impl From<HTTPRouteParentRefs> for RouteParentRefs {
-    fn from(value: HTTPRouteParentRefs) -> Self {
-        let HTTPRouteParentRefs {
-            group,
-            kind,
-            name,
-            namespace,
-            port,
-            section_name,
-        } = value;
-        Self {
-            group,
-            kind,
-            name,
-            namespace,
-            port,
-            section_name,
         }
     }
 }
@@ -526,7 +466,7 @@ pub struct RoutingRule {
     pub name: String,
     pub backends: Vec<Backend>,
     pub matching_rules: Vec<HTTPRouteRulesMatches>,
-    pub filters: Vec<HTTPRouteRulesFilters>,
+    pub filters: Vec<HTTPRouteFilter>,
 }
 
 #[derive(Clone, Debug)]
@@ -534,7 +474,7 @@ pub struct GRPCRoutingRule {
     pub name: String,
     pub backends: Vec<Backend>,
     pub matching_rules: Vec<GRPCRouteRulesMatches>,
-    pub filters: Vec<GRPCRouteRulesFilters>,
+    pub filters: Vec<GRPCRouteFilter>,
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -547,7 +487,7 @@ pub struct EffectiveRoutingRule {
     pub request_headers: FilterHeaders,
     pub response_headers: FilterHeaders,
 
-    pub redirect_filter: Option<HTTPRouteRulesFiltersRequestRedirect>,
+    pub redirect_filter: Option<HTTPRequestRedirect>,
 }
 
 impl PartialOrd for EffectiveRoutingRule {
@@ -723,38 +663,33 @@ pub struct HttpHeader {
     pub value: String,
 }
 
-impl From<&HTTPRouteRulesFiltersRequestHeaderModifierAdd> for HttpHeader {
-    fn from(modifier: &HTTPRouteRulesFiltersRequestHeaderModifierAdd) -> Self {
+impl From<&gateway_api::common_types::HTTPHeader> for HttpHeader {
+    fn from(modifier: &gateway_api::common_types::HTTPHeader) -> Self {
+        Self::from(modifier.clone())
+    }
+}
+
+impl From<gateway_api::common_types::HTTPHeader> for HttpHeader {
+    fn from(modifier: gateway_api::common_types::HTTPHeader) -> Self {
         Self {
-            name: modifier.name.clone(),
-            value: modifier.value.clone(),
+            name: modifier.name,
+            value: modifier.value,
         }
     }
 }
 
-impl From<&HTTPRouteRulesFiltersRequestHeaderModifierSet> for HttpHeader {
-    fn from(modifier: &HTTPRouteRulesFiltersRequestHeaderModifierSet) -> Self {
-        Self {
-            name: modifier.name.clone(),
-            value: modifier.value.clone(),
-        }
+pub trait FromVec<'a, S: 'a, T>
+where
+    T: From<&'a S>,
+{
+    fn from_vec(from: &'a [S]) -> Vec<T> {
+        from.iter().map(|s| T::from(s)).collect()
     }
 }
 
-impl From<&GRPCRouteRulesFiltersRequestHeaderModifierAdd> for HttpHeader {
-    fn from(modifier: &GRPCRouteRulesFiltersRequestHeaderModifierAdd) -> Self {
-        Self {
-            name: modifier.name.clone(),
-            value: modifier.value.clone(),
-        }
-    }
-}
-
-impl From<&GRPCRouteRulesFiltersRequestHeaderModifierSet> for HttpHeader {
-    fn from(modifier: &GRPCRouteRulesFiltersRequestHeaderModifierSet) -> Self {
-        Self {
-            name: modifier.name.clone(),
-            value: modifier.value.clone(),
-        }
-    }
-}
+impl FromVec<'_, gateway_api::common_types::HTTPHeader, HttpHeader> for HttpHeader {}
+//{
+//     fn from_vec(from: Vec<gateway_api::common_types::HTTPHeader>) -> Vec<Self> {
+//         from.into_iter().map(Self::from).collect()
+//     }
+// }

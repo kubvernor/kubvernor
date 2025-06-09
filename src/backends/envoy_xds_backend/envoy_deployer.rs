@@ -43,7 +43,7 @@ use envoy_api_rs::{
     google::protobuf::{BoolValue, Duration, UInt32Value},
 };
 use futures::FutureExt;
-use gateway_api::{grpcroutes, httproutes};
+use gateway_api::{common_types, httproutes};
 use itertools::Itertools;
 use k8s_openapi::{
     api::{
@@ -971,8 +971,8 @@ impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
             };
 
             matcher.r#type.map(|t| match t {
-                grpcroutes::GRPCRouteRulesMatchesMethodType::Exact => PathSpecifier::Path(path),
-                grpcroutes::GRPCRouteRulesMatchesMethodType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: path, ..Default::default() }),
+                common_types::HeaderMatchesType::Exact => PathSpecifier::Path(path),
+                common_types::HeaderMatchesType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: path, ..Default::default() }),
             })
         });
 

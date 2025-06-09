@@ -1,10 +1,6 @@
 use std::sync::Arc;
 
-use gateway_api::{
-    constants,
-    gatewayclasses::GatewayClass,
-    gateways::{GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
-};
+use gateway_api::{common_types::Kind, constants, gatewayclasses::GatewayClass, gateways::GatewayStatusListeners};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
@@ -167,11 +163,7 @@ impl GatewayDeployer {
                             status,
                             type_,
                         });
-                        listener_status.supported_kinds = condition
-                            .supported_routes()
-                            .iter()
-                            .map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() })
-                            .collect();
+                        listener_status.supported_kinds = condition.supported_routes().iter().map(|r| Kind { group: None, kind: r.clone() }).collect();
                     }
                     ListenerCondition::UnresolvedRouteRefs => {
                         listener_conditions.push(Condition {
@@ -182,11 +174,7 @@ impl GatewayDeployer {
                             status,
                             type_,
                         });
-                        listener_status.supported_kinds = condition
-                            .supported_routes()
-                            .iter()
-                            .map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() })
-                            .collect();
+                        listener_status.supported_kinds = condition.supported_routes().iter().map(|r| Kind { group: None, kind: r.clone() }).collect();
                     }
                     _ => {
                         listener_conditions.push(Condition {

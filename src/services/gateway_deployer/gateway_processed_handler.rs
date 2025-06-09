@@ -1,8 +1,9 @@
 use gateway_api::{
+    common_types::{GatewayAddress as CommonGatewayAddress, ParentsRouteStatus, RouteRef},
     constants,
-    gateways::{Gateway, GatewayStatusAddresses},
-    grpcroutes::{GRPCRoute, GRPCRouteStatus, GRPCRouteStatusParents, GRPCRouteStatusParentsParentRef},
-    httproutes::{HTTPRoute, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
+    gateways::Gateway,
+    grpcroutes::{GRPCRoute, GRPCRouteStatus},
+    httproutes::{HTTPRoute, HTTPRouteStatus},
 };
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
@@ -896,10 +897,10 @@ impl GatewayProcessedHandler<'_> {
                 });
 
                 for kube_parent in kube_route.spec.parent_refs.clone().unwrap_or_default() {
-                    let route_parents = HTTPRouteStatusParents {
+                    let route_parents = ParentsRouteStatus {
                         conditions: Some(new_conditions.clone()),
                         controller_name: self.controller_name.clone(),
-                        parent_ref: HTTPRouteStatusParentsParentRef {
+                        parent_ref: RouteRef {
                             namespace: kube_parent.namespace.clone(),
                             name: kube_parent.name.clone(),
                             group: kube_parent.group.clone(),
@@ -943,10 +944,10 @@ impl GatewayProcessedHandler<'_> {
                 });
 
                 for kube_parent in kube_route.spec.parent_refs.clone().unwrap_or_default() {
-                    let route_parents = GRPCRouteStatusParents {
+                    let route_parents = ParentsRouteStatus {
                         conditions: Some(new_conditions.clone()),
                         controller_name: self.controller_name.clone(),
-                        parent_ref: GRPCRouteStatusParentsParentRef {
+                        parent_ref: RouteRef {
                             namespace: kube_parent.namespace.clone(),
                             name: kube_parent.name.clone(),
                             group: kube_parent.group.clone(),
@@ -973,15 +974,15 @@ impl GatewayProcessedHandler<'_> {
             .addresses()
             .iter()
             .map(|a| match a {
-                GatewayAddress::Hostname(hostname) => GatewayStatusAddresses {
+                GatewayAddress::Hostname(hostname) => CommonGatewayAddress {
                     r#type: None,
                     value: hostname.clone(),
                 },
-                GatewayAddress::IPAddress(ip_addr) => GatewayStatusAddresses {
+                GatewayAddress::IPAddress(ip_addr) => CommonGatewayAddress {
                     r#type: None,
                     value: ip_addr.to_string(),
                 },
-                GatewayAddress::NamedAddress(addr) => GatewayStatusAddresses { r#type: None, value: addr.clone() },
+                GatewayAddress::NamedAddress(addr) => CommonGatewayAddress { r#type: None, value: addr.clone() },
             })
             .collect::<Vec<_>>();
         status.addresses = Some(addresses);

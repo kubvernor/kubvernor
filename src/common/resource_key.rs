@@ -1,15 +1,15 @@
 use std::fmt::Display;
 
 use gateway_api::{
+    common_types::RouteRef,
     gatewayclasses::GatewayClass,
     gateways,
-    grpcroutes::{GRPCRoute, GRPCRouteParentRefs, GRPCRouteRulesBackendRefs},
-    httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRulesBackendRefs},
+    grpcroutes::{GRPCRoute, GRPCRouteRulesBackendRefs},
+    httproutes::{HTTPRoute, HTTPRouteRulesBackendRefs},
 };
 use k8s_openapi::api::core::v1::Service;
 use kube::{Resource, ResourceExt};
 
-use super::RouteParentRefs;
 use crate::common::create_id;
 
 pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";
@@ -98,38 +98,8 @@ impl From<(Option<String>, Option<String>, String, Option<String>)> for Resource
     }
 }
 
-impl From<(&HTTPRouteParentRefs, String)> for RouteRefKey {
-    fn from((route_parent, route_namespace): (&HTTPRouteParentRefs, String)) -> Self {
-        Self {
-            resource_key: ResourceKey {
-                group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
-                namespace: route_parent.namespace.clone().unwrap_or(route_namespace),
-                name: route_parent.name.clone(),
-                kind: route_parent.kind.clone().unwrap_or(DEFAULT_KIND_NAME.to_owned()),
-            },
-            section_name: route_parent.section_name.clone(),
-            port: route_parent.port,
-        }
-    }
-}
-
-impl From<(&GRPCRouteParentRefs, String)> for RouteRefKey {
-    fn from((route_parent, route_namespace): (&GRPCRouteParentRefs, String)) -> Self {
-        Self {
-            resource_key: ResourceKey {
-                group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
-                namespace: route_parent.namespace.clone().unwrap_or(route_namespace),
-                name: route_parent.name.clone(),
-                kind: route_parent.kind.clone().unwrap_or(DEFAULT_KIND_NAME.to_owned()),
-            },
-            section_name: route_parent.section_name.clone(),
-            port: route_parent.port,
-        }
-    }
-}
-
-impl From<(&RouteParentRefs, String)> for RouteRefKey {
-    fn from((route_parent, route_namespace): (&RouteParentRefs, String)) -> Self {
+impl From<(&RouteRef, String)> for RouteRefKey {
+    fn from((route_parent, route_namespace): (&RouteRef, String)) -> Self {
         Self {
             resource_key: ResourceKey {
                 group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),

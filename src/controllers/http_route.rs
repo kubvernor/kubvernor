@@ -1,14 +1,11 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::{
+    common_types::{ParentsRouteStatus, RouteRef},
     gateways::Gateway,
-    httproutes::{self, HTTPRoute, HTTPRouteParentRefs, HTTPRouteStatus, HTTPRouteStatusParents, HTTPRouteStatusParentsParentRef},
-};
-use k8s_openapi::{
-    apimachinery::pkg::apis::meta::v1::{Condition, Time},
-    chrono::Utc,
+    httproutes::{self, HTTPRoute, HTTPRouteStatus},
 };
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
@@ -25,13 +22,13 @@ use super::{
     ControllerError, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, Backend, ReferenceValidateRequest, RequestContext, ResourceKey, Route, RouteRefKey, VerifiyItems},
-    services::patchers::{DeleteContext, FinalizerContext, Operation},
+    common::{self, ReferenceValidateRequest, RequestContext, ResourceKey, Route, RouteRefKey, VerifiyItems},
+    controllers::routes_common,
+    services::patchers::{DeleteContext, Operation},
     state::State,
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
-const CONDITION_MESSAGE: &str = "Route updated by controller";
 
 #[derive(Clone, TypedBuilder)]
 pub struct HttpRouteControllerContext {
@@ -199,7 +196,7 @@ impl HTTPRouteHandler<HTTPRoute> {
 
         let _ = self.add_finalizer(resource).await?;
 
-        let references = Self::extract_references(&route);
+        let references = routes_common::extract_references(&route);
 
         let _ = self
             .validate_references_channel_sender
@@ -272,7 +269,7 @@ impl HTTPRouteHandler<HTTPRoute> {
             }))
             .await;
 
-        let references = Self::extract_references(&route);
+        let references = routes_common::extract_references(&route);
 
         let _ = self
             .validate_references_channel_sender
@@ -282,61 +279,15 @@ impl HTTPRouteHandler<HTTPRoute> {
         Ok(Action::await_change())
     }
 
-    fn generate_status_for_unknown_gateways(&self, gateways: &[(&HTTPRouteParentRefs, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<HTTPRouteStatusParents> {
-        gateways
-            .iter()
-            .map(|(gateway, _)| HTTPRouteStatusParents {
-                conditions: Some(vec![Condition {
-                    last_transition_time: Time(Utc::now()),
-                    message: CONDITION_MESSAGE.to_owned(),
-                    observed_generation: generation,
-                    reason: "BackendNotFound".to_owned(),
-                    status: "False".to_owned(),
-                    type_: "ResolvedRefs".to_owned(),
-                }]),
-                controller_name: self.controller_name.clone(),
-                parent_ref: HTTPRouteStatusParentsParentRef {
-                    group: gateway.group.clone(),
-                    kind: gateway.kind.clone(),
-                    name: gateway.name.clone(),
-                    namespace: gateway.namespace.clone(),
-                    port: gateway.port,
-                    section_name: gateway.section_name.clone(),
-                },
-            })
-            .collect()
+    fn generate_status_for_unknown_gateways(&self, gateways: &[(&RouteRef, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<ParentsRouteStatus> {
+        routes_common::generate_status_for_unknown_gateways(&self.controller_name, gateways, generation)
     }
 
     async fn add_finalizer(&self, resource: &Arc<HTTPRoute>) -> Result<Action> {
-        let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
-            finalizers.contains(&self.controller_name)
-        } else {
-            false
-        };
-
-        if !has_finalizer {
-            let _res = self
-                .http_route_patcher
-                .send(Operation::PatchFinalizer(FinalizerContext {
-                    resource_key: self.resource_key.clone(),
-                    controller_name: self.controller_name.clone(),
-                    finalizer_name: self.controller_name.clone(),
-                    span: Span::current().clone(),
-                }))
-                .await;
+        if let Some(finalizer) = routes_common::needs_finalizer::<HTTPRoute>(&self.resource_key, &self.controller_name, &resource.metadata) {
+            let _res = self.http_route_patcher.send(finalizer).await;
         }
+
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
-    }
-
-    fn extract_references(route: &Route) -> BTreeSet<ResourceKey> {
-        let mut backend_reference_keys = BTreeSet::new();
-
-        for backend in &route.backends() {
-            if let Backend::Maybe(backend_service_config) = backend {
-                backend_reference_keys.insert(backend_service_config.resource_key.clone());
-            }
-        }
-
-        backend_reference_keys
     }
 }

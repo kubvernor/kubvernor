@@ -18,7 +18,7 @@ use gateway_api::{gatewayclasses::GatewayClass, gateways::GatewayListeners};
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};
 pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE};
-pub use route::{EffectiveRoutingRule, GRPCEffectiveRoutingRule, HttpHeader, NotResolvedReason, ResolutionStatus, Route, RouteParentRefs, RouteStatus, RouteType};
+pub use route::{EffectiveRoutingRule, GRPCEffectiveRoutingRule, HttpHeader, NotResolvedReason, ResolutionStatus, Route, RouteStatus, RouteType};
 use tokio::sync::{mpsc, oneshot};
 use tracing::Span;
 use typed_builder::TypedBuilder;
