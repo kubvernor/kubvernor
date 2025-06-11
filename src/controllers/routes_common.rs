@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use gateway_api::{
-    common_types::{ParentsRouteStatus, RouteRef},
+    common_types::{ParentRouteStatus, RouteRef},
     gateways::Gateway,
 };
 use k8s_openapi::{
@@ -18,10 +18,10 @@ use crate::{
 
 const CONDITION_MESSAGE: &str = "Route updated by controller";
 
-pub fn generate_status_for_unknown_gateways(controller_name: &str, gateways: &[(&RouteRef, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<ParentsRouteStatus> {
+pub fn generate_status_for_unknown_gateways(controller_name: &str, gateways: &[(&RouteRef, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<ParentRouteStatus> {
     gateways
         .iter()
-        .map(|(gateway, _)| ParentsRouteStatus {
+        .map(|(gateway, _)| ParentRouteStatus {
             conditions: Some(vec![Condition {
                 last_transition_time: Time(Utc::now()),
                 message: CONDITION_MESSAGE.to_owned(),

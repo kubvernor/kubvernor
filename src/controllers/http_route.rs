@@ -3,9 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::{
-    common_types::{ParentsRouteStatus, RouteRef},
+    common_types::{ParentRouteStatus, RouteRef, RouteStatus},
     gateways::Gateway,
-    httproutes::{self, HTTPRoute, HTTPRouteStatus},
+    httproutes::{self, HTTPRoute},
 };
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
@@ -191,7 +191,7 @@ impl HTTPRouteHandler<HTTPRoute> {
         let matching_gateways = RouteListenerMatcher::filter_http_matching_gateways(state, &resolved_gateways);
         let unknown_gateway_status = self.generate_status_for_unknown_gateways(&unknown_gateways, resource.metadata.generation);
 
-        http_route.status = Some(HTTPRouteStatus { parents: unknown_gateway_status });
+        http_route.status = Some(RouteStatus { parents: unknown_gateway_status });
         let () = state.save_http_route(route_key.clone(), &Arc::new(http_route)).expect("We expect the lock to work");
 
         let _ = self.add_finalizer(resource).await?;
@@ -279,7 +279,7 @@ impl HTTPRouteHandler<HTTPRoute> {
         Ok(Action::await_change())
     }
 
-    fn generate_status_for_unknown_gateways(&self, gateways: &[(&RouteRef, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<ParentsRouteStatus> {
+    fn generate_status_for_unknown_gateways(&self, gateways: &[(&RouteRef, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<ParentRouteStatus> {
         routes_common::generate_status_for_unknown_gateways(&self.controller_name, gateways, generation)
     }
 

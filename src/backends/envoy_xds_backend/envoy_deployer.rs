@@ -971,8 +971,8 @@ impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
             };
 
             matcher.r#type.map(|t| match t {
-                common_types::HeaderMatchesType::Exact => PathSpecifier::Path(path),
-                common_types::HeaderMatchesType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: path, ..Default::default() }),
+                common_types::HeaderMatchType::Exact => PathSpecifier::Path(path),
+                common_types::HeaderMatchType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: path, ..Default::default() }),
             })
         });
 

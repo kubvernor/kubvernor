@@ -1,9 +1,9 @@
 use std::{cmp, net::IpAddr};
 
 use gateway_api::{
-    common_types::{GRPCFilterType, GRPCRouteFilter, HTTPFilterType, HTTPRequestRedirect, HTTPRouteFilter, RouteRef},
+    common_types::{GRPCFilterType, GRPCRouteFilter, HTTPFilterType, HTTPRouteRequestRedirect, RouteRef},
     grpcroutes::{GRPCRoute, GRPCRouteRules, GRPCRouteRulesMatches},
-    httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesMatches, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType},
+    httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesFilters, HTTPRouteRulesMatches, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType},
 };
 use kube::ResourceExt;
 use thiserror::Error;
@@ -466,7 +466,7 @@ pub struct RoutingRule {
     pub name: String,
     pub backends: Vec<Backend>,
     pub matching_rules: Vec<HTTPRouteRulesMatches>,
-    pub filters: Vec<HTTPRouteFilter>,
+    pub filters: Vec<HTTPRouteRulesFilters>,
 }
 
 #[derive(Clone, Debug)]
@@ -487,7 +487,7 @@ pub struct EffectiveRoutingRule {
     pub request_headers: FilterHeaders,
     pub response_headers: FilterHeaders,
 
-    pub redirect_filter: Option<HTTPRequestRedirect>,
+    pub redirect_filter: Option<HTTPRouteRequestRedirect>,
 }
 
 impl PartialOrd for EffectiveRoutingRule {

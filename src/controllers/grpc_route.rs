@@ -3,9 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::{
-    common_types::{ParentsRouteStatus, RouteRef},
+    common_types::{ParentRouteStatus, RouteRef, RouteStatus},
     gateways::Gateway,
-    grpcroutes::{self, GRPCRoute, GRPCRouteStatus},
+    grpcroutes::{self, GRPCRoute},
 };
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
@@ -191,7 +191,7 @@ impl GRPCRouteHandler<GRPCRoute> {
         let matching_gateways = RouteListenerMatcher::filter_grpc_matching_gateways(state, &resolved_gateways);
         let unknown_gateway_status = self.generate_status_for_unknown_gateways(&unknown_gateways, resource.metadata.generation);
 
-        grpc_route.status = Some(GRPCRouteStatus { parents: unknown_gateway_status });
+        grpc_route.status = Some(RouteStatus { parents: unknown_gateway_status });
         let () = state.save_grpc_route(route_key.clone(), &Arc::new(grpc_route)).expect("We expect the lock to work");
 
         let _ = self.add_finalizer(resource).await?;
@@ -287,7 +287,7 @@ impl GRPCRouteHandler<GRPCRoute> {
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 
-    fn generate_status_for_unknown_gateways(&self, gateways: &[(&RouteRef, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<ParentsRouteStatus> {
+    fn generate_status_for_unknown_gateways(&self, gateways: &[(&RouteRef, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<ParentRouteStatus> {
         routes_common::generate_status_for_unknown_gateways(&self.controller_name, gateways, generation)
     }
 }

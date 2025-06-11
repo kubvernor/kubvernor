@@ -1,9 +1,9 @@
 use gateway_api::{
-    common_types::{GatewayAddress as CommonGatewayAddress, ParentsRouteStatus, RouteRef},
+    common_types::{GatewayAddress as CommonGatewayAddress, ParentRouteStatus, RouteRef, RouteStatus},
     constants,
     gateways::Gateway,
-    grpcroutes::{GRPCRoute, GRPCRouteStatus},
-    httproutes::{HTTPRoute, HTTPRouteStatus},
+    grpcroutes::GRPCRoute,
+    httproutes::HTTPRoute,
 };
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
@@ -884,7 +884,7 @@ impl GatewayProcessedHandler<'_> {
             if let Some(mut kube_route) = kube_route.map(|r| (**r).clone()) {
                 new_conditions.iter_mut().for_each(|f| f.observed_generation = kube_route.meta().generation);
 
-                let mut status = if let Some(status) = kube_route.status { status } else { HTTPRouteStatus { parents: vec![] } };
+                let mut status = if let Some(status) = kube_route.status { status } else { RouteStatus { parents: vec![] } };
 
                 status.parents.retain(|p| {
                     let geteway_name = gateway_id.name.clone();
@@ -897,7 +897,7 @@ impl GatewayProcessedHandler<'_> {
                 });
 
                 for kube_parent in kube_route.spec.parent_refs.clone().unwrap_or_default() {
-                    let route_parents = ParentsRouteStatus {
+                    let route_parents = ParentRouteStatus {
                         conditions: Some(new_conditions.clone()),
                         controller_name: self.controller_name.clone(),
                         parent_ref: RouteRef {
@@ -931,7 +931,7 @@ impl GatewayProcessedHandler<'_> {
             if let Some(mut kube_route) = kube_route.map(|r| (**r).clone()) {
                 new_conditions.iter_mut().for_each(|f| f.observed_generation = kube_route.meta().generation);
 
-                let mut status = if let Some(status) = kube_route.status { status } else { GRPCRouteStatus { parents: vec![] } };
+                let mut status = if let Some(status) = kube_route.status { status } else { RouteStatus { parents: vec![] } };
 
                 status.parents.retain(|p| {
                     let geteway_name = gateway_id.name.clone();
@@ -944,7 +944,7 @@ impl GatewayProcessedHandler<'_> {
                 });
 
                 for kube_parent in kube_route.spec.parent_refs.clone().unwrap_or_default() {
-                    let route_parents = ParentsRouteStatus {
+                    let route_parents = ParentRouteStatus {
                         conditions: Some(new_conditions.clone()),
                         controller_name: self.controller_name.clone(),
                         parent_ref: RouteRef {

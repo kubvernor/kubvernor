@@ -1,6 +1,9 @@
 use std::collections::BTreeSet;
 
-use gateway_api::httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesMatches, HTTPRouteRulesMatchesHeaders, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType};
+use gateway_api::{
+    common_types::MatchingHeaders,
+    httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesMatches, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType},
+};
 
 use crate::common::{EffectiveRoutingRule, ListenerCondition};
 
@@ -115,7 +118,7 @@ pub fn test_headers_sorting_rules() {
     let mut rules = vec![
         EffectiveRoutingRule {
             route_matcher: HTTPRouteRulesMatches {
-                headers: Some(vec![HTTPRouteRulesMatchesHeaders {
+                headers: Some(vec![MatchingHeaders {
                     name: "version".to_owned(),
                     value: "one".to_owned(),
                     ..Default::default()
@@ -127,7 +130,7 @@ pub fn test_headers_sorting_rules() {
         },
         EffectiveRoutingRule {
             route_matcher: HTTPRouteRulesMatches {
-                headers: Some(vec![HTTPRouteRulesMatchesHeaders {
+                headers: Some(vec![MatchingHeaders {
                     name: "version".to_owned(),
                     value: "two".to_owned(),
                     ..Default::default()
@@ -140,12 +143,12 @@ pub fn test_headers_sorting_rules() {
         EffectiveRoutingRule {
             route_matcher: HTTPRouteRulesMatches {
                 headers: Some(vec![
-                    HTTPRouteRulesMatchesHeaders {
+                    MatchingHeaders {
                         name: "version".to_owned(),
                         value: "two".to_owned(),
                         ..Default::default()
                     },
-                    HTTPRouteRulesMatchesHeaders {
+                    MatchingHeaders {
                         name: "color".to_owned(),
                         value: "orange".to_owned(),
                         ..Default::default()
@@ -159,7 +162,7 @@ pub fn test_headers_sorting_rules() {
         },
         EffectiveRoutingRule {
             route_matcher: HTTPRouteRulesMatches {
-                headers: Some(vec![HTTPRouteRulesMatchesHeaders {
+                headers: Some(vec![MatchingHeaders {
                     name: "color".to_owned(),
                     value: "blue".to_owned(),
                     ..Default::default()
@@ -171,7 +174,7 @@ pub fn test_headers_sorting_rules() {
         },
         EffectiveRoutingRule {
             route_matcher: HTTPRouteRulesMatches {
-                headers: Some(vec![HTTPRouteRulesMatchesHeaders {
+                headers: Some(vec![MatchingHeaders {
                     name: "color".to_owned(),
                     value: "green".to_owned(),
                     ..Default::default()
@@ -184,7 +187,7 @@ pub fn test_headers_sorting_rules() {
         },
         EffectiveRoutingRule {
             route_matcher: HTTPRouteRulesMatches {
-                headers: Some(vec![HTTPRouteRulesMatchesHeaders {
+                headers: Some(vec![MatchingHeaders {
                     name: "color".to_owned(),
                     value: "red".to_owned(),
                     ..Default::default()
@@ -197,7 +200,7 @@ pub fn test_headers_sorting_rules() {
         },
         EffectiveRoutingRule {
             route_matcher: HTTPRouteRulesMatches {
-                headers: Some(vec![HTTPRouteRulesMatchesHeaders {
+                headers: Some(vec![MatchingHeaders {
                     name: "color".to_owned(),
                     value: "yellow".to_owned(),
                     ..Default::default()
@@ -386,7 +389,7 @@ pub fn test_paths_and_headers_sorting_rules() {
                     r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
                     value: Some("/".to_owned()),
                 }),
-                headers: Some(vec![HTTPRouteRulesMatchesHeaders {
+                headers: Some(vec![MatchingHeaders {
                     name: "color".to_owned(),
                     value: "green".to_owned(),
                     ..Default::default()
