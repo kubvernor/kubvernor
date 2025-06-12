@@ -36,8 +36,10 @@ cfg_if::cfg_if! {
 use controllers::{
     gateway::{self, GatewayController},
     gateway_class::GatewayClassController,
-    grpc_route::{self, GRPCRouteController},
-    http_route::{self, HttpRouteController},
+    route::{
+        grpc_route::{self, GRPCRouteController},
+        http_route::{self, HttpRouteController},
+    },
 };
 use typed_builder::TypedBuilder;
 

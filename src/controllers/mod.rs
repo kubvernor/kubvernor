@@ -1,10 +1,8 @@
 use std::time::Duration;
 pub mod gateway;
 pub mod gateway_class;
-pub mod grpc_route;
 mod handlers;
-pub mod http_route;
-mod routes_common;
+pub mod route;
 
 mod utils;
 

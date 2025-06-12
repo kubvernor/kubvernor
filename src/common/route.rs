@@ -86,6 +86,14 @@ fn get_http_default_rules_matches() -> HTTPRouteRulesMatches {
     }
 }
 
+impl TryFrom<HTTPRoute> for Route {
+    type Error = ControllerError;
+
+    fn try_from(value: HTTPRoute) -> Result<Self, Self::Error> {
+        Route::try_from(&value)
+    }
+}
+
 impl TryFrom<&HTTPRoute> for Route {
     type Error = ControllerError;
     fn try_from(kube_route: &HTTPRoute) -> Result<Self, Self::Error> {
@@ -240,6 +248,14 @@ impl TryFrom<&HTTPRoute> for Route {
 
 fn get_grpc_default_rules_matches() -> GRPCRouteRulesMatches {
     GRPCRouteRulesMatches { headers: Some(vec![]), method: None }
+}
+
+impl TryFrom<GRPCRoute> for Route {
+    type Error = ControllerError;
+
+    fn try_from(value: GRPCRoute) -> Result<Self, Self::Error> {
+        Route::try_from(&value)
+    }
 }
 
 impl TryFrom<&GRPCRoute> for Route {
