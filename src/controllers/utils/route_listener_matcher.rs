@@ -120,14 +120,6 @@ impl<'a> RouteListenerMatcher<'a> {
             .collect()
     }
 
-    // pub fn filter_http_matching_gateways(state: &State, resolved_gateways: &[(&RouteRef, Option<Arc<gateways::Gateway>>)]) -> Vec<Arc<gateways::Gateway>> {
-    //     Self::filter_matching_gateways(state, resolved_gateways)
-    // }
-
-    // pub fn filter_grpc_matching_gateways(state: &State, resolved_gateways: &[(&RouteRef, Option<Arc<gateways::Gateway>>)]) -> Vec<Arc<gateways::Gateway>> {
-    //     Self::filter_matching_gateways(state, resolved_gateways)
-    // }
-
     fn filter_listeners_by_hostnames(listeners: impl Iterator<Item = GatewayListeners> + 'a, route: &'a Route) -> impl Iterator<Item = GatewayListeners> + 'a {
         let route_hostnames = route.hostnames();
         listeners.filter(move |listener| {

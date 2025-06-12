@@ -1,7 +1,7 @@
 use std::{cmp, net::IpAddr};
 
 use gateway_api::{
-    common_types::{GRPCFilterType, GRPCRouteFilter, HTTPFilterType, HTTPRouteRequestRedirect, RouteRef},
+    common_types::{GRPCFilterType, GRPCRouteFilter, HTTPFilterType, HTTPHeader, HTTPRouteRequestRedirect, RouteRef},
     grpcroutes::{GRPCRoute, GRPCRouteRules, GRPCRouteRulesMatches},
     httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesFilters, HTTPRouteRulesMatches, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType},
 };
@@ -175,7 +175,8 @@ impl TryFrom<&HTTPRoute> for Route {
                             .filter_map(|f| {
                                 if f.r#type == HTTPFilterType::RequestHeaderModifier {
                                     if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.add.as_ref().map(|headers| HttpHeader::from_vec(headers).into_iter())
+                                        //modifier.add.as_ref().map(|headers| HttpHeader::from_vec(headers).into_iter())
+                                        modifier.add.as_ref().map(|headers| headers.into_iter().cloned())
                                     } else {
                                         None
                                     }
@@ -207,7 +208,7 @@ impl TryFrom<&HTTPRoute> for Route {
                             .filter_map(|f| {
                                 if f.r#type == HTTPFilterType::RequestHeaderModifier {
                                     if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.set.as_ref().map(|headers| HttpHeader::from_vec(headers).into_iter())
+                                        modifier.set.as_ref().map(|headers| headers.into_iter().cloned())
                                     } else {
                                         None
                                     }
@@ -339,7 +340,7 @@ impl TryFrom<&GRPCRoute> for Route {
                             .filter_map(|f| {
                                 if f.r#type == GRPCFilterType::RequestHeaderModifier {
                                     if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.add.as_ref().map(|headers| HttpHeader::from_vec(headers).into_iter())
+                                        modifier.add.as_ref().map(|headers| headers.into_iter().cloned())
                                     } else {
                                         None
                                     }
@@ -371,7 +372,7 @@ impl TryFrom<&GRPCRoute> for Route {
                             .filter_map(|f| {
                                 if f.r#type == GRPCFilterType::RequestHeaderModifier {
                                     if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.set.as_ref().map(|headers| HttpHeader::from_vec(headers).into_iter())
+                                        modifier.set.as_ref().map(|headers| headers.into_iter().cloned())
                                     } else {
                                         None
                                     }
@@ -668,44 +669,7 @@ pub enum ResolutionStatus {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FilterHeaders {
-    pub add: Vec<HttpHeader>,
+    pub add: Vec<HTTPHeader>,
     pub remove: Vec<String>,
-    pub set: Vec<HttpHeader>,
+    pub set: Vec<HTTPHeader>,
 }
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct HttpHeader {
-    pub name: String,
-    pub value: String,
-}
-
-impl From<&gateway_api::common_types::HTTPHeader> for HttpHeader {
-    fn from(modifier: &gateway_api::common_types::HTTPHeader) -> Self {
-        Self::from(modifier.clone())
-    }
-}
-
-impl From<gateway_api::common_types::HTTPHeader> for HttpHeader {
-    fn from(modifier: gateway_api::common_types::HTTPHeader) -> Self {
-        Self {
-            name: modifier.name,
-            value: modifier.value,
-        }
-    }
-}
-
-pub trait FromVec<'a, S: 'a, T>
-where
-    T: From<&'a S>,
-{
-    fn from_vec(from: &'a [S]) -> Vec<T> {
-        from.iter().map(|s| T::from(s)).collect()
-    }
-}
-
-impl FromVec<'_, gateway_api::common_types::HTTPHeader, HttpHeader> for HttpHeader {}
-//{
-//     fn from_vec(from: Vec<gateway_api::common_types::HTTPHeader>) -> Vec<Self> {
-//         from.into_iter().map(Self::from).collect()
-//     }
-// }

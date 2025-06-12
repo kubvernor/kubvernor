@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use gateway_api::httproutes;
+use gateway_api::{common_types::HTTPHeader, httproutes};
 use serde::Serialize;
 use tracing::{debug, info, warn};
 
 use super::envoy_deployer::{create_certificate_name, create_key_name, create_secret_name, TEMPLATES};
 use crate::{
     backends::common::calculate_hostnames_common,
-    common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, RouteType, TlsType},
+    common::{self, Backend, EffectiveRoutingRule, Listener, ProtocolType, Route, RouteType, TlsType},
     controllers::HostnameMatchFilter,
 };
 #[derive(Debug)]
@@ -259,8 +259,8 @@ impl<'a> EnvoyXDSGenerator<'a> {
             value: String,
             action: FilterHeaderAction,
         }
-        impl From<HttpHeader> for TeraFilterHeader {
-            fn from(header: HttpHeader) -> Self {
+        impl From<HTTPHeader> for TeraFilterHeader {
+            fn from(header: HTTPHeader) -> Self {
                 Self {
                     name: header.name,
                     value: header.value,
