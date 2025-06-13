@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 use super::envoy_deployer::{create_certificate_name, create_key_name, create_secret_name, TEMPLATES};
 use crate::{
     backends::common::calculate_hostnames_common,
-    common::{self, Backend, EffectiveRoutingRule, Listener, ProtocolType, Route, RouteType, TlsType},
+    common::{self, Backend, HTTPEffectiveRoutingRule, Listener, ProtocolType, Route, RouteType, TlsType},
     controllers::HostnameMatchFilter,
 };
 #[derive(Debug)]
@@ -50,7 +50,7 @@ struct EnvoyVirutalHost {
     effective_hostnames: Vec<String>,
     resolved_routes: Vec<Route>,
     unresolved_routes: Vec<Route>,
-    effective_matching_rules: Vec<EffectiveRoutingRule>,
+    effective_matching_rules: Vec<HTTPEffectiveRoutingRule>,
 }
 
 impl Ord for EnvoyVirutalHost {

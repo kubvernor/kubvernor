@@ -1,0 +1,277 @@
+use std::{cmp, net::IpAddr};
+
+use gateway_api::{
+    common_types::{HTTPFilterType, HTTPHeader, HTTPRouteRequestRedirect, HeaderModifier},
+    httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesFilters, HTTPRouteRulesMatches, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType},
+};
+use kube::ResourceExt;
+use tracing::debug;
+
+use super::{
+    get_add_headers, get_remove_headers, get_set_headers, Backend, BackendServiceConfig, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType,
+    DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME,
+};
+use crate::controllers::ControllerError;
+
+fn get_http_default_rules_matches() -> HTTPRouteRulesMatches {
+    HTTPRouteRulesMatches {
+        headers: Some(vec![]),
+        method: None,
+        path: Some(HTTPRouteRulesMatchesPath {
+            r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
+            value: Some("/".to_owned()),
+        }),
+        query_params: None,
+    }
+}
+
+impl TryFrom<HTTPRoute> for Route {
+    type Error = ControllerError;
+
+    fn try_from(value: HTTPRoute) -> Result<Self, Self::Error> {
+        Route::try_from(&value)
+    }
+}
+
+impl TryFrom<&HTTPRoute> for Route {
+    type Error = ControllerError;
+    fn try_from(kube_route: &HTTPRoute) -> Result<Self, Self::Error> {
+        let key = ResourceKey::from(kube_route);
+        let parents = kube_route.spec.parent_refs.clone();
+        let local_namespace = key.namespace.clone();
+
+        let empty_rules: Vec<HTTPRouteRules> = vec![];
+        let mut has_invalid_backends = false;
+        let routing_rules = kube_route.spec.rules.as_ref().unwrap_or(&empty_rules);
+        let routing_rules: Vec<HTTPRoutingRule> = routing_rules
+            .iter()
+            .enumerate()
+            .map(|(i, rr)| HTTPRoutingRule {
+                name: format!("{}-{i}", kube_route.name_any()),
+                matching_rules: rr.matches.clone().unwrap_or_default(),
+                filters: rr.filters.clone().unwrap_or_default(),
+                backends: rr
+                    .backend_refs
+                    .as_ref()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .map(|br| {
+                        let config = BackendServiceConfig {
+                            resource_key: ResourceKey::from((br, local_namespace.clone())),
+                            endpoint: if let Some(namespace) = br.namespace.as_ref() {
+                                if *namespace == DEFAULT_NAMESPACE_NAME {
+                                    br.name.clone()
+                                } else {
+                                    format!("{}.{namespace}", br.name)
+                                }
+                            } else if local_namespace == DEFAULT_NAMESPACE_NAME {
+                                br.name.clone()
+                            } else {
+                                format!("{}.{local_namespace}", br.name)
+                            },
+                            port: br.port.unwrap_or(0),
+                            effective_port: br.port.unwrap_or(0),
+                            weight: br.weight.unwrap_or(1),
+                        };
+
+                        if br.kind.is_none() || br.kind == Some("Service".to_owned()) {
+                            Backend::Maybe(config)
+                        } else {
+                            has_invalid_backends = true;
+                            Backend::Invalid(config)
+                        }
+                    })
+                    .collect(),
+            })
+            .collect();
+        let hostnames = kube_route
+            .spec
+            .hostnames
+            .as_ref()
+            .map(|hostnames| {
+                let hostnames = hostnames.iter().filter(|hostname| hostname.parse::<IpAddr>().is_err()).cloned().collect::<Vec<_>>();
+                hostnames
+            })
+            .unwrap_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()]);
+
+        let effective_routing_rules: Vec<_> = routing_rules
+            .iter()
+            .flat_map(|rr| {
+                let mut matching_rules = rr.matching_rules.clone();
+                if matching_rules.is_empty() {
+                    matching_rules.push(get_http_default_rules_matches());
+                }
+
+                rr.matching_rules.iter().map(|matcher| HTTPEffectiveRoutingRule {
+                    route_matcher: matcher.clone(),
+                    backends: rr.backends.clone(),
+                    name: rr.name.clone(),
+                    hostnames: hostnames.clone(),
+                    request_headers: rr.filter_headers(),
+                    response_headers: FilterHeaders::default(),
+                    redirect_filter: rr
+                        .filters
+                        .iter()
+                        .find_map(|f| if f.r#type == HTTPFilterType::RequestRedirect { f.request_redirect.clone() } else { None }),
+                })
+            })
+            .collect();
+
+        let config = RouteConfig {
+            resource_key: key,
+            parents,
+            hostnames,
+            resolution_status: if has_invalid_backends {
+                ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend)
+            } else {
+                ResolutionStatus::NotResolved(NotResolvedReason::Unknown)
+            },
+            route_type: RouteType::Http(HTTPRoutingConfiguration {
+                routing_rules,
+                effective_routing_rules,
+            }),
+        };
+
+        Ok(Route { config })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct HTTPRoutingConfiguration {
+    pub routing_rules: Vec<HTTPRoutingRule>,
+    pub effective_routing_rules: Vec<HTTPEffectiveRoutingRule>,
+}
+
+#[derive(Clone, Debug)]
+pub struct HTTPRoutingRule {
+    pub name: String,
+    pub backends: Vec<Backend>,
+    pub matching_rules: Vec<HTTPRouteRulesMatches>,
+    pub filters: Vec<HTTPRouteRulesFilters>,
+}
+
+impl HTTPRoutingRule {
+    fn filter_headers(&self) -> FilterHeaders {
+        fn iter<T: Clone, X>(routing_rule: &HTTPRoutingRule, x: X) -> Vec<T>
+        where
+            X: Fn(Option<&HeaderModifier>) -> Option<&Vec<T>>,
+        {
+            routing_rule
+                .filters
+                .iter()
+                .filter(|f| f.r#type == HTTPFilterType::RequestHeaderModifier)
+                .filter_map(|f| x(f.request_header_modifier.as_ref()))
+                .map(|f| f.into_iter())
+                .flat_map(std::iter::Iterator::collect::<Vec<_>>)
+                .cloned()
+                .collect()
+        }
+
+        FilterHeaders {
+            add: iter::<HTTPHeader, _>(self, get_add_headers),
+            remove: iter::<String, _>(self, get_remove_headers),
+            set: iter::<HTTPHeader, _>(self, get_set_headers),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct HTTPEffectiveRoutingRule {
+    pub route_matcher: HTTPRouteRulesMatches,
+    pub backends: Vec<Backend>,
+    pub name: String,
+    pub hostnames: Vec<String>,
+
+    pub request_headers: FilterHeaders,
+    pub response_headers: FilterHeaders,
+
+    pub redirect_filter: Option<HTTPRouteRequestRedirect>,
+}
+
+impl PartialOrd for HTTPEffectiveRoutingRule {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(Self::compare_matching(&self.route_matcher, &other.route_matcher))
+    }
+}
+
+impl HTTPEffectiveRoutingRule {
+    fn header_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
+        match (this.headers.as_ref(), other.headers.as_ref()) {
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (Some(this_headers), Some(other_headers)) => other_headers.len().cmp(&this_headers.len()),
+        }
+    }
+
+    fn query_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
+        match (this.query_params.as_ref(), other.query_params.as_ref()) {
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (Some(this_query_params), Some(other_query_params)) => this_query_params.len().cmp(&other_query_params.len()),
+        }
+    }
+
+    fn method_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
+        match (this.method.as_ref(), other.method.as_ref()) {
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (Some(this_method), Some(other_method)) => {
+                let this_desc = this_method.clone() as isize;
+                let other_desc = other_method.clone() as isize;
+                this_desc.cmp(&other_desc)
+            }
+        }
+    }
+    fn path_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
+        match (this.path.as_ref(), other.path.as_ref()) {
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (Some(this_path), Some(other_path)) => match (this_path.r#type.as_ref(), other_path.r#type.as_ref()) {
+                (None, None) => this_path.value.cmp(&other_path.value),
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (Some(this_prefix_match_type), Some(other_prefix_match_type)) => {
+                    let this_desc = this_prefix_match_type.clone() as isize;
+                    let other_desc = other_prefix_match_type.clone() as isize;
+                    let maybe_equal = this_desc.cmp(&other_desc);
+                    if maybe_equal == cmp::Ordering::Equal {
+                        match (&this_path.value, &other_path.value) {
+                            (None, None) => std::cmp::Ordering::Equal,
+                            (None, Some(_)) => std::cmp::Ordering::Greater,
+                            (Some(_), None) => std::cmp::Ordering::Less,
+                            (Some(this_path), Some(other_path)) => other_path.len().cmp(&this_path.len()),
+                        }
+                    } else {
+                        maybe_equal
+                    }
+                }
+            },
+        }
+    }
+
+    fn compare_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
+        let path_match = Self::path_matching(this, other);
+        let method_match = Self::method_matching(this, other);
+        let header_match = Self::header_matching(this, other);
+        let query_match = Self::query_matching(this, other);
+        let result = if query_match == std::cmp::Ordering::Equal {
+            if header_match == std::cmp::Ordering::Equal {
+                if path_match == std::cmp::Ordering::Equal {
+                    method_match
+                } else {
+                    path_match
+                }
+            } else {
+                header_match
+            }
+        } else {
+            query_match
+        };
+        debug!("Comparing {this:#?} {other:#?} {result:?} {path_match:?} {header_match:?} {query_match:?} {method_match:?}");
+        result
+    }
+}

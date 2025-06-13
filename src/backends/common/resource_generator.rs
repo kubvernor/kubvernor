@@ -7,14 +7,14 @@ use envoy_api_rs::envoy::config::route::v3::Route as EnvoyRoute;
 use tracing::debug;
 
 use crate::{
-    common::{self, EffectiveRoutingRule, GRPCEffectiveRoutingRule, Listener, ProtocolType, Route, RouteType, TlsType, DEFAULT_ROUTE_HOSTNAME},
+    common::{self, GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule, Listener, ProtocolType, Route, RouteType, TlsType, DEFAULT_ROUTE_HOSTNAME},
     controllers::HostnameMatchFilter,
 };
 
 type ListenerNameToHostname = (String, Option<String>);
 
 impl Listener {
-    pub fn http_matching_rules(&self) -> Vec<&EffectiveRoutingRule> {
+    pub fn http_matching_rules(&self) -> Vec<&HTTPEffectiveRoutingRule> {
         let (resolved_routes, unresolved) = self.routes();
         let mut matching_rules: Vec<_> = resolved_routes
             .iter()

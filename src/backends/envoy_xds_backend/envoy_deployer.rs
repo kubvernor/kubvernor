@@ -76,8 +76,8 @@ use super::{
 use crate::{
     backends::{self, common::ResourceGenerator, envoy_xds_backend::resources},
     common::{
-        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig, EffectiveRoutingRule, GRPCEffectiveRoutingRule, Gateway,
-        GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType,
+        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig, GRPCEffectiveRoutingRule, Gateway, GatewayAddress,
+        HTTPEffectiveRoutingRule, Listener, ProtocolType, ResourceKey, TlsType,
     },
     Error,
 };
@@ -821,8 +821,8 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
     clusters.into_iter().map(|c| c.cluster).collect::<Vec<_>>()
 }
 
-impl From<EffectiveRoutingRule> for EnvoyRoute {
-    fn from(effective_routing_rule: EffectiveRoutingRule) -> Self {
+impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
+    fn from(effective_routing_rule: HTTPEffectiveRoutingRule) -> Self {
         let path_specifier = effective_routing_rule.route_matcher.path.clone().and_then(|matcher| {
             let value = matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
             matcher.r#type.map(|t| match t {
