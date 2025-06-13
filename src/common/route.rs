@@ -1,7 +1,7 @@
 use std::{cmp, net::IpAddr};
 
 use gateway_api::{
-    common_types::{GRPCFilterType, GRPCRouteFilter, HTTPFilterType, HTTPHeader, HTTPRouteRequestRedirect, RouteRef},
+    common_types::{GRPCFilterType, GRPCRouteFilter, HTTPFilterType, HTTPHeader, HTTPRouteRequestRedirect, HeaderModifier, RouteRef},
     grpcroutes::{GRPCRoute, GRPCRouteRules, GRPCRouteRulesMatches},
     httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesFilters, HTTPRouteRulesMatches, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType},
 };
@@ -104,10 +104,10 @@ impl TryFrom<&HTTPRoute> for Route {
         let empty_rules: Vec<HTTPRouteRules> = vec![];
         let mut has_invalid_backends = false;
         let routing_rules = kube_route.spec.rules.as_ref().unwrap_or(&empty_rules);
-        let routing_rules: Vec<RoutingRule> = routing_rules
+        let routing_rules: Vec<HTTPRoutingRule> = routing_rules
             .iter()
             .enumerate()
-            .map(|(i, rr)| RoutingRule {
+            .map(|(i, rr)| HTTPRoutingRule {
                 name: format!("{}-{i}", kube_route.name_any()),
                 matching_rules: rr.matches.clone().unwrap_or_default(),
                 filters: rr.filters.clone().unwrap_or_default(),
@@ -168,57 +168,7 @@ impl TryFrom<&HTTPRoute> for Route {
                     backends: rr.backends.clone(),
                     name: rr.name.clone(),
                     hostnames: hostnames.clone(),
-                    request_headers: FilterHeaders {
-                        add: rr
-                            .filters
-                            .iter()
-                            .filter_map(|f| {
-                                if f.r#type == HTTPFilterType::RequestHeaderModifier {
-                                    if let Some(modifier) = &f.request_header_modifier {
-                                        //modifier.add.as_ref().map(|headers| HttpHeader::from_vec(headers).into_iter())
-                                        modifier.add.as_ref().map(|headers| headers.into_iter().cloned())
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            })
-                            .flat_map(std::iter::Iterator::collect::<Vec<_>>)
-                            .collect(),
-                        remove: rr
-                            .filters
-                            .iter()
-                            .filter_map(|f| {
-                                if f.r#type == HTTPFilterType::RequestHeaderModifier {
-                                    if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.remove.as_ref().map(|to_remove| to_remove.clone().into_iter())
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            })
-                            .flat_map(std::iter::Iterator::collect::<Vec<_>>)
-                            .collect(),
-                        set: rr
-                            .filters
-                            .iter()
-                            .filter_map(|f| {
-                                if f.r#type == HTTPFilterType::RequestHeaderModifier {
-                                    if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.set.as_ref().map(|headers| headers.into_iter().cloned())
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            })
-                            .flat_map(std::iter::Iterator::collect::<Vec<_>>)
-                            .collect(),
-                    },
+                    request_headers: rr.filter_headers(),
                     response_headers: FilterHeaders::default(),
                     redirect_filter: rr
                         .filters
@@ -333,56 +283,7 @@ impl TryFrom<&GRPCRoute> for Route {
                     backends: rr.backends.clone(),
                     name: rr.name.clone(),
                     hostnames: hostnames.clone(),
-                    request_headers: FilterHeaders {
-                        add: rr
-                            .filters
-                            .iter()
-                            .filter_map(|f| {
-                                if f.r#type == GRPCFilterType::RequestHeaderModifier {
-                                    if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.add.as_ref().map(|headers| headers.into_iter().cloned())
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            })
-                            .flat_map(std::iter::Iterator::collect::<Vec<_>>)
-                            .collect(),
-                        remove: rr
-                            .filters
-                            .iter()
-                            .filter_map(|f| {
-                                if f.r#type == GRPCFilterType::RequestHeaderModifier {
-                                    if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.remove.as_ref().map(|to_remove| to_remove.clone().into_iter())
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            })
-                            .flat_map(std::iter::Iterator::collect::<Vec<_>>)
-                            .collect(),
-                        set: rr
-                            .filters
-                            .iter()
-                            .filter_map(|f| {
-                                if f.r#type == GRPCFilterType::RequestHeaderModifier {
-                                    if let Some(modifier) = &f.request_header_modifier {
-                                        modifier.set.as_ref().map(|headers| headers.into_iter().cloned())
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            })
-                            .flat_map(std::iter::Iterator::collect::<Vec<_>>)
-                            .collect(),
-                    },
+                    request_headers: rr.filter_headers(),
                     response_headers: FilterHeaders::default(),
                 })
             })
@@ -409,7 +310,7 @@ impl TryFrom<&GRPCRoute> for Route {
 
 #[derive(Clone, Debug)]
 pub struct HTTPRoutingConfiguration {
-    pub routing_rules: Vec<RoutingRule>,
+    pub routing_rules: Vec<HTTPRoutingRule>,
     pub effective_routing_rules: Vec<EffectiveRoutingRule>,
 }
 
@@ -479,11 +380,59 @@ impl Ord for RouteConfig {
 impl Eq for RouteConfig {}
 
 #[derive(Clone, Debug)]
-pub struct RoutingRule {
+pub struct HTTPRoutingRule {
     pub name: String,
     pub backends: Vec<Backend>,
     pub matching_rules: Vec<HTTPRouteRulesMatches>,
     pub filters: Vec<HTTPRouteRulesFilters>,
+}
+
+impl HTTPRoutingRule {
+    fn filter_headers(&self) -> FilterHeaders {
+        fn iter<T: Clone, X>(routing_rule: &HTTPRoutingRule, x: X) -> Vec<T>
+        where
+            X: Fn(Option<&HeaderModifier>) -> Option<&Vec<T>>,
+        {
+            routing_rule
+                .filters
+                .iter()
+                .filter(|f| f.r#type == HTTPFilterType::RequestHeaderModifier)
+                .filter_map(|f| x(f.request_header_modifier.as_ref()))
+                .map(|f| f.into_iter())
+                .flat_map(std::iter::Iterator::collect::<Vec<_>>)
+                .cloned()
+                .collect()
+        }
+
+        FilterHeaders {
+            add: iter::<HTTPHeader, _>(self, get_add_headers),
+            remove: iter::<String, _>(self, get_remove_headers),
+            set: iter::<HTTPHeader, _>(self, get_set_headers),
+        }
+    }
+}
+fn get_add_headers(modifier: Option<&HeaderModifier>) -> Option<&Vec<HTTPHeader>> {
+    if let Some(modifier) = modifier {
+        modifier.add.as_ref()
+    } else {
+        None
+    }
+}
+
+fn get_set_headers(modifier: Option<&HeaderModifier>) -> Option<&Vec<HTTPHeader>> {
+    if let Some(modifier) = modifier {
+        modifier.set.as_ref()
+    } else {
+        None
+    }
+}
+
+fn get_remove_headers(modifier: Option<&HeaderModifier>) -> Option<&Vec<String>> {
+    if let Some(modifier) = modifier {
+        modifier.remove.as_ref()
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -492,6 +441,31 @@ pub struct GRPCRoutingRule {
     pub backends: Vec<Backend>,
     pub matching_rules: Vec<GRPCRouteRulesMatches>,
     pub filters: Vec<GRPCRouteFilter>,
+}
+
+impl GRPCRoutingRule {
+    fn filter_headers(&self) -> FilterHeaders {
+        fn iter<T: Clone, X>(routing_rule: &GRPCRoutingRule, x: X) -> Vec<T>
+        where
+            X: Fn(Option<&HeaderModifier>) -> Option<&Vec<T>>,
+        {
+            routing_rule
+                .filters
+                .iter()
+                .filter(|f| f.r#type == GRPCFilterType::RequestHeaderModifier)
+                .filter_map(|f| x(f.request_header_modifier.as_ref()))
+                .map(|f| f.into_iter())
+                .flat_map(std::iter::Iterator::collect::<Vec<_>>)
+                .cloned()
+                .collect()
+        }
+
+        FilterHeaders {
+            add: iter::<HTTPHeader, _>(self, get_add_headers),
+            remove: iter::<String, _>(self, get_remove_headers),
+            set: iter::<HTTPHeader, _>(self, get_set_headers),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
