@@ -100,10 +100,10 @@ where
 {
     pub async fn on_new_or_changed<T>(&self, route_key: ResourceKey, parent_gateway_refs: &[RouteRef], generation: Option<i64>, save_route: T) -> Result<Action, ControllerError>
     where
-        T: Fn(&State, Option<RouteStatus>) -> (),
+        T: Fn(&State, Option<RouteStatus>),
     {
         let route = self.resource.as_ref().clone();
-        let route = route.try_into().map_err(|e| ControllerError::InvalidPayload(format!("Can't convert the route {:?}", e)))?;
+        let route = route.try_into().map_err(|e| ControllerError::InvalidPayload(format!("Can't convert the route {e:?}")))?;
         let state = &self.state;
         let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
 
@@ -197,7 +197,7 @@ where
     }
 
     async fn add_finalizer(&self, resource: &Arc<impl Resource>) -> Result<Action, ControllerError> {
-        if let Some(finalizer) = needs_finalizer::<R>(&self.resource_key, &self.controller_name, &resource.meta()) {
+        if let Some(finalizer) = needs_finalizer::<R>(&self.resource_key, &self.controller_name, resource.meta()) {
             let _res = self.route_patcher_sender.send(finalizer).await;
         }
 

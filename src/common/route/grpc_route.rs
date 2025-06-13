@@ -11,7 +11,7 @@ use super::{
     get_add_headers, get_remove_headers, get_set_headers, Backend, BackendServiceConfig, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType,
     DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME,
 };
-use crate::controllers::ControllerError;
+use crate::{common::route::HeaderComparator, controllers::ControllerError};
 
 fn get_grpc_default_rules_matches() -> GRPCRouteRulesMatches {
     GRPCRouteRulesMatches { headers: Some(vec![]), method: None }
@@ -149,7 +149,7 @@ impl GRPCRoutingRule {
                 .iter()
                 .filter(|f| f.r#type == GRPCFilterType::RequestHeaderModifier)
                 .filter_map(|f| x(f.request_header_modifier.as_ref()))
-                .map(|f| f.into_iter())
+                .map(std::iter::IntoIterator::into_iter)
                 .flat_map(std::iter::Iterator::collect::<Vec<_>>)
                 .cloned()
                 .collect()
@@ -182,12 +182,8 @@ impl PartialOrd for GRPCEffectiveRoutingRule {
 
 impl GRPCEffectiveRoutingRule {
     fn header_matching(this: &GRPCRouteRulesMatches, other: &GRPCRouteRulesMatches) -> std::cmp::Ordering {
-        match (this.headers.as_ref(), other.headers.as_ref()) {
-            (None, None) => std::cmp::Ordering::Equal,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (Some(this_headers), Some(other_headers)) => other_headers.len().cmp(&this_headers.len()),
-        }
+        let matcher = HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
+        matcher.compare_headers()
     }
 
     fn method_matching(this: &GRPCRouteRulesMatches, other: &GRPCRouteRulesMatches) -> std::cmp::Ordering {

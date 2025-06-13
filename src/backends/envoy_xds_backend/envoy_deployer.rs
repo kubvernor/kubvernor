@@ -10,20 +10,10 @@ use envoy_api_rs::{
                 cluster::{ClusterDiscoveryType, DiscoveryType, LbPolicy},
                 Cluster as EnvoyCluster,
             },
-            core::v3::{
-                address, header_value_option::HeaderAppendAction, socket_address::PortSpecifier, Address, HeaderValue, HeaderValueOption, Http2ProtocolOptions, SocketAddress, TransportSocket,
-            },
+            core::v3::{address, socket_address::PortSpecifier, Address, Http2ProtocolOptions, SocketAddress, TransportSocket},
             endpoint::v3::{lb_endpoint::HostIdentifier, ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints},
             listener::v3::{Filter, FilterChain, Listener as EnvoyListener, ListenerFilter},
-            route::v3::{
-                header_matcher::HeaderMatchSpecifier,
-                redirect_action,
-                route::Action,
-                route_action::{self, ClusterSpecifier},
-                route_match::PathSpecifier,
-                weighted_cluster::ClusterWeight,
-                HeaderMatcher, RedirectAction, Route as EnvoyRoute, RouteAction, RouteConfiguration, RouteMatch, VirtualHost, WeightedCluster,
-            },
+            route::v3::{RouteConfiguration, VirtualHost},
         },
         extensions::{
             filters::{
@@ -37,13 +27,11 @@ use envoy_api_rs::{
             transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig},
             upstreams::http::v3::http_protocol_options::{explicit_http_config::ProtocolConfig, ExplicitHttpConfig, UpstreamProtocolOptions},
         },
-        r#type::matcher::v3::{string_matcher::MatchPattern, RegexMatcher, StringMatcher},
         service::discovery::v3::Resource as EnvoyDiscoveryResource,
     },
     google::protobuf::{BoolValue, Duration, UInt32Value},
 };
 use futures::FutureExt;
-use gateway_api::{common_types, httproutes};
 use itertools::Itertools;
 use k8s_openapi::{
     api::{
@@ -76,8 +64,8 @@ use super::{
 use crate::{
     backends::{self, common::ResourceGenerator, envoy_xds_backend::resources},
     common::{
-        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig, GRPCEffectiveRoutingRule, Gateway, GatewayAddress,
-        HTTPEffectiveRoutingRule, Listener, ProtocolType, ResourceKey, TlsType,
+        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, Listener, ProtocolType,
+        ResourceKey, TlsType,
     },
     Error,
 };
@@ -819,233 +807,6 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
         .collect();
     warn!("Clusters produced {:?}", clusters);
     clusters.into_iter().map(|c| c.cluster).collect::<Vec<_>>()
-}
-
-impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
-    fn from(effective_routing_rule: HTTPEffectiveRoutingRule) -> Self {
-        let path_specifier = effective_routing_rule.route_matcher.path.clone().and_then(|matcher| {
-            let value = matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
-            matcher.r#type.map(|t| match t {
-                httproutes::HTTPRouteRulesMatchesPathType::Exact => PathSpecifier::Path(value),
-                httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
-                    if let Some(val) = matcher.value {
-                        if val == "/" {
-                            PathSpecifier::Prefix(value)
-                        } else {
-                            PathSpecifier::PathSeparatedPrefix(value)
-                        }
-                    } else {
-                        PathSpecifier::Prefix(value)
-                    }
-                }
-                httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: value, ..Default::default() }),
-            })
-        });
-
-        let path_specifier = if path_specifier.is_none() { Some(PathSpecifier::Path("/".to_owned())) } else { path_specifier };
-
-        warn!("Headers to match {:?}", effective_routing_rule.route_matcher.headers);
-        let headers = effective_routing_rule.route_matcher.headers.map_or(vec![], |headers| {
-            headers
-                .iter()
-                .map(|header| HeaderMatcher {
-                    name: header.name.clone(),
-                    header_match_specifier: Some(HeaderMatchSpecifier::StringMatch(StringMatcher {
-                        match_pattern: Some(MatchPattern::Exact(header.value.clone())),
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                })
-                .collect()
-        });
-
-        let route_match = RouteMatch {
-            path_specifier,
-            grpc: None,
-            headers,
-            ..Default::default()
-        };
-
-        let request_filter_headers = effective_routing_rule.request_headers;
-
-        let request_headers_to_add = request_filter_headers
-            .add
-            .clone()
-            .into_iter()
-            .map(|h| HeaderValueOption {
-                header: Some(HeaderValue {
-                    key: h.name,
-                    value: h.value,
-                    ..Default::default()
-                }),
-                append_action: HeaderAppendAction::AppendIfExistsOrAdd.into(),
-                ..Default::default()
-            })
-            .chain(request_filter_headers.set.clone().into_iter().map(|h| HeaderValueOption {
-                header: Some(HeaderValue {
-                    key: h.name,
-                    value: h.value,
-                    ..Default::default()
-                }),
-                append_action: HeaderAppendAction::OverwriteIfExistsOrAdd.into(),
-                ..Default::default()
-            }))
-            .collect();
-
-        let request_headers_to_remove = request_filter_headers.remove;
-
-        let cluster_names: Vec<_> = effective_routing_rule
-            .backends
-            .iter()
-            .filter(|b| b.weight() > 0)
-            .map(|b| ClusterWeight {
-                name: b.cluster_name(),
-                weight: Some(UInt32Value {
-                    value: b.weight().try_into().expect("We do expect this to work for time being"),
-                }),
-                ..Default::default()
-            })
-            .collect();
-        let cluster_action = RouteAction {
-            cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
-            cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
-                clusters: cluster_names,
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
-        let action: Action = if let Some(redirect_action) = effective_routing_rule.redirect_filter.clone().map(|f| RedirectAction {
-            host_redirect: f.hostname.unwrap_or_default(),
-
-            response_code: match f.status_code {
-                Some(302) => redirect_action::RedirectResponseCode::Found.into(),
-                Some(303) => redirect_action::RedirectResponseCode::SeeOther.into(),
-                Some(307) => redirect_action::RedirectResponseCode::TemporaryRedirect.into(),
-                Some(308) => redirect_action::RedirectResponseCode::PermanentRedirect.into(),
-                Some(301 | _) | None => redirect_action::RedirectResponseCode::MovedPermanently.into(),
-            },
-            ..Default::default()
-        }) {
-            Action::Redirect(redirect_action)
-        } else {
-            Action::Route(cluster_action)
-        };
-
-        EnvoyRoute {
-            name: format!("{}-route", effective_routing_rule.name),
-            r#match: Some(route_match),
-            request_headers_to_add,
-            request_headers_to_remove,
-            action: Some(action),
-            ..Default::default()
-        }
-    }
-}
-
-impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
-    fn from(effective_routing_rule: GRPCEffectiveRoutingRule) -> Self {
-        warn!("Headers to match {:?}", effective_routing_rule.route_matcher.headers);
-
-        let headers = effective_routing_rule.route_matcher.headers.map_or(vec![], |headers| {
-            headers
-                .iter()
-                .map(|header| HeaderMatcher {
-                    name: header.name.clone(),
-                    header_match_specifier: Some(HeaderMatchSpecifier::StringMatch(StringMatcher {
-                        match_pattern: Some(MatchPattern::Exact(header.value.clone())),
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                })
-                .collect()
-        });
-
-        let path_specifier = effective_routing_rule.route_matcher.method.clone().and_then(|matcher| {
-            let service = matcher.service.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
-
-            let path = if let Some(method) = matcher.method {
-                "/".to_owned() + &service + "/" + &method
-            } else {
-                "/".to_owned() + &service
-            };
-
-            matcher.r#type.map(|t| match t {
-                common_types::HeaderMatchType::Exact => PathSpecifier::Path(path),
-                common_types::HeaderMatchType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: path, ..Default::default() }),
-            })
-        });
-
-        let path_specifier = if path_specifier.is_none() { Some(PathSpecifier::Prefix("/".to_owned())) } else { path_specifier };
-
-        //let route_match = RouteMatch { headers, path_specifier, grpc: Some(GrpcRouteMatchOptions::default()), ..Default::default() };
-        let route_match = RouteMatch {
-            headers,
-            path_specifier,
-            grpc: None,
-            ..Default::default()
-        };
-
-        let request_filter_headers = effective_routing_rule.request_headers;
-
-        let request_headers_to_add = request_filter_headers
-            .add
-            .clone()
-            .into_iter()
-            .map(|h| HeaderValueOption {
-                header: Some(HeaderValue {
-                    key: h.name,
-                    value: h.value,
-                    ..Default::default()
-                }),
-                append_action: HeaderAppendAction::AppendIfExistsOrAdd.into(),
-                ..Default::default()
-            })
-            .chain(request_filter_headers.set.clone().into_iter().map(|h| HeaderValueOption {
-                header: Some(HeaderValue {
-                    key: h.name,
-                    value: h.value,
-                    ..Default::default()
-                }),
-                append_action: HeaderAppendAction::OverwriteIfExistsOrAdd.into(),
-                ..Default::default()
-            }))
-            .collect();
-
-        let request_headers_to_remove = request_filter_headers.remove;
-
-        let cluster_names: Vec<_> = effective_routing_rule
-            .backends
-            .iter()
-            .filter(|b| b.weight() > 0)
-            .map(|b| ClusterWeight {
-                name: b.cluster_name(),
-                weight: Some(UInt32Value {
-                    value: b.weight().try_into().expect("We do expect this to work for time being"),
-                }),
-                ..Default::default()
-            })
-            .collect();
-        let cluster_action = RouteAction {
-            cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::NotFound.into(),
-            cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
-                clusters: cluster_names,
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
-        let action: Action = Action::Route(cluster_action);
-
-        EnvoyRoute {
-            name: format!("{}-grpc-route", effective_routing_rule.name),
-            r#match: Some(route_match),
-            request_headers_to_add,
-            request_headers_to_remove,
-            action: Some(action),
-            ..Default::default()
-        }
-    }
 }
 
 const ENVOY_POD_SPEC: &str = r#"

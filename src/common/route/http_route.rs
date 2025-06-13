@@ -11,7 +11,10 @@ use super::{
     get_add_headers, get_remove_headers, get_set_headers, Backend, BackendServiceConfig, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType,
     DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME,
 };
-use crate::controllers::ControllerError;
+use crate::{
+    common::route::{HeaderComparator, QueryComparator},
+    controllers::ControllerError,
+};
 
 fn get_http_default_rules_matches() -> HTTPRouteRulesMatches {
     HTTPRouteRulesMatches {
@@ -161,7 +164,7 @@ impl HTTPRoutingRule {
                 .iter()
                 .filter(|f| f.r#type == HTTPFilterType::RequestHeaderModifier)
                 .filter_map(|f| x(f.request_header_modifier.as_ref()))
-                .map(|f| f.into_iter())
+                .map(std::iter::IntoIterator::into_iter)
                 .flat_map(std::iter::Iterator::collect::<Vec<_>>)
                 .cloned()
                 .collect()
@@ -196,21 +199,13 @@ impl PartialOrd for HTTPEffectiveRoutingRule {
 
 impl HTTPEffectiveRoutingRule {
     fn header_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
-        match (this.headers.as_ref(), other.headers.as_ref()) {
-            (None, None) => std::cmp::Ordering::Equal,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (Some(this_headers), Some(other_headers)) => other_headers.len().cmp(&this_headers.len()),
-        }
+        let matcher = HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
+        matcher.compare_headers()
     }
 
     fn query_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
-        match (this.query_params.as_ref(), other.query_params.as_ref()) {
-            (None, None) => std::cmp::Ordering::Equal,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (Some(this_query_params), Some(other_query_params)) => this_query_params.len().cmp(&other_query_params.len()),
-        }
+        let matcher = QueryComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
+        matcher.compare_queries()
     }
 
     fn method_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
