@@ -1,5 +1,5 @@
 use gateway_api::{
-    common_types::{GatewayAddress as CommonGatewayAddress, ParentRouteStatus, RouteRef, RouteStatus},
+    common::{GatewayAddress as CommonGatewayAddress, ParentRouteStatus, ParentReference, RouteStatus},
     constants,
     gateways::Gateway,
     grpcroutes::GRPCRoute,
@@ -900,7 +900,7 @@ impl GatewayProcessedHandler<'_> {
                     let route_parents = ParentRouteStatus {
                         conditions: Some(new_conditions.clone()),
                         controller_name: self.controller_name.clone(),
-                        parent_ref: RouteRef {
+                        parent_ref: ParentReference {
                             namespace: kube_parent.namespace.clone(),
                             name: kube_parent.name.clone(),
                             group: kube_parent.group.clone(),
@@ -947,7 +947,7 @@ impl GatewayProcessedHandler<'_> {
                     let route_parents = ParentRouteStatus {
                         conditions: Some(new_conditions.clone()),
                         controller_name: self.controller_name.clone(),
-                        parent_ref: RouteRef {
+                        parent_ref: ParentReference {
                             namespace: kube_parent.namespace.clone(),
                             name: kube_parent.name.clone(),
                             group: kube_parent.group.clone(),

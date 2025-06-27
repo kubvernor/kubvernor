@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::{
-    common_types::RouteStatus,
+    common::RouteStatus,
     httproutes::{self, HTTPRoute},
 };
 use kube::{

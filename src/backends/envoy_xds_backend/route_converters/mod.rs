@@ -8,14 +8,14 @@ use envoy_api_rs::{
     },
     google::protobuf::UInt32Value,
 };
-use gateway_api::common_types::{HTTPHeader, MatchingHeaders};
+use gateway_api::common::{HTTPHeader, HeaderMatch};
 
 use crate::common::Backend;
 
 mod grpc;
 mod http;
 
-fn create_header_matchers(headers: Option<Vec<MatchingHeaders>>) -> Vec<HeaderMatcher> {
+fn create_header_matchers(headers: Option<Vec<HeaderMatch>>) -> Vec<HeaderMatcher> {
     headers.map_or(vec![], |headers| {
         headers
             .iter()

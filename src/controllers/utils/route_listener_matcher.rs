@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use gateway_api::{
-    common_types::RouteRef,
+    common::ParentReference,
     gateways::{self, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom},
 };
 use tracing::debug;
@@ -47,7 +47,7 @@ impl<'a> RouteListenerMatcher<'a> {
         )
     }
 
-    fn filter_matching_route(&'a self, route_parents: Option<&Vec<RouteRef>>, route: &'a Route) -> (Vec<GatewayListeners>, Option<ResolutionStatus>) {
+    fn filter_matching_route(&'a self, route_parents: Option<&Vec<ParentReference>>, route: &'a Route) -> (Vec<GatewayListeners>, Option<ResolutionStatus>) {
         let route_key = route.resource_key();
         let mut route_resolution_status = None;
         let mut routes_and_listeners: Vec<GatewayListeners> = vec![];
@@ -100,7 +100,7 @@ impl<'a> RouteListenerMatcher<'a> {
         (routes_and_listeners, route_resolution_status)
     }
 
-    pub fn filter_matching_gateways(state: &State, resolved_gateways: &[(&RouteRef, Option<Arc<gateways::Gateway>>)]) -> Vec<Arc<gateways::Gateway>> {
+    pub fn filter_matching_gateways(state: &State, resolved_gateways: &[(&ParentReference, Option<Arc<gateways::Gateway>>)]) -> Vec<Arc<gateways::Gateway>> {
         resolved_gateways
             .iter()
             .filter_map(|(parent_ref, maybe_gateway)| {

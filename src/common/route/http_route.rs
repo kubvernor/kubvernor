@@ -1,8 +1,8 @@
 use std::{cmp, net::IpAddr};
 
 use gateway_api::{
-    common_types::{HTTPFilterType, HTTPHeader, HTTPRouteRequestRedirect, HeaderModifier},
-    httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesFilters, HTTPRouteRulesMatches, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType},
+    common::{HTTPFilterType, HTTPHeader, RequestRedirect, HeaderModifier},
+    httproutes::{HTTPRoute, HTTPRouteRule, HTTPRouteFilter, RouteMatch, PathMatch, HTTPRouteRulesMatchesPathType},
 };
 use kube::ResourceExt;
 use tracing::debug;
@@ -16,11 +16,11 @@ use crate::{
     controllers::ControllerError,
 };
 
-fn get_http_default_rules_matches() -> HTTPRouteRulesMatches {
-    HTTPRouteRulesMatches {
+fn get_http_default_rules_matches() -> RouteMatch {
+    RouteMatch {
         headers: Some(vec![]),
         method: None,
-        path: Some(HTTPRouteRulesMatchesPath {
+        path: Some(PathMatch {
             r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
             value: Some("/".to_owned()),
         }),
@@ -43,7 +43,7 @@ impl TryFrom<&HTTPRoute> for Route {
         let parents = kube_route.spec.parent_refs.clone();
         let local_namespace = key.namespace.clone();
 
-        let empty_rules: Vec<HTTPRouteRules> = vec![];
+        let empty_rules: Vec<HTTPRouteRule> = vec![];
         let mut has_invalid_backends = false;
         let routing_rules = kube_route.spec.rules.as_ref().unwrap_or(&empty_rules);
         let routing_rules: Vec<HTTPRoutingRule> = routing_rules
@@ -149,8 +149,8 @@ pub struct HTTPRoutingConfiguration {
 pub struct HTTPRoutingRule {
     pub name: String,
     pub backends: Vec<Backend>,
-    pub matching_rules: Vec<HTTPRouteRulesMatches>,
-    pub filters: Vec<HTTPRouteRulesFilters>,
+    pub matching_rules: Vec<RouteMatch>,
+    pub filters: Vec<HTTPRouteFilter>,
 }
 
 impl HTTPRoutingRule {
@@ -180,7 +180,7 @@ impl HTTPRoutingRule {
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct HTTPEffectiveRoutingRule {
-    pub route_matcher: HTTPRouteRulesMatches,
+    pub route_matcher: RouteMatch,
     pub backends: Vec<Backend>,
     pub name: String,
     pub hostnames: Vec<String>,
@@ -188,7 +188,7 @@ pub struct HTTPEffectiveRoutingRule {
     pub request_headers: FilterHeaders,
     pub response_headers: FilterHeaders,
 
-    pub redirect_filter: Option<HTTPRouteRequestRedirect>,
+    pub redirect_filter: Option<RequestRedirect>,
 }
 
 impl PartialOrd for HTTPEffectiveRoutingRule {
@@ -198,17 +198,17 @@ impl PartialOrd for HTTPEffectiveRoutingRule {
 }
 
 impl HTTPEffectiveRoutingRule {
-    fn header_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
+    fn header_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
         let matcher = HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
         matcher.compare_headers()
     }
 
-    fn query_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
+    fn query_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
         let matcher = QueryComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
         matcher.compare_queries()
     }
 
-    fn method_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
+    fn method_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
         match (this.method.as_ref(), other.method.as_ref()) {
             (None, None) => std::cmp::Ordering::Equal,
             (None, Some(_)) => std::cmp::Ordering::Greater,
@@ -220,7 +220,7 @@ impl HTTPEffectiveRoutingRule {
             }
         }
     }
-    fn path_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
+    fn path_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
         match (this.path.as_ref(), other.path.as_ref()) {
             (None, None) => std::cmp::Ordering::Equal,
             (None, Some(_)) => std::cmp::Ordering::Greater,
@@ -248,7 +248,7 @@ impl HTTPEffectiveRoutingRule {
         }
     }
 
-    fn compare_matching(this: &HTTPRouteRulesMatches, other: &HTTPRouteRulesMatches) -> std::cmp::Ordering {
+    fn compare_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
         let path_match = Self::path_matching(this, other);
         let method_match = Self::method_matching(this, other);
         let header_match = Self::header_matching(this, other);

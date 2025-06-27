@@ -1,11 +1,11 @@
 use std::fmt::Display;
 
 use gateway_api::{
-    common_types::RouteRef,
+    common::ParentReference,
     gatewayclasses::GatewayClass,
     gateways,
-    grpcroutes::{GRPCRoute, GRPCRouteRulesBackendRefs},
-    httproutes::{HTTPRoute, HTTPRouteRulesBackendRefs},
+    grpcroutes::{GRPCBackendReference, GRPCRoute},
+    httproutes::{HTTPBackendReference, HTTPRoute},
 };
 use k8s_openapi::api::core::v1::Service;
 use kube::{Resource, ResourceExt};
@@ -98,8 +98,8 @@ impl From<(Option<String>, Option<String>, String, Option<String>)> for Resource
     }
 }
 
-impl From<(&RouteRef, String)> for RouteRefKey {
-    fn from((route_parent, route_namespace): (&RouteRef, String)) -> Self {
+impl From<(&ParentReference, String)> for RouteRefKey {
+    fn from((route_parent, route_namespace): (&ParentReference, String)) -> Self {
         Self {
             resource_key: ResourceKey {
                 group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
@@ -163,8 +163,8 @@ impl From<&GRPCRoute> for ResourceKey {
     }
 }
 
-impl From<(&HTTPRouteRulesBackendRefs, String)> for ResourceKey {
-    fn from((value, gateway_namespace): (&HTTPRouteRulesBackendRefs, String)) -> Self {
+impl From<(&HTTPBackendReference, String)> for ResourceKey {
+    fn from((value, gateway_namespace): (&HTTPBackendReference, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
 
         Self {
@@ -176,8 +176,8 @@ impl From<(&HTTPRouteRulesBackendRefs, String)> for ResourceKey {
     }
 }
 
-impl From<(&GRPCRouteRulesBackendRefs, String)> for ResourceKey {
-    fn from((value, gateway_namespace): (&GRPCRouteRulesBackendRefs, String)) -> Self {
+impl From<(&GRPCBackendReference, String)> for ResourceKey {
+    fn from((value, gateway_namespace): (&GRPCBackendReference, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
 
         Self {
@@ -189,8 +189,8 @@ impl From<(&GRPCRouteRulesBackendRefs, String)> for ResourceKey {
     }
 }
 
-impl From<&HTTPRouteRulesBackendRefs> for BackendResourceKey {
-    fn from(value: &HTTPRouteRulesBackendRefs) -> Self {
+impl From<&HTTPBackendReference> for BackendResourceKey {
+    fn from(value: &HTTPBackendReference) -> Self {
         let namespace = value.namespace.clone();
 
         Self {
@@ -202,8 +202,8 @@ impl From<&HTTPRouteRulesBackendRefs> for BackendResourceKey {
     }
 }
 
-impl From<&GRPCRouteRulesBackendRefs> for BackendResourceKey {
-    fn from(value: &GRPCRouteRulesBackendRefs) -> Self {
+impl From<&GRPCBackendReference> for BackendResourceKey {
+    fn from(value: &GRPCBackendReference) -> Self {
         let namespace = value.namespace.clone();
 
         Self {

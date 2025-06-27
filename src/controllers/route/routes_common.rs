@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, convert::TryFrom, sync::Arc, time::Duration};
 
 use gateway_api::{
-    common_types::{ParentRouteStatus, RouteRef, RouteStatus},
+    common::{ParentRouteStatus, ParentReference, RouteStatus},
     gateways::Gateway,
 };
 use k8s_openapi::{
@@ -25,7 +25,7 @@ const CONDITION_MESSAGE: &str = "Route updated by controller";
 
 const RECONCILE_LONG_WAIT: Duration = Duration::from_secs(3600);
 
-pub fn generate_status_for_unknown_gateways(controller_name: &str, gateways: &[(&RouteRef, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<ParentRouteStatus> {
+pub fn generate_status_for_unknown_gateways(controller_name: &str, gateways: &[(&ParentReference, Option<Arc<Gateway>>)], generation: Option<i64>) -> Vec<ParentRouteStatus> {
     gateways
         .iter()
         .map(|(gateway, _)| ParentRouteStatus {
@@ -38,7 +38,7 @@ pub fn generate_status_for_unknown_gateways(controller_name: &str, gateways: &[(
                 type_: "ResolvedRefs".to_owned(),
             }]),
             controller_name: controller_name.to_owned(),
-            parent_ref: RouteRef {
+            parent_ref: ParentReference {
                 group: gateway.group.clone(),
                 kind: gateway.kind.clone(),
                 name: gateway.name.clone(),
@@ -98,7 +98,7 @@ where
     R: TryInto<Route>,
     <R as TryInto<crate::common::Route>>::Error: std::fmt::Debug,
 {
-    pub async fn on_new_or_changed<T>(&self, route_key: ResourceKey, parent_gateway_refs: &[RouteRef], generation: Option<i64>, save_route: T) -> Result<Action, ControllerError>
+    pub async fn on_new_or_changed<T>(&self, route_key: ResourceKey, parent_gateway_refs: &[ParentReference], generation: Option<i64>, save_route: T) -> Result<Action, ControllerError>
     where
         T: Fn(&State, Option<RouteStatus>),
     {
@@ -164,7 +164,7 @@ where
         Ok(Action::await_change())
     }
 
-    pub async fn on_deleted(&self, route_key: ResourceKey, parent_gateway_refs: &[RouteRef]) -> Result<Action, ControllerError> {
+    pub async fn on_deleted(&self, route_key: ResourceKey, parent_gateway_refs: &[ParentReference]) -> Result<Action, ControllerError> {
         let state = &self.state;
         let controller_name = &self.controller_name;
         let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));

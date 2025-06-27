@@ -1,8 +1,8 @@
 use std::{cmp, net::IpAddr};
 
 use gateway_api::{
-    common_types::{GRPCFilterType, GRPCRouteFilter, HTTPHeader, HeaderModifier},
-    grpcroutes::{GRPCRoute, GRPCRouteRules, GRPCRouteRulesMatches},
+    common::{GRPCFilterType, GRPCRouteFilter, HTTPHeader, HeaderModifier},
+    grpcroutes::{GRPCRoute, GRPCRouteRule, GRPCRouteMatch},
 };
 use kube::ResourceExt;
 use tracing::debug;
@@ -13,8 +13,8 @@ use super::{
 };
 use crate::{common::route::HeaderComparator, controllers::ControllerError};
 
-fn get_grpc_default_rules_matches() -> GRPCRouteRulesMatches {
-    GRPCRouteRulesMatches { headers: Some(vec![]), method: None }
+fn get_grpc_default_rules_matches() -> GRPCRouteMatch {
+    GRPCRouteMatch { headers: Some(vec![]), method: None }
 }
 
 impl TryFrom<GRPCRoute> for Route {
@@ -32,7 +32,7 @@ impl TryFrom<&GRPCRoute> for Route {
         let parents = kube_route.spec.parent_refs.clone();
         let local_namespace = key.namespace.clone();
 
-        let empty_rules: Vec<GRPCRouteRules> = vec![];
+        let empty_rules: Vec<GRPCRouteRule> = vec![];
         let mut has_invalid_backends = false;
         let routing_rules = kube_route.spec.rules.as_ref().unwrap_or(&empty_rules);
         let routing_rules: Vec<GRPCRoutingRule> = routing_rules
@@ -134,7 +134,7 @@ pub struct GRPCRoutingConfiguration {
 pub struct GRPCRoutingRule {
     pub name: String,
     pub backends: Vec<Backend>,
-    pub matching_rules: Vec<GRPCRouteRulesMatches>,
+    pub matching_rules: Vec<GRPCRouteMatch>,
     pub filters: Vec<GRPCRouteFilter>,
 }
 
@@ -165,7 +165,7 @@ impl GRPCRoutingRule {
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct GRPCEffectiveRoutingRule {
-    pub route_matcher: GRPCRouteRulesMatches,
+    pub route_matcher: GRPCRouteMatch,
     pub backends: Vec<Backend>,
     pub name: String,
     pub hostnames: Vec<String>,
@@ -181,12 +181,12 @@ impl PartialOrd for GRPCEffectiveRoutingRule {
 }
 
 impl GRPCEffectiveRoutingRule {
-    fn header_matching(this: &GRPCRouteRulesMatches, other: &GRPCRouteRulesMatches) -> std::cmp::Ordering {
+    fn header_matching(this: &GRPCRouteMatch, other: &GRPCRouteMatch) -> std::cmp::Ordering {
         let matcher = HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
         matcher.compare_headers()
     }
 
-    fn method_matching(this: &GRPCRouteRulesMatches, other: &GRPCRouteRulesMatches) -> std::cmp::Ordering {
+    fn method_matching(this: &GRPCRouteMatch, other: &GRPCRouteMatch) -> std::cmp::Ordering {
         match (this.method.as_ref(), other.method.as_ref()) {
             (None, None) => std::cmp::Ordering::Equal,
             (None, Some(_)) => std::cmp::Ordering::Greater,
@@ -203,7 +203,7 @@ impl GRPCEffectiveRoutingRule {
         }
     }
 
-    fn compare_matching(this: &GRPCRouteRulesMatches, other: &GRPCRouteRulesMatches) -> std::cmp::Ordering {
+    fn compare_matching(this: &GRPCRouteMatch, other: &GRPCRouteMatch) -> std::cmp::Ordering {
         let method_match = Self::method_matching(this, other);
         let header_match = Self::header_matching(this, other);
 

@@ -3,7 +3,7 @@ pub mod http_route;
 
 use std::cmp;
 
-use gateway_api::common_types::{HTTPHeader, HeaderModifier, MatchingHeaders, RouteRef};
+use gateway_api::common::{HTTPHeader, HeaderModifier, HeaderMatch, ParentReference};
 pub use grpc_route::GRPCEffectiveRoutingRule;
 pub use http_route::HTTPEffectiveRoutingRule;
 use thiserror::Error;
@@ -45,7 +45,7 @@ impl Route {
         &self.config.hostnames
     }
 
-    pub fn parents(&self) -> Option<&Vec<RouteRef>> {
+    pub fn parents(&self) -> Option<&Vec<ParentReference>> {
         self.config.parents.as_ref()
     }
 
@@ -83,7 +83,7 @@ pub enum RouteType {
 #[derive(Clone, Debug)]
 pub struct RouteConfig {
     pub resource_key: ResourceKey,
-    parents: Option<Vec<RouteRef>>,
+    parents: Option<Vec<ParentReference>>,
     hostnames: Vec<String>,
     pub resolution_status: ResolutionStatus,
     pub route_type: RouteType,
@@ -199,8 +199,8 @@ impl<T> Comparator<'_, T> {
 
 #[derive(TypedBuilder)]
 struct HeaderComparator<'a> {
-    this: Option<&'a Vec<MatchingHeaders>>,
-    other: Option<&'a Vec<MatchingHeaders>>,
+    this: Option<&'a Vec<HeaderMatch>>,
+    other: Option<&'a Vec<HeaderMatch>>,
 }
 
 impl HeaderComparator<'_> {
@@ -212,8 +212,8 @@ impl HeaderComparator<'_> {
 
 #[derive(TypedBuilder)]
 struct QueryComparator<'a> {
-    this: Option<&'a Vec<MatchingHeaders>>,
-    other: Option<&'a Vec<MatchingHeaders>>,
+    this: Option<&'a Vec<HeaderMatch>>,
+    other: Option<&'a Vec<HeaderMatch>>,
 }
 impl QueryComparator<'_> {
     pub fn compare_queries(self) -> std::cmp::Ordering {

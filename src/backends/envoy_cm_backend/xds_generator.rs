@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use gateway_api::{common_types::HTTPHeader, httproutes};
+use gateway_api::{common::HTTPHeader, httproutes};
 use serde::Serialize;
 use tracing::{debug, info, warn};
 

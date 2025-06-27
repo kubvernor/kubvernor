@@ -12,7 +12,7 @@ use envoy_api_rs::{
     },
     google::protobuf::UInt32Value,
 };
-use gateway_api::common_types::{self};
+use gateway_api::common::{self};
 use tracing::warn;
 
 use crate::common::GRPCEffectiveRoutingRule;
@@ -45,8 +45,8 @@ impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
             };
 
             matcher.r#type.map(|t| match t {
-                common_types::HeaderMatchType::Exact => PathSpecifier::Path(path),
-                common_types::HeaderMatchType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: path, ..Default::default() }),
+                common::HeaderMatchType::Exact => PathSpecifier::Path(path),
+                common::HeaderMatchType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: path, ..Default::default() }),
             })
         });
 

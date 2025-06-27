@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use gateway_api::{
-    common_types::MatchingHeaders,
-    httproutes::{HTTPRoute, HTTPRouteRules, HTTPRouteRulesMatches, HTTPRouteRulesMatchesPath, HTTPRouteRulesMatchesPathType},
+    common::{HeaderMatch },
+    httproutes::{HTTPRoute, RouteMatch, HTTPRouteRule, PathMatch, HTTPRouteRulesMatchesPathType},
 };
 
 use crate::common::{HTTPEffectiveRoutingRule, ListenerCondition};
@@ -47,7 +47,7 @@ headers:
 - name: version
   value: two
 ";
-    let x: HTTPRouteRulesMatches = serde_yaml::from_str(m).unwrap();
+    let x: RouteMatch = serde_yaml::from_str(m).unwrap();
     println!("{x:#?}");
 }
 
@@ -65,7 +65,7 @@ backendRefs:
   - name: infra-backend-v2
     port: 8080
 ";
-    let x: HTTPRouteRules = serde_yaml::from_str(m).unwrap();
+    let x: HTTPRouteRule = serde_yaml::from_str(m).unwrap();
     println!("{x:#?}");
 }
 
@@ -117,8 +117,8 @@ spec:
 pub fn test_headers_sorting_rules() {
     let mut rules = vec![
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                headers: Some(vec![MatchingHeaders {
+            route_matcher: RouteMatch {
+                headers: Some(vec![HeaderMatch {
                     name: "version".to_owned(),
                     value: "one".to_owned(),
                     ..Default::default()
@@ -129,8 +129,8 @@ pub fn test_headers_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                headers: Some(vec![MatchingHeaders {
+            route_matcher: RouteMatch {
+                headers: Some(vec![HeaderMatch {
                     name: "version".to_owned(),
                     value: "two".to_owned(),
                     ..Default::default()
@@ -141,14 +141,14 @@ pub fn test_headers_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
+            route_matcher: RouteMatch {
                 headers: Some(vec![
-                    MatchingHeaders {
+                    HeaderMatch {
                         name: "version".to_owned(),
                         value: "two".to_owned(),
                         ..Default::default()
                     },
-                    MatchingHeaders {
+                    HeaderMatch {
                         name: "color".to_owned(),
                         value: "orange".to_owned(),
                         ..Default::default()
@@ -161,8 +161,8 @@ pub fn test_headers_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                headers: Some(vec![MatchingHeaders {
+            route_matcher: RouteMatch {
+                headers: Some(vec![HeaderMatch {
                     name: "color".to_owned(),
                     value: "blue".to_owned(),
                     ..Default::default()
@@ -173,8 +173,8 @@ pub fn test_headers_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                headers: Some(vec![MatchingHeaders {
+            route_matcher: RouteMatch {
+                headers: Some(vec![HeaderMatch {
                     name: "color".to_owned(),
                     value: "green".to_owned(),
                     ..Default::default()
@@ -186,8 +186,8 @@ pub fn test_headers_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                headers: Some(vec![MatchingHeaders {
+            route_matcher: RouteMatch {
+                headers: Some(vec![HeaderMatch {
                     name: "color".to_owned(),
                     value: "red".to_owned(),
                     ..Default::default()
@@ -199,8 +199,8 @@ pub fn test_headers_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                headers: Some(vec![MatchingHeaders {
+            route_matcher: RouteMatch {
+                headers: Some(vec![HeaderMatch {
                     name: "color".to_owned(),
                     value: "yellow".to_owned(),
                     ..Default::default()
@@ -222,8 +222,8 @@ pub fn test_headers_sorting_rules() {
 pub fn test_path_sorting_rules() {
     let mut rules = vec![
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
                     value: Some("/".to_owned()),
                 }),
@@ -233,8 +233,8 @@ pub fn test_path_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
                     value: Some("/one".to_owned()),
                 }),
@@ -244,8 +244,8 @@ pub fn test_path_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
                     value: Some("/two".to_owned()),
                 }),
@@ -265,8 +265,8 @@ pub fn test_path_sorting_rules() {
 pub fn test_path_prefix_sorting_rules() {
     let mut rules = vec![
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
                     value: Some("/".to_owned()),
                 }),
@@ -276,8 +276,8 @@ pub fn test_path_prefix_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
                     value: Some("/one".to_owned()),
                 }),
@@ -287,8 +287,8 @@ pub fn test_path_prefix_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
                     value: Some("/two".to_owned()),
                 }),
@@ -308,8 +308,8 @@ pub fn test_path_prefix_sorting_rules() {
 pub fn test_path_mixed_sorting_rules() {
     let mut rules = vec![
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
                     value: Some("/".to_owned()),
                 }),
@@ -319,8 +319,8 @@ pub fn test_path_mixed_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
                     value: Some("/one".to_owned()),
                 }),
@@ -330,8 +330,8 @@ pub fn test_path_mixed_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
                     value: Some("/two".to_owned()),
                 }),
@@ -341,8 +341,8 @@ pub fn test_path_mixed_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
                     value: Some("/".to_owned()),
                 }),
@@ -352,8 +352,8 @@ pub fn test_path_mixed_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
                     value: Some("/blah".to_owned()),
                 }),
@@ -373,8 +373,8 @@ pub fn test_path_mixed_sorting_rules() {
 pub fn test_paths_and_headers_sorting_rules() {
     let mut rules = vec![
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
                     value: Some("/".to_owned()),
                 }),
@@ -384,12 +384,12 @@ pub fn test_paths_and_headers_sorting_rules() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
                     value: Some("/".to_owned()),
                 }),
-                headers: Some(vec![MatchingHeaders {
+                headers: Some(vec![HeaderMatch {
                     name: "color".to_owned(),
                     value: "green".to_owned(),
                     ..Default::default()
@@ -410,8 +410,8 @@ pub fn test_paths_and_headers_sorting_rules() {
 pub fn test_path_sorting_rules_extended() {
     let mut rules = vec![
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
                     value: Some("/match/exact/one".to_owned()),
                 }),
@@ -421,8 +421,8 @@ pub fn test_path_sorting_rules_extended() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
                     value: Some("/match/exact".to_owned()),
                 }),
@@ -432,8 +432,8 @@ pub fn test_path_sorting_rules_extended() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::Exact),
                     value: Some("/match".to_owned()),
                 }),
@@ -443,8 +443,8 @@ pub fn test_path_sorting_rules_extended() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
                     value: Some("/match".to_owned()),
                 }),
@@ -454,8 +454,8 @@ pub fn test_path_sorting_rules_extended() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
                     value: Some("/match/prefix".to_owned()),
                 }),
@@ -465,8 +465,8 @@ pub fn test_path_sorting_rules_extended() {
             ..Default::default()
         },
         HTTPEffectiveRoutingRule {
-            route_matcher: HTTPRouteRulesMatches {
-                path: Some(HTTPRouteRulesMatchesPath {
+            route_matcher: RouteMatch {
+                path: Some(PathMatch {
                     r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
                     value: Some("/match/prefix/one".to_owned()),
                 }),

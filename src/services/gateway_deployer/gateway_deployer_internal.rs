@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gateway_api::{common_types::Kind, constants, gatewayclasses::GatewayClass, gateways::GatewayStatusListeners};
+use gateway_api::{common::Kind, constants, gatewayclasses::GatewayClass, gateways::GatewayStatusListeners};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
