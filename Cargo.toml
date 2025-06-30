@@ -40,18 +40,19 @@ opentelemetry = "0.27"
 opentelemetry-otlp = "0.27.0"
 cfg-if = "1.0"
 tokio-stream = "0.1.17"
+gateway-api-inference-extension = { version = "0.1.0", git = "https://github.com/kubvernor/gateway-api-inference-extension-rs.git", optional = true }
 
 
 [dev-dependencies]
 serde_yaml = "0.9"
 
-
 [features]
-default = ["standard", "envoy_xds"]
+default = ["standard", "envoy_xds", "inference-ext"]
 standard = []
 experimental = []
 envoy_xds = []
 envoy_cm = []
+inference-ext = ["dep:gateway-api-inference-extension"]
 
 [profile.release]
 codegen-units = 1
