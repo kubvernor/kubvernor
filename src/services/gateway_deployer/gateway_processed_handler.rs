@@ -1,5 +1,5 @@
 use gateway_api::{
-    common::{GatewayAddress as CommonGatewayAddress, ParentRouteStatus, ParentReference, RouteStatus},
+    common::{GatewayAddress as CommonGatewayAddress, ParentReference, ParentRouteStatus, RouteStatus},
     constants,
     gateways::Gateway,
     grpcroutes::GRPCRoute,

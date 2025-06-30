@@ -2,7 +2,7 @@ use std::{cmp, net::IpAddr};
 
 use gateway_api::{
     common::{GRPCFilterType, GRPCRouteFilter, HTTPHeader, HeaderModifier},
-    grpcroutes::{GRPCRoute, GRPCRouteRule, GRPCRouteMatch},
+    grpcroutes::{GRPCRoute, GRPCRouteMatch, GRPCRouteRule},
 };
 use kube::ResourceExt;
 use tracing::debug;

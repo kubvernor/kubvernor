@@ -1,8 +1,8 @@
 use std::{cmp, net::IpAddr};
 
 use gateway_api::{
-    common::{HTTPFilterType, HTTPHeader, RequestRedirect, HeaderModifier},
-    httproutes::{HTTPRoute, HTTPRouteRule, HTTPRouteFilter, RouteMatch, PathMatch, HTTPRouteRulesMatchesPathType},
+    common::{HTTPFilterType, HTTPHeader, HeaderModifier, RequestRedirect},
+    httproutes::{HTTPRoute, HTTPRouteFilter, HTTPRouteRule, HTTPRouteRulesMatchesPathType, PathMatch, RouteMatch},
 };
 use kube::ResourceExt;
 use tracing::debug;

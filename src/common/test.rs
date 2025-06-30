@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use gateway_api::{
-    common::{HeaderMatch },
-    httproutes::{HTTPRoute, RouteMatch, HTTPRouteRule, PathMatch, HTTPRouteRulesMatchesPathType},
+    common::HeaderMatch,
+    httproutes::{HTTPRoute, HTTPRouteRule, HTTPRouteRulesMatchesPathType, PathMatch, RouteMatch},
 };
 
 use crate::common::{HTTPEffectiveRoutingRule, ListenerCondition};

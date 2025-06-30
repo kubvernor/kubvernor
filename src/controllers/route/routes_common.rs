@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, convert::TryFrom, sync::Arc, time::Duration};
 
 use gateway_api::{
-    common::{ParentRouteStatus, ParentReference, RouteStatus},
+    common::{ParentReference, ParentRouteStatus, RouteStatus},
     gateways::Gateway,
 };
 use k8s_openapi::{
