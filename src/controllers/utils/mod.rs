@@ -152,6 +152,7 @@ pub async fn resolve_route_backends(
     backend_reference_resolver: BackendReferenceResolver,
     reference_grants_resolver: ReferenceGrantsResolver,
     routes: Vec<Route>,
+    client: Client, 
 ) -> Vec<Route> {
     let futures: Vec<_> = routes
         .into_iter()
@@ -161,6 +162,7 @@ pub async fn resolve_route_backends(
                 .route(route)
                 .backend_reference_resolver(backend_reference_resolver.clone())
                 .reference_grants_resolver(reference_grants_resolver.clone())
+                .client(client.clone())
                 .build()
                 .resolve()
         })

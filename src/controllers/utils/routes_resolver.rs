@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use gateway_api::gateways::Gateway;
 use k8s_openapi::api::core::v1::Service;
-use kube::Client;
+use kube::{Api, Client};
 use kube_core::object::HasSpec;
 use tracing::{debug, info, warn, Instrument, Span};
 use typed_builder::TypedBuilder;
@@ -19,6 +19,7 @@ use crate::{
 
 #[derive(TypedBuilder)]
 pub struct RouteResolver<'a> {
+    client: Client,
     gateway_resource_key: &'a ResourceKey,
     route: common::Route,
     backend_reference_resolver: BackendReferenceResolver,
@@ -187,6 +188,21 @@ impl RouteResolver<'_> {
                         self.backend_reference_resolver.get_inference_pool_reference(&backend_resource_key).await;
 
                     if let Some(inference_pool) = maybe_inference_pool {
+                        let inference_pool_spec = inference_pool.spec();                        
+                        match inference_pool_spec.extension_ref.group.as_ref(){
+                            None=>{} 
+                            Some(val) if val == "Service" =>{ let service_api: Api<Service> = Api::namespaced(self.client.clone(), &route_resource_key.namespace);
+                                if let Ok(service) = service_api.get(&inference_pool_spec.extension_ref.name).await{
+                                    if let Some(service_spec) = service.spec{
+                                        service_spec.
+                                    }
+                                }else{
+                                    warn!("Can't get endpoint picker service {:?} ", inference_pool_spec.extension_ref);
+                                }
+                            },
+                            _ => {}
+                        }
+                        
                         backend_config.inference_config = Some(InferencePoolConfig(inference_pool.spec().clone()));
                         (Backend::Resolved(BackendType::InferencePool(backend_config)), ResolutionStatus::Resolved)
                     } else {
@@ -241,7 +257,7 @@ impl RoutesResolver<'_> {
         debug!("Validating routes");
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
-        let linked_routes = utils::resolve_route_backends(gateway_resource_key, self.backend_reference_resolver.clone(), self.reference_grants_resolver.clone(), linked_routes)
+        let linked_routes = utils::resolve_route_backends(gateway_resource_key, self.backend_reference_resolver.clone(), self.reference_grants_resolver.clone(), linked_routes,self.client.clone())
             .instrument(Span::current().clone())
             .await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
