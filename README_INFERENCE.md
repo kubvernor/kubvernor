@@ -11,14 +11,25 @@ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api-inference-extens
 kubectl apply -f resources/inference-resources.yaml
 ```
 
-3. Deploy Gateway
+3. Deploy Inference Model Server
+```
+# kubectl apply -f resources/inference-model-server-cpu.yaml
+kubectl apply -f resources/inference-model-server-sim.yaml
+```
+
+4. Deploy Model
+```
+kubectl apply -f resources/inference-model.yaml
+```
+
+5. Deploy Gateway
 
 ```
 kubectl apply -f resources/inference-gateway.yaml
 ```
 
 
-3. Deploy HTTP Route
+6. Deploy HTTP Route
 ```
 kubectl apply -f resources/inference-httproute.yaml
 ```

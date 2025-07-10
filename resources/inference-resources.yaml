@@ -49,7 +49,7 @@ spec:
       containers:
       - name: epp
         image: us-central1-docker.pkg.dev/k8s-staging-images/gateway-api-inference-extension/epp:main
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         args:
         - -poolName
         - "vllm-llama3-8b-instruct"

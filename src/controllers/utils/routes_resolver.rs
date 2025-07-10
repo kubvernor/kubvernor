@@ -8,10 +8,12 @@ use typed_builder::TypedBuilder;
 
 use super::BackendReferenceResolver;
 use crate::{
-    common::{self, Backend, BackendType, NotResolvedReason, ReferenceGrantRef, ReferenceGrantsResolver, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping, KUBERNETES_NONE},
+    common::{self, Backend, BackendType, InferencePoolConfig, NotResolvedReason, ReferenceGrantRef, ReferenceGrantsResolver, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping, KUBERNETES_NONE},
     controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };
+use kube_core::object::HasSpec;
+
 
 #[derive(TypedBuilder)]
 pub struct RouteResolver<'a> {
@@ -175,13 +177,14 @@ impl RouteResolver<'_> {
         let route_namespace = &route_resource_key.namespace;
         warn!("process_inference_pool_backend {}", backend.resource_key());
         match backend {
-            Backend::Maybe(BackendType::InferencePool(backend_config)) => {
+            Backend::Maybe(BackendType::InferencePool(mut backend_config)) => {
                 let backend_resource_key = backend_config.resource_key();
                 let backend_namespace = &backend_resource_key.namespace;
                 if PermittedBackends(gateway_namespace.to_owned()).is_permitted(route_namespace, backend_namespace) {
-                    let maybe_inference_pool = self.backend_reference_resolver.get_inference_pool_reference(&backend_resource_key).await;
+                    let maybe_inference_pool: Option<gateway_api_inference_extension::inferencepools::InferencePool> = self.backend_reference_resolver.get_inference_pool_reference(&backend_resource_key).await;
 
-                    if let Some(_inference_pool) = maybe_inference_pool {
+                    if let Some(inference_pool) = maybe_inference_pool {
+                        backend_config.inference_config = Some(InferencePoolConfig(inference_pool.spec().clone()));
                         (Backend::Resolved(BackendType::InferencePool(backend_config)), ResolutionStatus::Resolved)
                     } else {
                         debug!(

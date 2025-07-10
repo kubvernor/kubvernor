@@ -7,14 +7,13 @@ mod route;
 mod test;
 
 use std::{
-    collections::BTreeSet,
-    fmt::Display,
-    net::{IpAddr, SocketAddr},
+    cmp, collections::{BTreeSet}, fmt::Display, net::{IpAddr, SocketAddr}
 };
 
 pub use gateway::{ChangedContext, Gateway};
 pub use gateway_api::gateways::Gateway as KubeGateway;
 use gateway_api::{gatewayclasses::GatewayClass, gateways::GatewayListeners};
+use gateway_api_inference_extension::inferencepools::{InferencePoolExtensionRefFailureMode, InferencePoolSpec};
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};
 pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE};
@@ -86,7 +85,66 @@ pub struct InferencePoolTypeConfig {
     pub port: i32,
     pub effective_port: i32,
     pub weight: i32,
+    pub inference_config: Option<InferencePoolConfig>        
 }
+
+#[derive(Clone, Debug, PartialEq )]
+pub struct InferencePoolConfig(pub InferencePoolSpec);
+
+impl PartialOrd for InferencePoolConfig{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        let this = &self.0;
+        let other = &other.0;
+        
+        let this_extension_ref = &this.extension_ref;
+        let other_extension_ref = &other.extension_ref;
+
+        let this_failure_mode = &this_extension_ref.failure_mode;
+        let other_failure_mode = &other_extension_ref.failure_mode;
+        match (this_failure_mode, other_failure_mode){            
+            (None, Some(_)) => return Some(cmp::Ordering::Less),
+            (Some(_), None) => return Some(cmp::Ordering::Greater),
+            (Some(InferencePoolExtensionRefFailureMode::FailOpen), Some(InferencePoolExtensionRefFailureMode::FailClose)) => return Some(cmp::Ordering::Greater),
+            (Some(InferencePoolExtensionRefFailureMode::FailClose), Some(InferencePoolExtensionRefFailureMode::FailOpen)) => return Some(cmp::Ordering::Less),
+            _ => ()
+        }
+
+        let order = this_extension_ref.group.partial_cmp(&other_extension_ref.group);
+        if order != Some(cmp::Ordering::Equal){
+            return order;
+        }
+        let order = this_extension_ref.kind.partial_cmp(&other_extension_ref.kind);
+        if order != Some(cmp::Ordering::Equal){
+            return order;
+        }
+        let order = this_extension_ref.name.partial_cmp(&other_extension_ref.name);
+        if order != Some(cmp::Ordering::Equal){
+            return order;
+        }
+
+        let order = this_extension_ref.port_number.partial_cmp(&other_extension_ref.port_number);
+        if order != Some(cmp::Ordering::Equal){
+            return order;
+        }
+
+        let order = this.target_port_number.partial_cmp(&other.target_port_number);
+        if order != Some(cmp::Ordering::Equal){
+            return order;
+        }
+
+        this.selector.partial_cmp(&other.selector)
+
+
+    }
+}
+
+impl Eq for InferencePoolConfig{}
+impl Ord for InferencePoolConfig{
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.partial_cmp(other).unwrap_or(cmp::Ordering::Equal)
+    }
+}
+
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub struct InvalidTypeConfig {
