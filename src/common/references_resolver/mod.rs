@@ -127,8 +127,7 @@ where
 
     pub async fn resolve(&self) {
         let mut interval = time::interval(time::Duration::from_secs(1));
-        let span = span!(Level::INFO, "ReferencesResolver");
-        let _entered = span.enter();
+
         loop {
             interval.tick().await;
             let references = {
