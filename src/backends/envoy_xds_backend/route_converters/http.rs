@@ -1,25 +1,28 @@
 use std::collections::HashMap;
 
-use envoy_api_rs::envoy::{
-    config::{
-        core::v3::{
-            grpc_service::{GoogleGrpc, TargetSpecifier},
-            GrpcService,
+use envoy_api_rs::{
+    envoy::{
+        config::{
+            core::v3::{
+                grpc_service::{GoogleGrpc, TargetSpecifier},
+                GrpcService,
+            },
+            route::v3::{
+                redirect_action,
+                route::Action,
+                route_action::{self, ClusterSpecifier},
+                route_match::PathSpecifier,
+                RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster,
+            },
         },
-        route::v3::{
-            redirect_action,
-            route::Action,
-            route_action::{self, ClusterSpecifier},
-            route_match::PathSpecifier,
-            RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster,
+        extensions::filters::http::ext_proc::v3::{
+            ext_proc_per_route::Override,
+            processing_mode::{BodySendMode, HeaderSendMode},
+            ExtProcOverrides, ExtProcPerRoute, ProcessingMode,
         },
+        r#type::matcher::v3::RegexMatcher,
     },
-    extensions::filters::http::ext_proc::v3::{
-        ext_proc_per_route::Override,
-        processing_mode::{BodySendMode, HeaderSendMode},
-        ExtProcOverrides, ExtProcPerRoute, ProcessingMode,
-    },
-    r#type::matcher::v3::RegexMatcher,
+    google::protobuf::BoolValue,
 };
 use gateway_api::httproutes;
 use tracing::warn;
@@ -31,45 +34,51 @@ use crate::{
 
 impl HTTPEffectiveRoutingRule {
     pub fn add_inference_filters(self, mut envoy_route: EnvoyRoute) -> EnvoyRoute {
-        let inference_extension_configuration = get_inference_extension_configuarations(&self.backends);
+        let inference_extension_configuration = get_inference_extension_configurations(&self.backends);
         if inference_extension_configuration.len() > 1 {
             warn!("Multiple external processing filter configuration per route {:?} ", self);
         }
 
         let per_route_filters = inference_extension_configuration
             .first()
-            .map(|conf| {
+            .and_then(|conf| {
                 warn!("Inference Pool: setting up external service with {conf:?}");
-                conf.inference_config.as_ref().map(|conf| {
-                    let ext_proc_route = ExtProcPerRoute {
-                        r#override: Some(Override::Overrides(ExtProcOverrides {
-                            processing_mode: Some(ProcessingMode {
-                                request_header_mode: HeaderSendMode::Send.into(),
-                                request_body_mode: BodySendMode::Buffered.into(),
-                                ..Default::default()
-                            }),
-
-                            grpc_service: Some(GrpcService {
-                                target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
-                                    target_uri: format!("{}:{}", conf.extension_ref().name, conf.extension_ref().port_number.unwrap_or(9002)),
-                                    stat_prefix: self.name.clone() + "_ext_svc",
+                conf.inference_config
+                    .as_ref()
+                    .map(|conf| {
+                        let ext_proc_route = ExtProcPerRoute {
+                            r#override: Some(Override::Overrides(ExtProcOverrides {
+                                processing_mode: Some(ProcessingMode {
+                                    request_header_mode: HeaderSendMode::Send.into(),
+                                    request_body_mode: BodySendMode::Buffered.into(),
                                     ..Default::default()
-                                })),
+                                }),
+
+                                grpc_service: Some(GrpcService {
+                                    target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
+                                        target_uri: format!("https://{}:{}", conf.extension_ref().name, conf.extension_ref().port_number.unwrap_or(9002)),
+                                        stat_prefix: self.name.clone() + "_ext_svc",
+                                        ..Default::default()
+                                    })),
+                                    ..Default::default()
+                                }),
+                                failure_mode_allow: Some(BoolValue { value: false }),
                                 ..Default::default()
-                            }),
-                            ..Default::default()
-                        })),
-                    };
-                    let mut per_route_filters = HashMap::new();
-                    per_route_filters.insert(
-                        "envoy.filters.http.ext_proc".to_owned(),
-                        converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute".to_owned(), &ext_proc_route)),
-                    );
-                    per_route_filters
-                })
+                            })),
+                        };
+                        let mut per_route_filters = HashMap::new();
+                        per_route_filters.insert(
+                            "envoy.filters.http.ext_proc".to_owned(),
+                            converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute".to_owned(), &ext_proc_route)),
+                        );
+                        per_route_filters
+                    })
+                    .or_else(|| {
+                        warn!("Inference Pool: inference config not set {:?}", conf);
+                        None
+                    })
             })
-            .flatten()
-            .unwrap_or(HashMap::new());
+            .unwrap_or_default();
 
         envoy_route.typed_per_filter_config = per_route_filters;
         envoy_route
@@ -162,7 +171,7 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
     }
 }
 
-fn get_inference_extension_configuarations(backends: &[Backend]) -> Vec<&InferencePoolTypeConfig> {
+fn get_inference_extension_configurations(backends: &[Backend]) -> Vec<&InferencePoolTypeConfig> {
     backends
         .iter()
         .filter_map(|b| match b.backend_type() {

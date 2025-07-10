@@ -41,12 +41,14 @@ impl RouteResolver<'_> {
 
         match &mut route_config.route_type {
             common::RouteType::Http(httprouting_configuration) => {
-                for rule in &mut httprouting_configuration.routing_rules {
+                let mut rules = httprouting_configuration.routing_rules.iter_mut().zip(httprouting_configuration.effective_routing_rules.iter_mut());
+                for (rule, effective_rule) in &mut rules {
                     let (new_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;
                     if resolution_status != ResolutionStatus::Resolved {
                         route_resolution_status = resolution_status;
                     }
-                    rule.backends = new_backends;
+                    rule.backends.clone_from(&new_backends);
+                    effective_rule.backends = new_backends;
                 }
             }
             common::RouteType::Grpc(grpcrouting_configuration) => {
@@ -191,23 +193,36 @@ impl RouteResolver<'_> {
                         let inference_pool_spec = inference_pool.spec();
 
                         match inference_pool_spec.extension_ref.group.as_ref() {
-                            None => {}
+                            None => {
+                                let service_api: Api<Service> = Api::namespaced(self.client.clone(), &route_resource_key.namespace);
+                                if let Ok(service) = service_api.get(&inference_pool_spec.extension_ref.name).await {
+                                    warn!("Inference Pool: Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
+                                } else {
+                                    warn!("Inference Pool: Can't get endpoint picker service {:?} ", inference_pool_spec.extension_ref);
+                                }
+                            }
                             Some(val) if val == "Service" => {
                                 let service_api: Api<Service> = Api::namespaced(self.client.clone(), &route_resource_key.namespace);
                                 if let Ok(service) = service_api.get(&inference_pool_spec.extension_ref.name).await {
-                                    warn!("Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
+                                    warn!("Inference Pool: Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
                                 } else {
-                                    warn!("Can't get endpoint picker service {:?} ", inference_pool_spec.extension_ref);
+                                    warn!("Inference Pool: Can't get endpoint picker service {:?} ", inference_pool_spec.extension_ref);
                                 }
                             }
                             _ => {}
                         }
 
-                        backend_config.inference_config = Some(InferencePoolConfig(inference_pool.spec().clone()));
+                        backend_config.inference_config = Some(InferencePoolConfig(inference_pool_spec.clone()));
+
+                        warn!(
+                            "Inference Pool: Setting backend config {}-{} {:?}",
+                            &backend_resource_key.name, &backend_resource_key.namespace, inference_pool_spec
+                        );
+
                         (Backend::Resolved(BackendType::InferencePool(backend_config)), ResolutionStatus::Resolved)
                     } else {
-                        debug!(
-                            "Inference Backend can't resolve {}-{} {:?}",
+                        warn!(
+                            "Inference Pool: Backend can't resolve {}-{} {:?}",
                             &backend_resource_key.name, &backend_resource_key.namespace, maybe_inference_pool
                         );
                         (
@@ -267,6 +282,8 @@ impl RoutesResolver<'_> {
         .instrument(Span::current().clone())
         .await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
+
+        warn!("Linked routes {:#?}", linked_routes);
 
         let (route_to_listeners_mapping, routes_with_no_listeners) = RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();
         let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);

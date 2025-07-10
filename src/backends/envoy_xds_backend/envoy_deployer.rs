@@ -10,14 +10,20 @@ use envoy_api_rs::{
                 cluster::{ClusterDiscoveryType, DiscoveryType, LbPolicy},
                 Cluster as EnvoyCluster, LoadBalancingPolicy,
             },
-            core::v3::{address, socket_address::PortSpecifier, Address, Http2ProtocolOptions, SocketAddress, TransportSocket},
+            core::v3::{address, socket_address::PortSpecifier, Address, GrpcService, Http2ProtocolOptions, SocketAddress, TransportSocket},
             endpoint::v3::{lb_endpoint::HostIdentifier, ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints},
             listener::v3::{Filter, FilterChain, Listener as EnvoyListener, ListenerFilter},
             route::v3::{RouteConfiguration, VirtualHost},
         },
         extensions::{
             filters::{
-                http::router::v3::Router,
+                http::{
+                    ext_proc::v3::{
+                        processing_mode::{BodySendMode, HeaderSendMode},
+                        ExternalProcessor, ProcessingMode,
+                    },
+                    router::v3::Router,
+                },
                 listener::tls_inspector::v3::TlsInspector,
                 network::http_connection_manager::v3::{
                     http_connection_manager::{CodecType, RouteSpecifier},
@@ -370,8 +376,22 @@ fn create_resources(gateway: &Gateway) -> Resources {
 
     for listener in listeners {
         let router = Router { ..Default::default() };
+        let ext_processor = ExternalProcessor {
+            processing_mode: Some(ProcessingMode {
+                request_header_mode: HeaderSendMode::Skip.into(),
+                response_header_mode: HeaderSendMode::Skip.into(),
+                ..Default::default()
+            }),
+
+            grpc_service: Some(GrpcService { ..Default::default() }),
+            failure_mode_allow: false,
+            allow_mode_override: true,
+            ..Default::default()
+        };
         let listener_name = listener.name.clone();
         let http_connection_manager_router_filter_any = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.router.v3.Router".to_owned(), &router));
+        let http_connection_manager_ext_processor_any =
+            converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor".to_owned(), &ext_processor));
 
         let router_filter = HttpFilter {
             name: format!("{listener_name}-http-connection-manager-route-filter"),
@@ -382,11 +402,20 @@ fn create_resources(gateway: &Gateway) -> Resources {
             )),
         };
 
+        let external_processor_filter = HttpFilter {
+            name: "envoy.filters.http.ext_proc".to_owned(),
+            is_optional: false,
+            disabled: false,
+            config_type: Some(envoy_api_rs::envoy::extensions::filters::network::http_connection_manager::v3::http_filter::ConfigType::TypedConfig(
+                http_connection_manager_ext_processor_any,
+            )),
+        };
+
         let virtual_hosts = generate_virtual_hosts_from_xds(&listener.http_listener_map);
         let http_connection_manager = HttpConnectionManager {
             stat_prefix: listener_name.clone(),
             codec_type: CodecType::Auto.into(),
-            http_filters: vec![router_filter],
+            http_filters: vec![router_filter, external_processor_filter],
             route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
                 name: format!("{listener_name}-route"),
                 virtual_hosts,
@@ -899,7 +928,7 @@ const ENVOY_POD_SPEC: &str = r#"
                 "/envoy-config/envoy-bootstrap.yaml",
                 "--service-cluster $(GATEWAY_NAMESPACE)",
                 "--service-node $(ENVOY_POD_NAME)",
-                "--log-level info"
+                "--log-level trace"
             ],
             "command": [
                 "envoy"
@@ -908,6 +937,10 @@ const ENVOY_POD_SPEC: &str = r#"
             "imagePullPolicy": "IfNotPresent",
             "name": "envoy",
             "env": [
+                {
+                    "name": "GRPC_TRACE",
+                    "value": "tcp,http,api"
+                },
                 {
                     "name": "GATEWAY_NAMESPACE",
                     "valueFrom": {
