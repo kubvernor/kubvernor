@@ -615,7 +615,7 @@ const ENVOY_POD_SPEC: &str = r#"
                     "port": 9901
                 },
                 "initialDelaySeconds": 3,
-                "periodSeconds": 4
+                "periodSeconds": 20
             },
             "volumeMounts": [
                 {

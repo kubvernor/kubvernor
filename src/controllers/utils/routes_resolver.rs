@@ -1,9 +1,10 @@
 use std::collections::{BTreeSet, HashMap};
 
 use gateway_api::gateways::Gateway;
-use k8s_openapi::api::core::v1::Service;
-use kube::{Api, Client};
-use kube_core::object::HasSpec;
+use gateway_api_inference_extension::inferencepools::InferencePoolSpec;
+use k8s_openapi::api::core::v1::{Pod, Service};
+use kube::{api::ListParams, Api, Client};
+use kube_core::{object::HasSpec, Expression, Selector};
 use tracing::{debug, info, warn, Instrument, Span};
 use typed_builder::TypedBuilder;
 
@@ -177,6 +178,32 @@ impl RouteResolver<'_> {
         }
     }
 
+    async fn get_inference_extension(client: Client, namespace: &str, inference_pool_spec: &InferencePoolSpec) {
+        let service_api: Api<Service> = Api::namespaced(client, namespace);
+        if let Ok(service) = service_api.get(&inference_pool_spec.extension_ref.name).await {
+            warn!("Inference Pool: Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
+        } else {
+            warn!("Inference Pool: Can't get endpoint picker service {:?} ", inference_pool_spec.extension_ref);
+        }
+    }
+
+    async fn get_model_endpoints(client: Client, namespace: &str, inference_pool_spec: &InferencePoolSpec) -> Vec<String> {
+        let mut selector: Selector = Selector::default();
+
+        for (k, v) in &inference_pool_spec.selector {
+            selector.extend(Expression::Equal(k.to_owned(), v.to_owned()));
+        }
+
+        let list_params = ListParams::default().labels_from(&selector);
+        let api: Api<Pod> = Api::namespaced(client, namespace);
+
+        if let Ok(pods) = api.list(&list_params).await {
+            pods.iter().filter_map(|pod| pod.status.as_ref()).filter_map(|status| status.pod_ip.as_ref()).cloned().collect()
+        } else {
+            vec![]
+        }
+    }
+
     async fn process_inference_pool_backend(&self, route_resource_key: &ResourceKey, backend: Backend) -> (Backend, ResolutionStatus) {
         let gateway_namespace = &self.gateway_resource_key.namespace;
         let route_namespace = &route_resource_key.namespace;
@@ -191,28 +218,23 @@ impl RouteResolver<'_> {
 
                     if let Some(inference_pool) = maybe_inference_pool {
                         let inference_pool_spec = inference_pool.spec();
+                        let model_endpoints = Self::get_model_endpoints(self.client.clone(), &route_resource_key.namespace, inference_pool_spec).await;
 
-                        match inference_pool_spec.extension_ref.group.as_ref() {
+                        warn!("Inference Pool: got model endpoints {:?}", model_endpoints);
+
+                        match inference_pool_spec.extension_ref.kind.as_ref() {
                             None => {
-                                let service_api: Api<Service> = Api::namespaced(self.client.clone(), &route_resource_key.namespace);
-                                if let Ok(service) = service_api.get(&inference_pool_spec.extension_ref.name).await {
-                                    warn!("Inference Pool: Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
-                                } else {
-                                    warn!("Inference Pool: Can't get endpoint picker service {:?} ", inference_pool_spec.extension_ref);
-                                }
+                                Self::get_inference_extension(self.client.clone(), &route_resource_key.namespace, inference_pool_spec).await;
                             }
                             Some(val) if val == "Service" => {
-                                let service_api: Api<Service> = Api::namespaced(self.client.clone(), &route_resource_key.namespace);
-                                if let Ok(service) = service_api.get(&inference_pool_spec.extension_ref.name).await {
-                                    warn!("Inference Pool: Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
-                                } else {
-                                    warn!("Inference Pool: Can't get endpoint picker service {:?} ", inference_pool_spec.extension_ref);
-                                }
+                                Self::get_inference_extension(self.client.clone(), &route_resource_key.namespace, inference_pool_spec).await;
                             }
                             _ => {}
                         }
 
                         backend_config.inference_config = Some(InferencePoolConfig(inference_pool_spec.clone()));
+                        backend_config.effective_port = inference_pool_spec.target_port_number;
+                        backend_config.endpoints = Some(model_endpoints);
 
                         warn!(
                             "Inference Pool: Setting backend config {}-{} {:?}",

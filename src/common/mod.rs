@@ -89,6 +89,7 @@ pub struct InferencePoolTypeConfig {
     pub effective_port: i32,
     pub weight: i32,
     pub inference_config: Option<InferencePoolConfig>,
+    pub endpoints: Option<Vec<String>>,
 }
 
 impl InferencePoolTypeConfig {

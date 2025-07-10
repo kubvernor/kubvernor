@@ -38,6 +38,7 @@ kubectl apply -f resources/inference-httproute.yaml
 ```
 curl -vki 172.18.255.200:2080/v1/chat/completions -d '{ "model": "meta-llama/Llama-3.1-8B-Instruct", "messages": [{"role":"developer", "content":"hello"}]}'
 curl -vki 192.168.1.10:3000/v1/completions -H 'Content-Type: application/json' -d '{"model": "food-review", "prompt":"Write as if you were a critic: San Francisco", "max_tokens":100, "temperature":0}'
+curl -vki 172.18.255.200:2080/v1/completions -H 'Content-Type: application/json' -d '{"model": "food-review", "prompt":"Write as if you were a critic: San Francisco", "max_tokens":100, "temperature":0}'
 
 ```
 

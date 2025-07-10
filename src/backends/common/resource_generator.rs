@@ -409,8 +409,8 @@ fn generate_ext_service_cluster(config: &InferenceClusterInfo) -> Option<Cluster
         name: config.cluster_name().to_owned(),
         cluster: EnvoyCluster {
             name: cluster_name.clone(),
-            //cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::LogicalDns.into())),
-            cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::Static.into())),
+            cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::LogicalDns.into())),
+            //cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::Static.into())),
             lb_policy: LbPolicy::RoundRobin.into(),
             connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
             load_assignment: Some(ClusterLoadAssignment {
@@ -457,6 +457,27 @@ fn create_inference_cluster(config: &InferencePoolTypeConfig, route_type: &Route
         }],
         fallback_policy: Some(LoadBalancingPolicy { policies: vec![fallback_policy] }),
     };
+
+    let lb_endpoints: Vec<_> = config
+        .endpoints
+        .as_ref()
+        .map(|endpoints| {
+            endpoints
+                .iter()
+                .map(|e| (e.clone(), config.effective_port))
+                .map(|addr| LbEndpoint {
+                    host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
+                        address: Some(SocketAddressFactory::from_address_port(addr)),
+                        ..Default::default()
+                    })),
+                    load_balancing_weight: Some(UInt32Value { value: 1 }),
+
+                    ..Default::default()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     ClusterHolder {
         name: config.cluster_name(),
         cluster: EnvoyCluster {
@@ -475,10 +496,11 @@ fn create_inference_cluster(config: &InferencePoolTypeConfig, route_type: &Route
                     }),
                 }],
             }),
-
-            typed_extension_protocol_options: vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
-                .into_iter()
-                .collect(),
+            load_assignment: Some(ClusterLoadAssignment {
+                cluster_name: config.cluster_name(),
+                endpoints: vec![LocalityLbEndpoints { lb_endpoints, ..Default::default() }],
+                ..Default::default()
+            }),
 
             ..Default::default()
         },

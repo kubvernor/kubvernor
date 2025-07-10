@@ -172,6 +172,7 @@ impl From<(&HTTPBackendReference, &str)> for InferencePoolTypeConfig {
             effective_port: br.port.unwrap_or(0),
             weight: br.weight.unwrap_or(1),
             inference_config: None,
+            endpoints: None,
         }
     }
 }
