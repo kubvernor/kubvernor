@@ -10,7 +10,7 @@ use envoy_api_rs::{
 };
 use gateway_api::common::{HTTPHeader, HeaderMatch};
 
-use crate::common::{Backend, BackendType, BackendTypeConfig};
+use crate::common::BackendTypeConfig;
 
 mod grpc;
 mod http;

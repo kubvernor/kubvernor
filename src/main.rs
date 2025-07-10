@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 pub(crate) use clap::Parser;
 use kubvernor::{start, Args};
-use opentelemetry::trace::TracerProvider as _;
+use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use tracing_appender::non_blocking::WorkerGuard;
@@ -85,11 +85,15 @@ fn init_logging(args: &CommandArgs) -> Guard {
             .with_timeout(std::time::Duration::from_secs(3))
             .build()
         {
-            let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
-                .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+            let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                .with_batch_exporter(exporter)
                 .with_id_generator(RandomIdGenerator::default())
                 .with_sampler(Sampler::AlwaysOn)
-                .with_resource(opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new("service.name", controller_name.clone())]))
+                .with_resource(
+                    opentelemetry_sdk::Resource::builder()
+                        .with_attributes(vec![opentelemetry::KeyValue::new("service.name", controller_name.clone())])
+                        .build(),
+                )
                 .build();
 
             let tracer = tracer_provider.tracer(controller_name);
