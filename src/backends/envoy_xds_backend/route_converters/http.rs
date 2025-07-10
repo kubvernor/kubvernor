@@ -4,7 +4,7 @@ use envoy_api_rs::{
     envoy::{
         config::{
             core::v3::{
-                grpc_service::{GoogleGrpc, TargetSpecifier},
+                grpc_service::{EnvoyGrpc, TargetSpecifier},
                 GrpcService,
             },
             route::v3::{
@@ -28,8 +28,8 @@ use gateway_api::httproutes;
 use tracing::warn;
 
 use crate::{
-    backends::{common::INFERENCE_EXT_PROC_FILTER_NAME, envoy_xds_backend::converters},
-    common::{Backend, HTTPEffectiveRoutingRule, InferencePoolTypeConfig},
+    backends::common::{converters, get_inference_extension_configurations, inference_cluster_name, INFERENCE_EXT_PROC_FILTER_NAME},
+    common::HTTPEffectiveRoutingRule,
 };
 
 impl HTTPEffectiveRoutingRule {
@@ -45,7 +45,8 @@ impl HTTPEffectiveRoutingRule {
                 warn!("Inference Pool: setting up external service with {conf:?}");
                 conf.inference_config
                     .as_ref()
-                    .map(|conf| {
+                    .map(|_conf| {
+                        let inference_cluster_name = inference_cluster_name(envoy_route.name.clone());
                         let ext_proc_route = ExtProcPerRoute {
                             r#override: Some(Override::Overrides(ExtProcOverrides {
                                 processing_mode: Some(ProcessingMode {
@@ -54,10 +55,17 @@ impl HTTPEffectiveRoutingRule {
                                     ..Default::default()
                                 }),
 
+                                // grpc_service: Some(GrpcService {
+                                //     target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
+                                //         target_uri: format!("https://{}:{}", conf.extension_ref().name, conf.extension_ref().port_number.unwrap_or(9002)),
+                                //         stat_prefix: self.name.clone() + "_ext_svc",
+                                //         ..Default::default()
+                                //     })),
+                                //     ..Default::default()
+                                // }),
                                 grpc_service: Some(GrpcService {
-                                    target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
-                                        target_uri: format!("https://{}:{}", conf.extension_ref().name, conf.extension_ref().port_number.unwrap_or(9002)),
-                                        stat_prefix: self.name.clone() + "_ext_svc",
+                                    target_specifier: Some(TargetSpecifier::EnvoyGrpc(EnvoyGrpc {
+                                        cluster_name: inference_cluster_name,
                                         ..Default::default()
                                     })),
                                     ..Default::default()
@@ -160,23 +168,15 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
         };
 
         let name = format!("{}-route", effective_routing_rule.name);
-        effective_routing_rule.add_inference_filters(EnvoyRoute {
+        let route = EnvoyRoute {
             name,
             r#match: Some(route_match),
             request_headers_to_add,
             request_headers_to_remove,
             action: Some(action),
             ..Default::default()
-        })
+        };
+        let route = effective_routing_rule.add_inference_filters(route);
+        route
     }
-}
-
-fn get_inference_extension_configurations(backends: &[Backend]) -> Vec<&InferencePoolTypeConfig> {
-    backends
-        .iter()
-        .filter_map(|b| match b.backend_type() {
-            crate::common::BackendType::InferencePool(inference_type_config) => Some(inference_type_config),
-            _ => None,
-        })
-        .collect()
 }

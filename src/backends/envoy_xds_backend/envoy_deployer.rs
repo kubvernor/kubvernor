@@ -1,27 +1,22 @@
 use std::{
-    collections::{btree_map::Values, BTreeMap, BTreeSet, HashMap},
+    collections::{btree_map::Values, BTreeMap, BTreeSet},
     sync::LazyLock,
 };
 
 use envoy_api_rs::{
     envoy::{
         config::{
-            cluster::v3::{
-                cluster::{ClusterDiscoveryType, DiscoveryType, LbPolicy},
-                Cluster as EnvoyCluster, LoadBalancingPolicy,
+            core::v3::{
+                grpc_service::{GoogleGrpc, TargetSpecifier},
+                GrpcService, TransportSocket,
             },
-            core::v3::{address, grpc_service::{GoogleGrpc, TargetSpecifier}, socket_address::PortSpecifier, Address, GrpcService, Http2ProtocolOptions, SocketAddress, TransportSocket},
-            endpoint::v3::{lb_endpoint::HostIdentifier, ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints},
             listener::v3::{Filter, FilterChain, Listener as EnvoyListener, ListenerFilter},
             route::v3::{RouteConfiguration, VirtualHost},
         },
         extensions::{
             filters::{
                 http::{
-                    ext_proc::v3::{
-                        processing_mode::HeaderSendMode,
-                        ExternalProcessor, ProcessingMode,
-                    },
+                    ext_proc::v3::{processing_mode::HeaderSendMode, ExternalProcessor, ProcessingMode},
                     router::v3::Router,
                 },
                 listener::tls_inspector::v3::TlsInspector,
@@ -30,16 +25,11 @@ use envoy_api_rs::{
                     HttpConnectionManager, HttpFilter,
                 },
             },
-            load_balancing_policies::{
-                override_host::v3::{override_host::OverrideHostSource, OverrideHost},
-                round_robin::v3::RoundRobin,
-            },
             transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig},
-            upstreams::http::v3::http_protocol_options::{explicit_http_config::ProtocolConfig, ExplicitHttpConfig, UpstreamProtocolOptions},
         },
         service::discovery::v3::Resource as EnvoyDiscoveryResource,
     },
-    google::protobuf::{BoolValue, Duration, UInt32Value},
+    google::protobuf::BoolValue,
 };
 use futures::FutureExt;
 use itertools::Itertools;
@@ -67,16 +57,14 @@ use tracing::{debug, info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-use super::{
-    converters,
-    server::{start_aggregate_server, AckVersions, ServerAction},
-};
+use super::server::{start_aggregate_server, AckVersions, ServerAction};
 use crate::{
-    backends::{self, common::{ResourceGenerator, INFERENCE_EXT_PROC_FILTER_NAME}, envoy_xds_backend::resources},
-    common::{
-        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendType, BackendTypeConfig, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, InferencePoolTypeConfig,
-        Listener, ProtocolType, ResourceKey, RouteType, ServiceTypeConfig, TlsType,
+    backends::{
+        self,
+        common::{converters, ResourceGenerator, SocketAddressFactory, INFERENCE_EXT_PROC_FILTER_NAME},
+        envoy_xds_backend::resources,
     },
+    common::{self, BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType},
     Error,
 };
 
@@ -370,9 +358,9 @@ struct Resources {
 fn create_resources(gateway: &Gateway) -> Resources {
     let mut listener_resources = vec![];
     let mut secret_resources = vec![];
+    let mut resource_generator = ResourceGenerator::new(gateway);
 
-    let resources = ResourceGenerator::new(gateway).generate_resources();
-    let listeners = resources.values();
+    let listeners = resource_generator.generate_envoy_listeners().values();
 
     for listener in listeners {
         let router = Router { ..Default::default() };
@@ -383,7 +371,14 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 ..Default::default()
             }),
 
-            grpc_service: Some(GrpcService { target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc{ target_uri: "127.0.0.1:1000".to_owned(), stat_prefix: listener.name.to_owned() + "ext_filter_stats", ..Default::default()})),..Default::default() }),
+            grpc_service: Some(GrpcService {
+                target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
+                    target_uri: "127.0.0.1:1000".to_owned(),
+                    stat_prefix: listener.name.clone() + "ext_filter_stats",
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }),
             failure_mode_allow: false,
             allow_mode_override: true,
             ..Default::default()
@@ -401,7 +396,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 http_connection_manager_router_filter_any,
             )),
         };
-        
+
         let external_processor_filter = HttpFilter {
             name: INFERENCE_EXT_PROC_FILTER_NAME.to_owned(),
             is_optional: false,
@@ -415,7 +410,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
         let http_connection_manager = HttpConnectionManager {
             stat_prefix: listener_name.clone(),
             codec_type: CodecType::Auto.into(),
-            http_filters: vec![external_processor_filter, router_filter ],
+            http_filters: vec![external_processor_filter, router_filter],
             route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
                 name: format!("{listener_name}-route"),
                 virtual_hosts,
@@ -500,8 +495,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
         secret_resources.append(&mut secrets);
     }
 
-    let cluster_resources = generate_clusters(resources.values()).iter().map(resources::create_cluster_resource).collect();
-
+    let cluster_resources = resource_generator.generate_envoy_clusters().iter().map(resources::create_cluster_resource).collect();
     secret_resources.dedup_by_key(|k| k.name.clone());
     Resources {
         listeners: listener_resources,
@@ -510,45 +504,9 @@ fn create_resources(gateway: &Gateway) -> Resources {
     }
 }
 
-enum SocketAddressFactory {}
-impl SocketAddressFactory {
-    fn from(listener: &backends::common::EnvoyListener) -> envoy_api_rs::envoy::config::core::v3::Address {
-        Address {
-            address: Some(address::Address::SocketAddress(SocketAddress {
-                address: "0.0.0.0".to_owned(),
-                port_specifier: Some(PortSpecifier::PortValue(listener.port.try_into().expect("For time being we expect this to work"))),
-                resolver_name: String::new(),
-                ipv4_compat: false,
-                ..Default::default()
-            })),
-        }
-    }
-
-    fn from_backend(backend: &ServiceTypeConfig) -> envoy_api_rs::envoy::config::core::v3::Address {
-        Address {
-            address: Some(address::Address::SocketAddress(SocketAddress {
-                address: backend.endpoint.clone(),
-                port_specifier: Some(PortSpecifier::PortValue(backend.effective_port.try_into().expect("For time being we expect this to work"))),
-                ..Default::default()
-            })),
-        }
-    }
-}
-
 impl From<ProtocolType> for i32 {
     fn from(val: ProtocolType) -> Self {
         i32::from(val == ProtocolType::Udp)
-    }
-}
-
-enum DurationConverter {}
-
-impl DurationConverter {
-    fn from(val: std::time::Duration) -> Duration {
-        Duration {
-            nanos: val.subsec_nanos().try_into().expect("At the moment we expect this to work"),
-            seconds: val.as_secs().try_into().expect("At the moment we expect this to work"),
-        }
     }
 }
 
@@ -744,167 +702,6 @@ fn generate_virtual_hosts_from_xds(virtual_hosts: &BTreeSet<backends::common::En
         .collect()
 }
 
-#[derive(Debug)]
-struct ClusterHolder {
-    name: String,
-    cluster: EnvoyCluster,
-}
-impl Eq for ClusterHolder {}
-
-impl PartialEq for ClusterHolder {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-    }
-}
-
-impl PartialOrd for ClusterHolder {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.name.cmp(&other.name))
-    }
-}
-impl Ord for ClusterHolder {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.name.cmp(&other.name)
-    }
-}
-
-fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) -> Vec<EnvoyCluster> {
-    let grpc_protocol_options = envoy_api_rs::envoy::extensions::upstreams::http::v3::HttpProtocolOptions {
-        upstream_protocol_options: Some(UpstreamProtocolOptions::ExplicitHttpConfig(ExplicitHttpConfig {
-            protocol_config: Some(ProtocolConfig::Http2ProtocolOptions(Http2ProtocolOptions {
-                max_concurrent_streams: Some(UInt32Value { value: 10 }),
-                ..Default::default()
-            })),
-        })),
-        ..Default::default()
-    };
-
-    let grpc_http_configuration = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), &grpc_protocol_options));
-
-    let clusters: BTreeSet<ClusterHolder> = listeners
-        .flat_map(|listener| {
-            listener.http_listener_map.iter().flat_map(|evc| {
-                evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
-                    let route_type = r.route_type();
-                    let backends = r.backends();
-                    let service_backends = backends
-                        .iter()
-                        .filter_map(|b| {
-                            if let Backend::Resolved(BackendType::Service(backend_service_config) | BackendType::Invalid(backend_service_config)) = b {
-                                Some(backend_service_config)
-                            } else {
-                                warn!("Filtering out backend not resolved {:?}", b);
-                                None
-                            }
-                        })
-                        .filter(|b| b.weight() > 0)
-                        .map(|r| create_service_cluster(r, route_type, &grpc_http_configuration));
-
-                    let inference_backends = backends
-                        .iter()
-                        .filter_map(|b| {
-                            if let Backend::Resolved(BackendType::InferencePool(backend_service_config)) = b {
-                                Some(backend_service_config)
-                            } else {
-                                warn!("Filtering out backend not resolved {:?}", b);
-                                None
-                            }
-                        })
-                        .filter(|b| b.weight > 0)
-                        .map(|r| create_inference_cluster(r, route_type, &grpc_http_configuration));
-
-                    service_backends.chain(inference_backends).collect::<Vec<_>>()
-                })
-            })
-        })
-        .collect();
-    warn!("Clusters produced {:?}", clusters);
-    clusters.into_iter().map(|c| c.cluster).collect::<Vec<_>>()
-}
-
-fn create_service_cluster(config: &ServiceTypeConfig, route_type: &RouteType, grpc_http_configuration: &envoy_api_rs::google::protobuf::Any) -> ClusterHolder {
-    ClusterHolder {
-        name: config.cluster_name(),
-        cluster: EnvoyCluster {
-            name: config.cluster_name(),
-            cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::StrictDns.into())),
-            lb_policy: LbPolicy::RoundRobin.into(),
-            connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
-            load_assignment: Some(ClusterLoadAssignment {
-                cluster_name: config.cluster_name(),
-                endpoints: vec![LocalityLbEndpoints {
-                    lb_endpoints: vec![LbEndpoint {
-                        host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
-                            address: Some(SocketAddressFactory::from_backend(config)),
-                            ..Default::default()
-                        })),
-                        load_balancing_weight: Some(UInt32Value {
-                            value: config.weight().try_into().expect("For time being we expect this to work"),
-                        }),
-
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }),
-            typed_extension_protocol_options: match route_type {
-                common::RouteType::Http(_) => HashMap::new(),
-                common::RouteType::Grpc(_) => vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
-                    .into_iter()
-                    .collect(),
-            },
-
-            ..Default::default()
-        },
-    }
-}
-
-fn create_inference_cluster(config: &InferencePoolTypeConfig, route_type: &RouteType, grpc_http_configuration: &envoy_api_rs::google::protobuf::Any) -> ClusterHolder {
-    let fallback_policy = envoy_api_rs::envoy::config::cluster::v3::load_balancing_policy::Policy {
-        typed_extension_config: Some(envoy_api_rs::envoy::config::core::v3::TypedExtensionConfig {
-            name: "envoy.load_balancing_policies.round_robing".to_owned(),
-            typed_config: Some(converters::AnyTypeConverter::from((
-                "type.googleapis.com/envoy.extensions.load_balancing_policies.round_robin.v3.RoundRobin".to_owned(),
-                &RoundRobin::default(),
-            ))),
-        }),
-    };
-
-    let override_host = OverrideHost {
-        override_host_sources: vec![OverrideHostSource {
-            header: "x-gateway-destination-endpoint".to_owned(),
-            metadata: None,
-        }],
-        fallback_policy: Some(LoadBalancingPolicy { policies: vec![fallback_policy] }),
-    };
-    ClusterHolder {
-        name: config.cluster_name(),
-        cluster: EnvoyCluster {
-            name: config.cluster_name(),
-            //cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::OriginalDst.into())),
-            //lb_policy: LbPolicy::ClusterProvided.into(),
-            connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
-            load_balancing_policy: Some(LoadBalancingPolicy {
-                policies: vec![envoy_api_rs::envoy::config::cluster::v3::load_balancing_policy::Policy {
-                    typed_extension_config: Some(envoy_api_rs::envoy::config::core::v3::TypedExtensionConfig {
-                        name: "envoy.load_balancing_policies.override_host".to_owned(),
-                        typed_config: Some(converters::AnyTypeConverter::from((
-                            "type.googleapis.com/envoy.extensions.load_balancing_policies.override_host.v3.OverrideHost".to_owned(),
-                            &override_host,
-                        ))),
-                    }),
-                }],
-            }),
-
-            typed_extension_protocol_options: vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
-                .into_iter()
-                .collect(),
-
-            ..Default::default()
-        },
-    }
-}
 const ENVOY_POD_SPEC: &str = r#"
 {
     "volumes": [
