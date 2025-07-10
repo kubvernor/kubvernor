@@ -66,7 +66,10 @@ impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
         let cluster_names: Vec<_> = effective_routing_rule
             .backends
             .iter()
-            
+            .filter_map(|b| match b.backend_type() {
+                crate::common::BackendType::Service(service_type_config) => Some(service_type_config),
+                _ => None,
+            })
             .filter(|b| b.weight() > 0)
             .map(|b| ClusterWeight {
                 name: b.cluster_name(),

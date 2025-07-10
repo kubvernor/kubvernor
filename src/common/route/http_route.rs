@@ -8,11 +8,14 @@ use kube::ResourceExt;
 use tracing::debug;
 
 use super::{
-    get_add_headers, get_remove_headers, get_set_headers, Backend, BackendTypeConfig, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType,
+    get_add_headers, get_remove_headers, get_set_headers, Backend, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType, ServiceTypeConfig,
     DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME,
 };
 use crate::{
-    common::{route::{HeaderComparator, QueryComparator}, BackendType},
+    common::{
+        route::{HeaderComparator, QueryComparator},
+        BackendType, InvalidTypeConfig,
+    },
     controllers::ControllerError,
 };
 
@@ -59,7 +62,7 @@ impl TryFrom<&HTTPRoute> for Route {
                     .unwrap_or(&vec![])
                     .iter()
                     .map(|br| {
-                        let config = BackendTypeConfig {
+                        let config = ServiceTypeConfig {
                             resource_key: ResourceKey::from((br, local_namespace.clone())),
                             endpoint: if let Some(namespace) = br.namespace.as_ref() {
                                 if *namespace == DEFAULT_NAMESPACE_NAME {
@@ -145,9 +148,9 @@ pub struct HTTPRoutingConfiguration {
     pub effective_routing_rules: Vec<HTTPEffectiveRoutingRule>,
 }
 
-impl From<(&HTTPBackendReference, &str)> for BackendTypeConfig{
-    fn from((br, local_namespace):(&HTTPBackendReference, &str)) -> Self {
-            BackendTypeConfig {
+impl From<(&HTTPBackendReference, &str)> for ServiceTypeConfig {
+    fn from((br, local_namespace): (&HTTPBackendReference, &str)) -> Self {
+        ServiceTypeConfig {
             resource_key: ResourceKey::from((br, local_namespace.to_owned())),
             endpoint: if let Some(namespace) = br.namespace.as_ref() {
                 if *namespace == DEFAULT_NAMESPACE_NAME {

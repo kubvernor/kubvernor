@@ -115,10 +115,9 @@ impl ReferenceGrantsResolver {
 
         for route in linked_routes {
             let from = route.resource_key();
-
             for backend in &route.backends() {
-                if let Backend::Maybe(backend_type) = backend {
-                    let to = &backend_type.config().resource_key;
+                if let Backend::Maybe(crate::common::BackendType::Service(config) | crate::common::BackendType::Invalid(config)) = backend {
+                    let to = &config.resource_key;
                     backend_reference_keys.insert(
                         ReferenceGrantRef::builder()
                             .namespace(to.namespace.clone())

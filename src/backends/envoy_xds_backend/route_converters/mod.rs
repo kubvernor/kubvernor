@@ -58,6 +58,10 @@ fn headers_to_add(to_add: Vec<HTTPHeader>, to_set: Vec<HTTPHeader>) -> Vec<Heade
 fn create_cluster_weights(backends: &[Backend]) -> Vec<ClusterWeight> {
     backends
         .iter()
+        .filter_map(|b| match b.backend_type() {
+            crate::common::BackendType::Service(service_type_config) | crate::common::BackendType::Invalid(service_type_config) => Some(service_type_config),
+            crate::common::BackendType::InferencePool(_) => None,
+        })
         .filter(|b| b.weight() > 0)
         .map(|b| ClusterWeight {
             name: b.cluster_name(),

@@ -71,7 +71,7 @@ impl Certificate {
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
-pub struct BackendTypeConfig {    
+pub struct ServiceTypeConfig {
     pub resource_key: ResourceKey,
     pub endpoint: String,
     pub port: i32,
@@ -79,8 +79,21 @@ pub struct BackendTypeConfig {
     pub weight: i32,
 }
 
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub struct InferencePoolTypeConfig {
+    pub resource_key: ResourceKey,
+    pub endpoint: String,
+    pub port: i32,
+    pub effective_port: i32,
+    pub weight: i32,
+}
 
-impl BackendTypeConfig {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub struct InvalidTypeConfig {
+    pub resource_key: ResourceKey,
+}
+
+impl ServiceTypeConfig {
     pub fn cluster_name(&self) -> String {
         self.resource_key.name.clone() + "." + &self.resource_key.namespace
     }
@@ -88,6 +101,17 @@ impl BackendTypeConfig {
         self.weight
     }
 
+    pub fn resource_key(&self) -> ResourceKey {
+        self.resource_key.clone()
+    }
+}
+
+impl InferencePoolTypeConfig {
+    pub fn resource_key(&self) -> ResourceKey {
+        self.resource_key.clone()
+    }
+}
+impl InvalidTypeConfig {
     pub fn resource_key(&self) -> ResourceKey {
         self.resource_key.clone()
     }
@@ -103,60 +127,37 @@ pub enum Backend {
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
-pub enum BackendType{
-    Service(BackendTypeConfig),
-    InferencePool(BackendTypeConfig),    
-    Invalid(BackendTypeConfig)
+pub enum BackendType {
+    Service(ServiceTypeConfig),
+    InferencePool(InferencePoolTypeConfig),
+    Invalid(ServiceTypeConfig),
 }
 
-impl BackendType{
-    pub fn config(&self) -> &BackendTypeConfig {
-        match self {
-            BackendType::Service(s) | BackendType::InferencePool(s) | BackendType::Invalid(s)=> s,
-        }
-    }
-
-    pub fn config_mut (&mut self) -> &mut BackendTypeConfig {
-        match self {
-            BackendType::Service(s) | BackendType::InferencePool(s) | BackendType::Invalid(s)=> s,
-        }
-    }
-    pub fn cluster_name(&self) -> String {
-        self.config().cluster_name()
-    }
-
-    pub fn weight(&self) -> i32 {
-        self.config().weight()
-    }
-
+impl BackendType {
     pub fn resource_key(&self) -> ResourceKey {
-        self.config().resource_key()
-    }
-}
-
-impl Backend{
-    pub fn config(&self) -> &BackendTypeConfig {
         match self {
-            Backend::Resolved(backend_type) |
-            Backend::Unresolved(backend_type) |
-            Backend::NotAllowed(backend_type) |
-            Backend::Maybe(backend_type) |
-            Backend::Invalid(backend_type) => backend_type.config(),
+            BackendType::Service(service_type_config) => service_type_config.resource_key(),
+            BackendType::InferencePool(inference_pool_type_config) => inference_pool_type_config.resource_key(),
+            BackendType::Invalid(invalid_type_config) => invalid_type_config.resource_key(),
         }
     }
-    pub fn cluster_name(&self) -> String {
-        self.config().cluster_name()
-    }
-
-    pub fn weight(&self) -> i32 {
-        self.config().weight()
-    }    
-
-    pub fn resource_key(&self) -> ResourceKey {
-        self.config().resource_key()
-    }
 }
 
+impl Backend {
+    pub fn resource_key(&self) -> ResourceKey {
+        match self {
+            Backend::Resolved(backend_type) | Backend::Unresolved(backend_type) | Backend::NotAllowed(backend_type) | Backend::Maybe(backend_type) | Backend::Invalid(backend_type) => {
+                backend_type.resource_key()
+            }
+        }
+    }
+
+    pub fn backend_type(&self) -> &BackendType {
+        match self {
+            Backend::Resolved(backend_type) | Backend::Unresolved(backend_type) | Backend::NotAllowed(backend_type) | Backend::Maybe(backend_type) | Backend::Invalid(backend_type) => backend_type,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub enum GatewayAddress {

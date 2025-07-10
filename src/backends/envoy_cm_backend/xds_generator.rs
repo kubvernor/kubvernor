@@ -340,8 +340,12 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         }),
                         cluster_name: er.name.clone(),
                         cluster_names: er
-                            .backends                            
+                            .backends
                             .iter()
+                            .filter_map(|b| match b.backend_type() {
+                                common::BackendType::Service(service_type_config) => Some(service_type_config),
+                                _ => None,
+                            })
                             .filter(|b| b.weight() > 0)
                             .map(|b| TeraClusterName {
                                 name: b.cluster_name(),
@@ -415,11 +419,11 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
                         r.backends()
                             .iter()
-                            .filter(|b| b.weight() > 0)
                             .filter_map(|b| match b {
-                                Backend::Resolved(backend_type) => Some(backend_type.config()),
+                                Backend::Resolved(common::BackendType::Service(config)) => Some(config),
                                 _ => None,
                             })
+                            .filter(|b| b.weight() > 0)
                             .map(|r| TeraCluster {
                                 name: r.cluster_name(),
                                 endpoints: vec![TeraEndpoint {

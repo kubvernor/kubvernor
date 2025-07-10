@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use gateway_api::gateways::Gateway;
+use gateway_api_inference_extension::inferencepools::InferencePool;
 use k8s_openapi::api::core::v1::Service;
 use kube::Client;
 use tracing::{debug, info, warn, Instrument, Span};
@@ -8,7 +9,7 @@ use typed_builder::TypedBuilder;
 
 use super::BackendReferenceResolver;
 use crate::{
-    common::{self, Backend, NotResolvedReason, ReferenceGrantRef, ReferenceGrantsResolver, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping, KUBERNETES_NONE},
+    common::{self, Backend, BackendType, NotResolvedReason, ReferenceGrantRef, ReferenceGrantsResolver, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping, KUBERNETES_NONE},
     controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };
@@ -18,6 +19,7 @@ pub struct RouteResolver<'a> {
     gateway_resource_key: &'a ResourceKey,
     route: common::Route,
     backend_reference_resolver: BackendReferenceResolver<Service>,
+    inference_pool_reference_resolver: BackendReferenceResolver<InferencePool>,
     reference_grants_resolver: ReferenceGrantsResolver,
 }
 struct PermittedBackends(String);
@@ -86,8 +88,21 @@ impl RouteResolver<'_> {
     async fn process_backends(&self, route_resource_key: &ResourceKey, backends: Vec<Backend>) -> (Vec<Backend>, ResolutionStatus) {
         let mut new_backends = vec![];
         let mut route_resolution_status = ResolutionStatus::Resolved;
-        for backend in backends {
-            let (new_backend, resolution_status) = self.process_backend(route_resource_key, backend).await;
+        let (service_backends, inference_pool_backends): (Vec<_>, Vec<_>) = backends.into_iter().partition(|b| match b.backend_type() {
+            BackendType::Service(_) | BackendType::Invalid(_) => true,
+            BackendType::InferencePool(_) => false,
+        });
+
+        for backend in service_backends {
+            let (new_backend, resolution_status) = self.process_service_backend(route_resource_key, backend).await;
+            if resolution_status != ResolutionStatus::Resolved {
+                route_resolution_status = resolution_status;
+            }
+            new_backends.push(new_backend);
+        }
+
+        for backend in inference_pool_backends {
+            let (new_backend, resolution_status) = self.process_inference_pool_backend(route_resource_key, backend).await;
             if resolution_status != ResolutionStatus::Resolved {
                 route_resolution_status = resolution_status;
             }
@@ -96,27 +111,26 @@ impl RouteResolver<'_> {
         (new_backends, route_resolution_status)
     }
 
-    async fn process_backend(&self, route_resource_key: &ResourceKey, backend: Backend) -> (Backend, ResolutionStatus) {
+    async fn process_service_backend(&self, route_resource_key: &ResourceKey, backend: Backend) -> (Backend, ResolutionStatus) {
         let gateway_resource_key = self.gateway_resource_key;
         let gateway_namespace = &self.gateway_resource_key.namespace;
         let route_namespace = &route_resource_key.namespace;
         match backend {
-            Backend::Maybe(mut backend_type) => {
+            Backend::Maybe(BackendType::Service(mut backend_config) | BackendType::Invalid(mut backend_config)) => {
                 let reference_grant_allowed = self
                     .reference_grants_resolver
-                    .is_allowed(route_resource_key, &backend_type.resource_key(), gateway_resource_key)
+                    .is_allowed(route_resource_key, &backend_config.resource_key(), gateway_resource_key)
                     .await;
 
                 let grant_ref = ReferenceGrantRef::builder()
-                    .namespace(backend_type.resource_key().namespace)
+                    .namespace(backend_config.resource_key().namespace)
                     .from(route_resource_key.into())
-                    .to((&backend_type.resource_key()).into())
+                    .to((&backend_config.resource_key()).into())
                     .gateway_key(gateway_resource_key.clone())
                     .build();
 
                 info!("Allowed because of reference grant {grant_ref:?} {reference_grant_allowed}");
 
-                let backend_config  = backend_type.config_mut ();
                 let backend_resource_key = backend_config.resource_key();
                 let backend_namespace = &backend_resource_key.namespace;
                 if reference_grant_allowed || PermittedBackends(gateway_namespace.to_owned()).is_permitted(route_namespace, backend_namespace) {
@@ -124,24 +138,76 @@ impl RouteResolver<'_> {
 
                     if let Some(service) = maybe_service {
                         backend_config.effective_port = Self::backend_remap_port(backend_config.port, service);
-                        (Backend::Resolved(backend_type), ResolutionStatus::Resolved)
+                        (Backend::Resolved(BackendType::Service(backend_config)), ResolutionStatus::Resolved)
                     } else {
-                        debug!(
-                            "can't resolve {}-{} {:?}",
-                            &backend_resource_key.name, &backend_resource_key.namespace, maybe_service
-                        );
-                        (Backend::Unresolved(backend_type), ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound))
+                        debug!("can't resolve {}-{} {:?}", &backend_resource_key.name, &backend_resource_key.namespace, maybe_service);
+                        (
+                            Backend::Unresolved(BackendType::Service(backend_config)),
+                            ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound),
+                        )
                     }
                 } else {
                     debug!(
                         "Backend is not permitted gateway namespace is {} route namespace is {} backend namespace is {}",
                         gateway_namespace, &route_namespace, &backend_namespace,
                     );
-                    (Backend::NotAllowed(backend_type), ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted))
+                    (
+                        Backend::NotAllowed(BackendType::Service(backend_config)),
+                        ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted),
+                    )
                 }
             }
             Backend::Unresolved(_) | Backend::NotAllowed(_) | Backend::Invalid(_) => {
                 debug!("Skipping unresolved backend {:?}", backend);
+                (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
+            }
+            Backend::Maybe(_) => {
+                warn!("This should not be processed here {:?}", backend);
+                (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
+            }
+            Backend::Resolved(_) => {
+                debug!("Skipping resolved/unupported backend {:?}", backend);
+                (backend, ResolutionStatus::Resolved)
+            }
+        }
+    }
+
+    async fn process_inference_pool_backend(&self, route_resource_key: &ResourceKey, backend: Backend) -> (Backend, ResolutionStatus) {
+        let gateway_namespace = &self.gateway_resource_key.namespace;
+        let route_namespace = &route_resource_key.namespace;
+        match backend {
+            Backend::Maybe(BackendType::InferencePool(backend_config)) => {
+                let backend_resource_key = backend_config.resource_key();
+                let backend_namespace = &backend_resource_key.namespace;
+                if PermittedBackends(gateway_namespace.to_owned()).is_permitted(route_namespace, backend_namespace) {
+                    let maybe_inference_pool = self.inference_pool_reference_resolver.get_reference(&backend_resource_key).await;
+
+                    if let Some(_inference_pool) = maybe_inference_pool {
+                        (Backend::Resolved(BackendType::InferencePool(backend_config)), ResolutionStatus::Resolved)
+                    } else {
+                        debug!("can't resolve {}-{} {:?}", &backend_resource_key.name, &backend_resource_key.namespace, maybe_inference_pool);
+                        (
+                            Backend::Unresolved(BackendType::InferencePool(backend_config)),
+                            ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound),
+                        )
+                    }
+                } else {
+                    debug!(
+                        "Backend is not permitted gateway namespace is {} route namespace is {} backend namespace is {}",
+                        gateway_namespace, &route_namespace, &backend_namespace,
+                    );
+                    (
+                        Backend::NotAllowed(BackendType::InferencePool(backend_config)),
+                        ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted),
+                    )
+                }
+            }
+            Backend::Unresolved(_) | Backend::NotAllowed(_) | Backend::Invalid(_) => {
+                debug!("Skipping unresolved backend {:?}", backend);
+                (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
+            }
+            Backend::Maybe(_) => {
+                warn!("This should not be processed here {:?}", backend);
                 (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
             }
             Backend::Resolved(_) => {
@@ -159,6 +225,7 @@ pub struct RoutesResolver<'a> {
     kube_gateway: &'a Gateway,
     client: Client,
     backend_reference_resolver: &'a BackendReferenceResolver<Service>,
+    inference_pool_reference_resolver: &'a BackendReferenceResolver<InferencePool>,
     reference_grants_resolver: &'a ReferenceGrantsResolver,
 }
 
@@ -167,9 +234,15 @@ impl RoutesResolver<'_> {
         debug!("Validating routes");
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
-        let linked_routes = utils::resolve_route_backends(gateway_resource_key, self.backend_reference_resolver.clone(), self.reference_grants_resolver.clone(), linked_routes)
-            .instrument(Span::current().clone())
-            .await;
+        let linked_routes = utils::resolve_route_backends(
+            gateway_resource_key,
+            self.backend_reference_resolver.clone(),
+            self.inference_pool_reference_resolver.clone(),
+            self.reference_grants_resolver.clone(),
+            linked_routes,
+        )
+        .instrument(Span::current().clone())
+        .await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
 
         let (route_to_listeners_mapping, routes_with_no_listeners) = RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();

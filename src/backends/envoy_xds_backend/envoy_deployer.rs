@@ -64,7 +64,8 @@ use super::{
 use crate::{
     backends::{self, common::ResourceGenerator, envoy_xds_backend::resources},
     common::{
-        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendTypeConfig, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType
+        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendType, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, Listener, ProtocolType, ResourceKey,
+        ServiceTypeConfig, TlsType,
     },
     Error,
 };
@@ -490,7 +491,7 @@ impl SocketAddressFactory {
         }
     }
 
-    fn from_backend(backend: &BackendTypeConfig) -> envoy_api_rs::envoy::config::core::v3::Address {
+    fn from_backend(backend: &ServiceTypeConfig) -> envoy_api_rs::envoy::config::core::v3::Address {
         Address {
             address: Some(address::Address::SocketAddress(SocketAddress {
                 address: backend.endpoint.clone(),
@@ -754,16 +755,16 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
                     let route_type = r.route_type();
 
                     r.backends()
-                        .iter()                                                
-                        .filter(|b| b.weight() > 0)
+                        .iter()
                         .filter_map(|b| {
-                            if let Backend::Resolved(backend_service_config) = b {
+                            if let Backend::Resolved(BackendType::Service(backend_service_config) | BackendType::Invalid(backend_service_config)) = b {
                                 Some(backend_service_config)
                             } else {
                                 warn!("Filtering out backend not resolved {:?}", b);
                                 None
                             }
                         })
+                        .filter(|b| b.weight() > 0)
                         .map(|r| ClusterHolder {
                             name: r.cluster_name(),
                             cluster: EnvoyCluster {
@@ -776,7 +777,7 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
                                     endpoints: vec![LocalityLbEndpoints {
                                         lb_endpoints: vec![LbEndpoint {
                                             host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
-                                                address: Some(SocketAddressFactory::from_backend(r.config())),
+                                                address: Some(SocketAddressFactory::from_backend(r)),
                                                 ..Default::default()
                                             })),
                                             load_balancing_weight: Some(UInt32Value {
