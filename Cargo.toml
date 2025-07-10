@@ -11,9 +11,9 @@ futures = "0.3"
 # ] }
 envoy-api-rs = { version = "0.1.0", git = "https://github.com/kubvernor/envoy-api-rs", branch = "main" }
 
-gateway-api = { version = "0.16.0", git = "https://github.com/kubvernor/gateway-api-rs", branch = "reducing_common_structs_types" }
+gateway-api = { version = "0.16.0", git = "https://github.com/kubvernor/gateway-api-rs", branch = "reducing_common_structs_types"  }
 #gateway-api = { version = "0.15.0", path = "../gateway-api-rs/gateway-api", features = [] }
-k8s-openapi = { version = "0.25", features = ["latest", "schemars"] }
+k8s-openapi = { version = "0.25", features = ["v1_32", "schemars"] }
 kube = { version = "1", features = ["runtime", "client", "derive"] }
 thiserror = "1.0.63"
 tokio = { version = "1.39.3", features = ["full"] }

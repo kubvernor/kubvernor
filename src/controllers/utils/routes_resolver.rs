@@ -17,7 +17,7 @@ use crate::{
 pub struct RouteResolver<'a> {
     gateway_resource_key: &'a ResourceKey,
     route: common::Route,
-    backend_reference_resolver: BackendReferenceResolver,
+    backend_reference_resolver: BackendReferenceResolver<Service>,
     reference_grants_resolver: ReferenceGrantsResolver,
 }
 struct PermittedBackends(String);
@@ -158,7 +158,7 @@ pub struct RoutesResolver<'a> {
     state: &'a State,
     kube_gateway: &'a Gateway,
     client: Client,
-    backend_reference_resolver: &'a BackendReferenceResolver,
+    backend_reference_resolver: &'a BackendReferenceResolver<Service>,
     reference_grants_resolver: &'a ReferenceGrantsResolver,
 }
 

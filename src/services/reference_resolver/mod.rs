@@ -1,4 +1,6 @@
 use gateway_api::gateways::Gateway;
+use gateway_api_inference_extension::inferencepools::InferencePool;
+use k8s_openapi::api::core::v1::Service;
 use kube::Client;
 use tracing::{debug, info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
@@ -14,7 +16,8 @@ pub struct ReferenceValidatorService {
     client: Client,
     state: State,
     secrets_resolver: SecretsResolver,
-    backend_references_resolver: BackendReferenceResolver,
+    backend_references_resolver: BackendReferenceResolver<Service>,
+    inference_pool_references_resolver: BackendReferenceResolver<InferencePool>,
     reference_grants_resolver: ReferenceGrantsResolver,
     reference_validate_channel_receiver: tokio::sync::mpsc::Receiver<ReferenceValidateRequest>,
     gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<GatewayDeployRequest>,
@@ -24,7 +27,7 @@ struct ReferenceResolverHandler {
     client: Client,
     state: State,
     secrets_resolver: SecretsResolver,
-    backend_references_resolver: BackendReferenceResolver,
+    backend_references_resolver: BackendReferenceResolver<Service>,
     reference_grants_resolver: ReferenceGrantsResolver,
     gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<GatewayDeployRequest>,
 }

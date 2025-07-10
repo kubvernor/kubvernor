@@ -1,24 +1,29 @@
 use std::{collections::BTreeSet, fmt};
-
-use k8s_openapi::api::core::v1::Service;
-use kube::Client;
+use kube::{Client, Resource, ResourceExt};
 use typed_builder::TypedBuilder;
 
 use super::ReferencesResolver;
 use crate::{
-    common::{Backend, Gateway, ReferenceValidateRequest, ResourceKey},
-    controllers::find_linked_routes,
-    state::State,
+    common::{Backend, Gateway, ReferenceValidateRequest, ResourceKey}, controllers::find_linked_routes, state::State
 };
 
 #[derive(Clone, TypedBuilder)]
-pub struct BackendReferenceResolver {
+pub struct BackendReferenceResolver<R> where R: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug + 
+    ResourceExt +
+    Resource<DynamicType = ()> + 
+    Send + Sync + 'static + std::cmp::PartialEq + 
+    Resource<Scope = kube_core::NamespaceResourceScope>
+    {
     #[builder(setter(transform = |client:Client, reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>| ReferencesResolver::builder().client(client).reference_validate_channel_sender(reference_validate_channel_sender).build()))]
-    reference_resolver: ReferencesResolver<Service>,
+    reference_resolver: ReferencesResolver<R>,
     state: State,
 }
 
-impl BackendReferenceResolver {
+impl<R> BackendReferenceResolver<R> where R: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug + 
+    ResourceExt +
+    Resource<DynamicType = ()> + 
+    Send + Sync + 'static + std::cmp::PartialEq + 
+    Resource<Scope = kube_core::NamespaceResourceScope>{
     pub async fn add_references_by_gateway(&self, gateway: &Gateway) {
         let gateway_key = gateway.key();
 
@@ -70,7 +75,7 @@ impl BackendReferenceResolver {
         self.reference_resolver.delete_references_for_gateway(gateway_key, references).await;
     }
 
-    pub async fn get_reference(&self, resource_key: &ResourceKey) -> Option<Service> {
+    pub async fn get_reference(&self, resource_key: &ResourceKey) -> Option<R> {
         self.reference_resolver.get_reference(resource_key).await
     }
 

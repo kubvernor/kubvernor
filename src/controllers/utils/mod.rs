@@ -8,7 +8,7 @@ mod tls_config_validator;
 use std::{collections::BTreeMap, sync::Arc};
 
 pub use hostname_match_filter::HostnameMatchFilter;
-use k8s_openapi::api::core::v1::Namespace;
+use k8s_openapi::api::core::v1::{Namespace, Service};
 use kube::{
     api::{ListParams, Patch, PatchParams},
     runtime::{
@@ -149,7 +149,7 @@ pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route>
 
 pub async fn resolve_route_backends(
     gateway_resource_key: &ResourceKey,
-    backend_reference_resolver: BackendReferenceResolver,
+    backend_reference_resolver: BackendReferenceResolver<Service>,
     reference_grants_resolver: ReferenceGrantsResolver,
     routes: Vec<Route>,
 ) -> Vec<Route> {

@@ -3,6 +3,7 @@ use std::{fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
 use clap::Parser;
 use common::{BackendReferenceResolver, ControlPlaneConfig, ReferenceGrantsResolver, SecretsResolver};
 use futures::FutureExt;
+use gateway_api_inference_extension::inferencepools::InferencePool;
 use kube::Client;
 use services::{patchers::GRPCRoutePatcherService, GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService};
 use state::State;
@@ -75,6 +76,11 @@ pub async fn start(args: Args) -> Result<()> {
         .reference_resolver(client.clone(), reference_validate_channel_sender.clone())
         .build();
 
+    let inference_pool_references_resolver: BackendReferenceResolver<InferencePool> = BackendReferenceResolver::builder()
+        .state(state.clone())
+        .reference_resolver(client.clone(), reference_validate_channel_sender.clone())
+        .build();
+
     let reference_grants_resolver = ReferenceGrantsResolver::builder()
         .client(client.clone())
         .state(state.clone())
@@ -100,6 +106,7 @@ pub async fn start(args: Args) -> Result<()> {
         .state(state.clone())
         .secrets_resolver(secrets_resolver.clone())
         .backend_references_resolver(backend_references_resolver.clone())
+        .inference_pool_references_resolver(inference_pool_references_resolver.clone())
         .reference_grants_resolver(reference_grants_resolver.clone())
         .build();
 
@@ -200,10 +207,12 @@ pub async fn start(args: Args) -> Result<()> {
 
     let secret_resolver_service = async move { secrets_resolver.resolve().await }.boxed();
     let backend_references_resolver_service = async move { backend_references_resolver.resolve().await }.boxed();
+    let inference_pool_resolver_service = async move { inference_pool_references_resolver.resolve().await }.boxed();
     let reference_grants_resolver_service = async move { reference_grants_resolver.resolve().await }.boxed();
     futures::future::join_all(vec![
         reference_grants_resolver_service,
         backend_references_resolver_service,
+        inference_pool_resolver_service,
         secret_resolver_service,
         gateway_deployer_service,
         resolver_service,
