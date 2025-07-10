@@ -1,17 +1,33 @@
+use std::collections::HashMap;
+
 use envoy_api_rs::envoy::{
-    config::route::v3::{
-        redirect_action,
-        route::Action,
-        route_action::{self, ClusterSpecifier},
-        route_match::PathSpecifier,
-        RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster,
+    config::{
+        core::v3::{
+            grpc_service::{GoogleGrpc, TargetSpecifier},
+            GrpcService,
+        },
+        route::v3::{
+            redirect_action,
+            route::Action,
+            route_action::{self, ClusterSpecifier},
+            route_match::PathSpecifier,
+            RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster,
+        },
+    },
+    extensions::filters::http::ext_proc::v3::{
+        ext_proc_per_route::Override,
+        processing_mode::{BodySendMode, HeaderSendMode},
+        ExtProcOverrides, ExtProcPerRoute, ProcessingMode,
     },
     r#type::matcher::v3::RegexMatcher,
 };
 use gateway_api::httproutes;
 use tracing::warn;
 
-use crate::common::HTTPEffectiveRoutingRule;
+use crate::{
+    backends::envoy_xds_backend::converters,
+    common::{Backend, BackendTypeConfig, HTTPEffectiveRoutingRule, InferencePoolTypeConfig},
+};
 
 impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
     fn from(effective_routing_rule: HTTPEffectiveRoutingRule) -> Self {
@@ -36,8 +52,8 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
 
         let path_specifier = if path_specifier.is_none() { Some(PathSpecifier::Path("/".to_owned())) } else { path_specifier };
 
-        warn!("Headers to match {:?}", effective_routing_rule.route_matcher.headers);
-        let headers = super::create_header_matchers(effective_routing_rule.route_matcher.headers);
+        warn!("Headers to match {:?}", &effective_routing_rule.route_matcher.headers);
+        let headers = super::create_header_matchers(effective_routing_rule.route_matcher.headers.clone());
 
         let route_match = RouteMatch {
             path_specifier,
@@ -46,7 +62,7 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
             ..Default::default()
         };
 
-        let request_filter_headers = effective_routing_rule.request_headers;
+        let request_filter_headers = effective_routing_rule.request_headers.clone();
 
         let request_headers_to_add = super::headers_to_add(request_filter_headers.add, request_filter_headers.set);
         let request_headers_to_remove = request_filter_headers.remove;
@@ -60,6 +76,40 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
             crate::common::BackendType::InferencePool(inference_type_config) => Some(inference_type_config),
             _ => None,
         }));
+
+        let inference_extension_configuration = get_inference_extension_configuarations(&effective_routing_rule.backends);
+        if inference_extension_configuration.len() > 1 {
+            warn!("Multiple external processing filter configuration per route {:?} ", effective_routing_rule);
+        }
+        let per_route_filters = inference_extension_configuration.first().map(|conf| {
+            warn!("Inference Pool: setting up external service with {conf:?}");
+            conf.inference_config.map(|conf| {
+                let ext_proc_route = ExtProcPerRoute {
+                    r#override: Some(Override::Overrides(ExtProcOverrides {
+                        processing_mode: Some(ProcessingMode {
+                            request_header_mode: HeaderSendMode::Send.into(),
+                            request_body_mode: BodySendMode::Buffered.into(),
+                            ..Default::default()
+                        }),
+
+                        grpc_service: Some(GrpcService {
+                            target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
+                                target_uri: format!("{}:{}", conf.extension_ref().name, conf.extension_ref().port_number.unwrap_or(9002)),
+                                stat_prefix: effective_routing_rule.name.clone() + "_ext_svc",
+                                ..Default::default()
+                            })),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })),
+                };
+                let mut per_route_filters = HashMap::new();
+                per_route_filters.insert(
+                    "envoy.filters.http.ext_proc".to_owned(),
+                    converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute".to_owned(), &ext_proc_route)),
+                );
+            })
+        });
 
         let cluster_action = RouteAction {
             cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
@@ -93,7 +143,18 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
             request_headers_to_add,
             request_headers_to_remove,
             action: Some(action),
+            typed_per_filter_config: per_route_filters.unwrap_or_default(),
             ..Default::default()
         }
     }
+}
+
+fn get_inference_extension_configuarations(backends: &[Backend]) -> Vec<&InferencePoolTypeConfig> {
+    backends
+        .iter()
+        .filter_map(|b| match b.backend_type() {
+            crate::common::BackendType::InferencePool(inference_type_config) => Some(inference_type_config),
+            _ => None,
+        })
+        .collect()
 }

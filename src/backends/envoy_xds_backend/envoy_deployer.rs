@@ -7,8 +7,8 @@ use envoy_api_rs::{
     envoy::{
         config::{
             cluster::v3::{
-                cluster::{ClusterDiscoveryType, DiscoveryType, LbConfig, LbPolicy, OriginalDstLbConfig},
-                Cluster as EnvoyCluster,
+                cluster::{ClusterDiscoveryType, DiscoveryType, LbPolicy},
+                Cluster as EnvoyCluster, LoadBalancingPolicy,
             },
             core::v3::{address, socket_address::PortSpecifier, Address, Http2ProtocolOptions, SocketAddress, TransportSocket},
             endpoint::v3::{lb_endpoint::HostIdentifier, ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints},
@@ -23,6 +23,10 @@ use envoy_api_rs::{
                     http_connection_manager::{CodecType, RouteSpecifier},
                     HttpConnectionManager, HttpFilter,
                 },
+            },
+            load_balancing_policies::{
+                override_host::v3::{override_host::OverrideHostSource, OverrideHost},
+                round_robin::v3::RoundRobin,
             },
             transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig},
             upstreams::http::v3::http_protocol_options::{explicit_http_config::ProtocolConfig, ExplicitHttpConfig, UpstreamProtocolOptions},
@@ -736,8 +740,6 @@ impl Ord for ClusterHolder {
 }
 
 fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) -> Vec<EnvoyCluster> {
-    //let ext_proc_options = envoy_api_rs::envoy::extensions::filters::http::ext_proc::v3::ExternalProcessor { ..Default::default() };
-
     let grpc_protocol_options = envoy_api_rs::envoy::extensions::upstreams::http::v3::HttpProtocolOptions {
         upstream_protocol_options: Some(UpstreamProtocolOptions::ExplicitHttpConfig(ExplicitHttpConfig {
             protocol_config: Some(ProtocolConfig::Http2ProtocolOptions(Http2ProtocolOptions {
@@ -745,14 +747,6 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
                 ..Default::default()
             })),
         })),
-        // http_filters: vec![HttpFilter {
-        //     name: "StupidName".to_owned(),
-        //     is_optional: false,
-        //     disabled: false,
-        //     config_type: Some(envoy_api_rs::envoy::extensions::filters::network::http_connection_manager::v3::http_filter::ConfigType::TypedConfig(
-        //         converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor".to_owned(), &ext_proc_options)),
-        //     )),
-        // }],
         ..Default::default()
     };
 
@@ -838,19 +832,41 @@ fn create_service_cluster(config: &ServiceTypeConfig, route_type: &RouteType, gr
 }
 
 fn create_inference_cluster(config: &InferencePoolTypeConfig, route_type: &RouteType, grpc_http_configuration: &envoy_api_rs::google::protobuf::Any) -> ClusterHolder {
+    let fallback_policy = envoy_api_rs::envoy::config::cluster::v3::load_balancing_policy::Policy {
+        typed_extension_config: Some(envoy_api_rs::envoy::config::core::v3::TypedExtensionConfig {
+            name: "envoy.load_balancing_policies.round_robing".to_owned(),
+            typed_config: Some(converters::AnyTypeConverter::from((
+                "type.googleapis.com/envoy.extensions.load_balancing_policies.round_robin.v3.RoundRobin".to_owned(),
+                &RoundRobin::default(),
+            ))),
+        }),
+    };
+
+    let override_host = OverrideHost {
+        override_host_sources: vec![OverrideHostSource {
+            header: "x-gateway-destination-endpoint".to_owned(),
+            metadata: None,
+        }],
+        fallback_policy: Some(LoadBalancingPolicy { policies: vec![fallback_policy] }),
+    };
     ClusterHolder {
         name: config.cluster_name(),
         cluster: EnvoyCluster {
             name: config.cluster_name(),
-            cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::OriginalDst.into())),
-            lb_policy: LbPolicy::ClusterProvided.into(),
+            //cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::OriginalDst.into())),
+            //lb_policy: LbPolicy::ClusterProvided.into(),
             connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
-            lb_config: Some(LbConfig::OriginalDstLbConfig(OriginalDstLbConfig {
-                use_http_header: true,
-                http_header_name: "x-gateway-destination-endpoint".to_owned(),
-                upstream_port_override: config.inference_config.as_ref().map(|c| UInt32Value { value: c.0.target_port_number as u32 }),
-                ..Default::default()
-            })),
+            load_balancing_policy: Some(LoadBalancingPolicy {
+                policies: vec![envoy_api_rs::envoy::config::cluster::v3::load_balancing_policy::Policy {
+                    typed_extension_config: Some(envoy_api_rs::envoy::config::core::v3::TypedExtensionConfig {
+                        name: "envoy.load_balancing_policies.override_host".to_owned(),
+                        typed_config: Some(converters::AnyTypeConverter::from((
+                            "type.googleapis.com/envoy.extensions.load_balancing_policies.override_host.v3.OverrideHost".to_owned(),
+                            &override_host,
+                        ))),
+                    }),
+                }],
+            }),
 
             typed_extension_protocol_options: vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
                 .into_iter()
@@ -888,7 +904,7 @@ const ENVOY_POD_SPEC: &str = r#"
             "command": [
                 "envoy"
             ],
-            "image": "docker.io/envoyproxy/envoy:v1.31.0",
+            "image": "docker.io/envoyproxy/envoy:dev",
             "imagePullPolicy": "IfNotPresent",
             "name": "envoy",
             "env": [

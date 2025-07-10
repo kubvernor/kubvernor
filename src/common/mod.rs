@@ -16,7 +16,7 @@ use std::{
 pub use gateway::{ChangedContext, Gateway};
 pub use gateway_api::gateways::Gateway as KubeGateway;
 use gateway_api::{gatewayclasses::GatewayClass, gateways::GatewayListeners};
-use gateway_api_inference_extension::inferencepools::{InferencePoolExtensionRefFailureMode, InferencePoolSpec};
+use gateway_api_inference_extension::inferencepools::{InferencePoolExtensionRef, InferencePoolExtensionRefFailureMode, InferencePoolSpec};
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};
 pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE};
@@ -99,6 +99,12 @@ impl InferencePoolTypeConfig {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InferencePoolConfig(pub InferencePoolSpec);
+
+impl InferencePoolConfig {
+    pub fn extension_ref(&self) -> &InferencePoolExtensionRef {
+        &self.0.extension_ref
+    }
+}
 
 impl PartialOrd for InferencePoolConfig {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
