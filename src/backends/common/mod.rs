@@ -4,6 +4,7 @@ use envoy_api_rs::{
     envoy::config::{
         cluster::v3::Cluster as EnvoyCluster,
         core::v3::{address, socket_address::PortSpecifier, Address, SocketAddress},
+        route::v3::Route as EnvoyRoute,
     },
     google::protobuf::Duration,
 };
@@ -43,7 +44,7 @@ impl Ord for ClusterHolder {
 pub enum DurationConverter {}
 
 impl DurationConverter {
-    fn from(val: std::time::Duration) -> Duration {
+    pub fn from(val: std::time::Duration) -> Duration {
         Duration {
             nanos: val.subsec_nanos().try_into().expect("At the moment we expect this to work"),
             seconds: val.as_secs().try_into().expect("At the moment we expect this to work"),
@@ -74,19 +75,50 @@ impl SocketAddressFactory {
             })),
         }
     }
-}
 
+    pub fn from_address_port((address, port): (String, i32)) -> envoy_api_rs::envoy::config::core::v3::Address {
+        Address {
+            address: Some(address::Address::SocketAddress(SocketAddress {
+                address,
+                port_specifier: Some(PortSpecifier::PortValue(port.try_into().expect("For time being we expect this to work"))),
+                ..Default::default()
+            })),
+        }
+    }
+}
+#[derive(Debug, Clone)]
 pub struct InferenceClusterInfo {
-    name: String,
+    cluster_name: String,
     config: InferencePoolTypeConfig,
 }
 
-pub fn inference_cluster_name(route_name: String) -> String {
-    route_name + "ext_svc_cluster"
+impl InferenceClusterInfo {
+    pub fn cluster_name(&self) -> &str {
+        &self.cluster_name
+    }
 }
-pub fn get_inference_pool_configurations(envoy_route: &HTTPEffectiveRoutingRule) -> Option<InferenceClusterInfo> {
-    get_inference_extension_configurations(&envoy_route.backends).first().map(|conf| InferenceClusterInfo {
-        name: inference_cluster_name(envoy_route.name.clone()),
+
+pub fn inference_cluster_name(envoy_route: &EnvoyRoute) -> String {
+    make_inference_cluster_name(envoy_route.name.clone())
+}
+
+pub fn make_inference_cluster_name(name: String) -> String {
+    name + "-extsvc"
+}
+
+pub fn envoy_route_name(effective_route: &HTTPEffectiveRoutingRule) -> String {
+    effective_route.name.clone() + "_route"
+}
+
+impl HTTPEffectiveRoutingRule {
+    fn inference_cluster_name(&self) -> String {
+        make_inference_cluster_name(envoy_route_name(self))
+    }
+}
+
+pub fn get_inference_pool_configurations(effective_route: &HTTPEffectiveRoutingRule) -> Option<InferenceClusterInfo> {
+    get_inference_extension_configurations(&effective_route.backends).first().map(|conf| InferenceClusterInfo {
+        cluster_name: effective_route.inference_cluster_name(),
         config: (**conf).clone(),
     })
 }

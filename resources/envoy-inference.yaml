@@ -69,7 +69,7 @@ static_resources:
                               overrides:
                                 processing_mode:
                                   request_header_mode: SEND
-                                  request_body_mode: BUFFERED
+                                  request_body_mode: FULL_DUPLEX_STREAMED
                                 grpc_service:
                                   # google_grpc:
                                   #   target_uri: https://192.168.1.10:9002

@@ -37,6 +37,8 @@ kubectl apply -f resources/inference-httproute.yaml
 7. Test
 ```
 curl -vki 172.18.255.200:2080/v1/chat/completions -d '{ "model": "meta-llama/Llama-3.1-8B-Instruct", "messages": [{"role":"developer", "content":"hello"}]}'
+curl -vki 192.168.1.10:3000/v1/completions -H 'Content-Type: application/json' -d '{"model": "food-review", "prompt":"Write as if you were a critic: San Francisco", "max_tokens":100, "temperature":0}'
+
 ```
 
 ## Notes/Work
@@ -47,6 +49,7 @@ curl -vki 172.18.255.200:2080/v1/chat/completions -d '{ "model": "meta-llama/Lla
 1. building and running local epp
 ```
 dawid@dawid-Alienware-Aurora-R6:~/Workspace/gateway-api-inference-extension/cmd/epp$ go build
-dawid@dawid-Alienware-Aurora-R6:~/Workspace/gateway-api-inference-extension/cmd/epp$ ./epp --poolName vllm-llama3-8b-instruct --poolNamespace default -v 4 json -grpcPort 9002 -grpcHealthPort 9003 -zap-devel
+dawid@dawid-Alienware-Aurora-R6:~/Workspace/gateway-api-inference-extension/cmd/epp$ ./epp --poolName vllm-llama3-8b-instruct --poolNamespace default -grpcPort 9002 -grpcHealthPort 9003 -v 6 - --zap-encoder json  -zap-devel --secureServing="false"
 ```
 
+docker run --rm -p 3000:3000 -p 9901:9901 -it -v ./resources/envoy-inference.yaml:/envoy-config.yaml envoyproxy/envoy:dev -c envoy-config.yaml -l trace --service-node sjksjdksj  --service-cluster djfkdjfkj

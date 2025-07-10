@@ -61,7 +61,7 @@ use super::server::{start_aggregate_server, AckVersions, ServerAction};
 use crate::{
     backends::{
         self,
-        common::{converters, ResourceGenerator, SocketAddressFactory, INFERENCE_EXT_PROC_FILTER_NAME},
+        common::{converters, DurationConverter, ResourceGenerator, SocketAddressFactory, INFERENCE_EXT_PROC_FILTER_NAME},
         envoy_xds_backend::resources,
     },
     common::{self, BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType},
@@ -379,6 +379,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 })),
                 ..Default::default()
             }),
+            message_timeout: Some(DurationConverter::from(std::time::Duration::from_secs(2))),
             failure_mode_allow: false,
             allow_mode_override: true,
             ..Default::default()

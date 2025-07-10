@@ -28,7 +28,7 @@ use gateway_api::httproutes;
 use tracing::warn;
 
 use crate::{
-    backends::common::{converters, get_inference_extension_configurations, inference_cluster_name, INFERENCE_EXT_PROC_FILTER_NAME},
+    backends::common::{converters, envoy_route_name, get_inference_extension_configurations, inference_cluster_name, INFERENCE_EXT_PROC_FILTER_NAME},
     common::HTTPEffectiveRoutingRule,
 };
 
@@ -46,23 +46,16 @@ impl HTTPEffectiveRoutingRule {
                 conf.inference_config
                     .as_ref()
                     .map(|_conf| {
-                        let inference_cluster_name = inference_cluster_name(envoy_route.name.clone());
+                        let inference_cluster_name = inference_cluster_name(&envoy_route);
                         let ext_proc_route = ExtProcPerRoute {
                             r#override: Some(Override::Overrides(ExtProcOverrides {
                                 processing_mode: Some(ProcessingMode {
                                     request_header_mode: HeaderSendMode::Send.into(),
-                                    request_body_mode: BodySendMode::Buffered.into(),
+                                    request_body_mode: BodySendMode::FullDuplexStreamed.into(),
+                                    //                                    request_body_mode: BodySendMode::Buffered.into(),
                                     ..Default::default()
                                 }),
 
-                                // grpc_service: Some(GrpcService {
-                                //     target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
-                                //         target_uri: format!("https://{}:{}", conf.extension_ref().name, conf.extension_ref().port_number.unwrap_or(9002)),
-                                //         stat_prefix: self.name.clone() + "_ext_svc",
-                                //         ..Default::default()
-                                //     })),
-                                //     ..Default::default()
-                                // }),
                                 grpc_service: Some(GrpcService {
                                     target_specifier: Some(TargetSpecifier::EnvoyGrpc(EnvoyGrpc {
                                         cluster_name: inference_cluster_name,
@@ -167,16 +160,14 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
             Action::Route(cluster_action)
         };
 
-        let name = format!("{}-route", effective_routing_rule.name);
         let route = EnvoyRoute {
-            name,
+            name: envoy_route_name(&effective_routing_rule),
             r#match: Some(route_match),
             request_headers_to_add,
             request_headers_to_remove,
             action: Some(action),
             ..Default::default()
         };
-        let route = effective_routing_rule.add_inference_filters(route);
-        route
+        effective_routing_rule.add_inference_filters(route)
     }
 }
