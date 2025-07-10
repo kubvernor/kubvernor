@@ -1,6 +1,4 @@
 use gateway_api::gateways::Gateway;
-use gateway_api_inference_extension::inferencepools::InferencePool;
-use k8s_openapi::api::core::v1::Service;
 use kube::Client;
 use tracing::{debug, info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
@@ -16,8 +14,7 @@ pub struct ReferenceValidatorService {
     client: Client,
     state: State,
     secrets_resolver: SecretsResolver,
-    backend_references_resolver: BackendReferenceResolver<Service>,
-    inference_pool_references_resolver: BackendReferenceResolver<InferencePool>,
+    backend_references_resolver: BackendReferenceResolver,
     reference_grants_resolver: ReferenceGrantsResolver,
     reference_validate_channel_receiver: tokio::sync::mpsc::Receiver<ReferenceValidateRequest>,
     gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<GatewayDeployRequest>,
@@ -27,8 +24,7 @@ struct ReferenceResolverHandler {
     client: Client,
     state: State,
     secrets_resolver: SecretsResolver,
-    backend_references_resolver: BackendReferenceResolver<Service>,
-    inference_pool_references_resolver: BackendReferenceResolver<InferencePool>,
+    backend_references_resolver: BackendReferenceResolver,
     reference_grants_resolver: ReferenceGrantsResolver,
     gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<GatewayDeployRequest>,
 }
@@ -42,7 +38,6 @@ impl ReferenceValidatorService {
             secrets_resolver: self.secrets_resolver,
             backend_references_resolver: self.backend_references_resolver,
             reference_grants_resolver: self.reference_grants_resolver,
-            inference_pool_references_resolver: self.inference_pool_references_resolver,
             gateway_deployer_channel_sender: self.gateway_deployer_channel_sender,
         };
 
@@ -108,16 +103,16 @@ impl ReferenceResolverHandler {
                 let span = span!(parent: &parent_span, Level::INFO, "ReferenceResolverService", action = "AddRouteReferences");
                 let _entered = span.enter();
                 debug!("Adding route references {references:?}");
-                self.backend_references_resolver.add_references(references.iter()).await;
+                self.backend_references_resolver.add_references(references).await;
             }
 
             ReferenceValidateRequest::DeleteRoute { references, span: parent_span } => {
                 let span = span!(parent: &parent_span, Level::INFO, "ReferenceResolverService", action = "DeleteRouteAndValidateRequest");
                 let _entered = span.enter();
+                info!("Update gateways due to deleted references {references:?} ");
+                let affected_gateways = self.backend_references_resolver.delete_all_references(references).await;
 
-                let affected_gateways = self.backend_references_resolver.delete_all_references(references.iter()).await;
-
-                info!("Update gateways due to deleted references {references:?} {affected_gateways:?}");
+                info!("Update gateways affected gateways  {affected_gateways:?}");
                 for gateway_id in affected_gateways {
                     if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
                         let span = span!(Level::INFO, "ReferenceResolverService", action = "DeleteRouteAndValidateRequest", id = %gateway_id);
@@ -182,7 +177,6 @@ impl ReferenceResolverHandler {
             .kube_gateway(kube_gateway)
             .client(self.client.clone())
             .backend_reference_resolver(&self.backend_references_resolver)
-            .inference_pool_reference_resolver(&self.inference_pool_references_resolver)
             .reference_grants_resolver(&self.reference_grants_resolver)
             .state(&self.state)
             .build();

@@ -4,13 +4,12 @@ use std::{
     sync::Arc,
 };
 
-use gateway_api_inference_extension::inferencepools::InferencePool;
 use kube::{Api, Client, Resource, ResourceExt};
 use tokio::time;
 use tracing::{debug, span, warn, Instrument, Level};
 use typed_builder::TypedBuilder;
 
-use crate::common::{ReferenceValidateRequest, ResourceKey, DEFAULT_NAMESPACE_NAME};
+use crate::common::{ReferenceValidateRequest, ResourceKey};
 mod backends_resolver;
 mod reference_grants_resolver;
 mod secrets_resolver;
@@ -91,9 +90,9 @@ where
         }
     }
 
-    pub async fn add_references<'a, I>(&self, reference_keys: I)
+    pub async fn add_references<I>(&self, reference_keys: I)
     where
-        I: Iterator<Item = &'a ResourceKey> + fmt::Debug,
+        I: Iterator<Item = ResourceKey> + fmt::Debug,
     {
         debug!("Adding new references  {reference_keys:?}");
         let mut lock = self.references.lock().await;
@@ -103,19 +102,19 @@ where
         }
     }
 
-    pub async fn delete_references<'a, I>(&self, reference_keys: I) -> BTreeSet<ResourceKey>
+    pub async fn delete_references<I>(&self, reference_keys: I) -> BTreeSet<ResourceKey>
     where
-        I: Iterator<Item = &'a ResourceKey> + fmt::Debug,
+        I: Iterator<Item = ResourceKey> + fmt::Debug,
     {
         debug!("Deleting all references {reference_keys:?}");
         let mut affected_gateways = BTreeSet::new();
         let mut lock = self.references.lock().await;
         let mut resolved_lock = self.resolved_references.lock().await;
         for reference_key in reference_keys {
-            if let Some(mut gateways) = lock.remove(reference_key) {
+            if let Some(mut gateways) = lock.remove(&reference_key) {
                 affected_gateways.append(&mut gateways);
             }
-            let _ = resolved_lock.remove(reference_key);
+            let _ = resolved_lock.remove(&reference_key);
         }
         affected_gateways
     }
@@ -145,24 +144,22 @@ where
                     async move {
                         debug!("Checking reference {key}");
                         let api: Api<_> = Api::namespaced(myself.client.clone(), &key.namespace);
-
-                        let maybe_service = api.get(&key.name).await;
-                        warn!("Checking reference {maybe_service:?}");
-                        if let Ok(service) = api.get(&key.name).await {
+                        let maybe_reference = api.get(&key.name).await;
+                        if let Ok(reference) = maybe_reference {
                             let mut update_gateway = false;
                             {
                                 let mut resolved_references = myself.resolved_references.lock().await;
                                 resolved_references
                                     .entry(key.clone())
                                     .and_modify(|f| {
-                                        if *f != service {
-                                            *f = service.clone();
+                                        if *f != reference {
+                                            *f = reference.clone();
                                             update_gateway = true;
                                         }
                                     })
                                     .or_insert_with(|| {
                                         update_gateway = true;
-                                        service
+                                        reference
                                     });
                             };
 
@@ -172,6 +169,7 @@ where
                                 myself.update_gateways(&key).await;
                             }
                         } else {
+                            debug!("Problem with checking reference {key} {:?}", maybe_reference.err());
                             let resolved_references = {
                                 let mut resolved_references = myself.resolved_references.lock().await;
                                 resolved_references.remove(&key).is_some()

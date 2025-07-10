@@ -1,7 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
 use gateway_api::gateways::Gateway;
-use gateway_api_inference_extension::inferencepools::InferencePool;
 use k8s_openapi::api::core::v1::Service;
 use kube::Client;
 use tracing::{debug, info, warn, Instrument, Span};
@@ -18,8 +17,7 @@ use crate::{
 pub struct RouteResolver<'a> {
     gateway_resource_key: &'a ResourceKey,
     route: common::Route,
-    backend_reference_resolver: BackendReferenceResolver<Service>,
-    inference_pool_reference_resolver: BackendReferenceResolver<InferencePool>,
+    backend_reference_resolver: BackendReferenceResolver,
     reference_grants_resolver: ReferenceGrantsResolver,
 }
 struct PermittedBackends(String);
@@ -134,7 +132,7 @@ impl RouteResolver<'_> {
                 let backend_resource_key = backend_config.resource_key();
                 let backend_namespace = &backend_resource_key.namespace;
                 if reference_grant_allowed || PermittedBackends(gateway_namespace.to_owned()).is_permitted(route_namespace, backend_namespace) {
-                    let maybe_service = self.backend_reference_resolver.get_reference(&backend_resource_key).await;
+                    let maybe_service = self.backend_reference_resolver.get_service_reference(&backend_resource_key).await;
 
                     if let Some(service) = maybe_service {
                         backend_config.effective_port = Self::backend_remap_port(backend_config.port, service);
@@ -181,7 +179,7 @@ impl RouteResolver<'_> {
                 let backend_resource_key = backend_config.resource_key();
                 let backend_namespace = &backend_resource_key.namespace;
                 if PermittedBackends(gateway_namespace.to_owned()).is_permitted(route_namespace, backend_namespace) {
-                    let maybe_inference_pool = self.inference_pool_reference_resolver.get_reference(&backend_resource_key).await;
+                    let maybe_inference_pool = self.backend_reference_resolver.get_inference_pool_reference(&backend_resource_key).await;
 
                     if let Some(_inference_pool) = maybe_inference_pool {
                         (Backend::Resolved(BackendType::InferencePool(backend_config)), ResolutionStatus::Resolved)
@@ -228,8 +226,7 @@ pub struct RoutesResolver<'a> {
     state: &'a State,
     kube_gateway: &'a Gateway,
     client: Client,
-    backend_reference_resolver: &'a BackendReferenceResolver<Service>,
-    inference_pool_reference_resolver: &'a BackendReferenceResolver<InferencePool>,
+    backend_reference_resolver: &'a BackendReferenceResolver,
     reference_grants_resolver: &'a ReferenceGrantsResolver,
 }
 
@@ -238,15 +235,9 @@ impl RoutesResolver<'_> {
         debug!("Validating routes");
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
-        let linked_routes = utils::resolve_route_backends(
-            gateway_resource_key,
-            self.backend_reference_resolver.clone(),
-            self.inference_pool_reference_resolver.clone(),
-            self.reference_grants_resolver.clone(),
-            linked_routes,
-        )
-        .instrument(Span::current().clone())
-        .await;
+        let linked_routes = utils::resolve_route_backends(gateway_resource_key, self.backend_reference_resolver.clone(), self.reference_grants_resolver.clone(), linked_routes)
+            .instrument(Span::current().clone())
+            .await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
 
         let (route_to_listeners_mapping, routes_with_no_listeners) = RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();
