@@ -152,7 +152,7 @@ pub async fn resolve_route_backends(
     backend_reference_resolver: BackendReferenceResolver,
     reference_grants_resolver: ReferenceGrantsResolver,
     routes: Vec<Route>,
-    client: Client, 
+    client: Client,
 ) -> Vec<Route> {
     let futures: Vec<_> = routes
         .into_iter()

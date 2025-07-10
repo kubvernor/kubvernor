@@ -29,49 +29,50 @@ use crate::{
     common::{Backend, HTTPEffectiveRoutingRule, InferencePoolTypeConfig},
 };
 
-impl HTTPEffectiveRoutingRule{
-    pub fn add_inference_filters(self, mut envoy_route:EnvoyRoute)->EnvoyRoute{
+impl HTTPEffectiveRoutingRule {
+    pub fn add_inference_filters(self, mut envoy_route: EnvoyRoute) -> EnvoyRoute {
         let inference_extension_configuration = get_inference_extension_configuarations(&self.backends);
         if inference_extension_configuration.len() > 1 {
             warn!("Multiple external processing filter configuration per route {:?} ", self);
         }
 
-        let per_route_filters = inference_extension_configuration.first().map(|conf| {
-            warn!("Inference Pool: setting up external service with {conf:?}");
-            conf.inference_config.as_ref().map(|conf| {
-                let ext_proc_route = ExtProcPerRoute {
-                    r#override: Some(Override::Overrides(ExtProcOverrides {
-                        processing_mode: Some(ProcessingMode {
-                            request_header_mode: HeaderSendMode::Send.into(),
-                            request_body_mode: BodySendMode::Buffered.into(),
-                            ..Default::default()
-                        }),
-
-                        grpc_service: Some(GrpcService {
-                            target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
-                                target_uri: format!("{}:{}", conf.extension_ref().name, conf.extension_ref().port_number.unwrap_or(9002)),
-                                stat_prefix: self.name.clone() + "_ext_svc",
+        let per_route_filters = inference_extension_configuration
+            .first()
+            .map(|conf| {
+                warn!("Inference Pool: setting up external service with {conf:?}");
+                conf.inference_config.as_ref().map(|conf| {
+                    let ext_proc_route = ExtProcPerRoute {
+                        r#override: Some(Override::Overrides(ExtProcOverrides {
+                            processing_mode: Some(ProcessingMode {
+                                request_header_mode: HeaderSendMode::Send.into(),
+                                request_body_mode: BodySendMode::Buffered.into(),
                                 ..Default::default()
-                            })),
+                            }),
+
+                            grpc_service: Some(GrpcService {
+                                target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
+                                    target_uri: format!("{}:{}", conf.extension_ref().name, conf.extension_ref().port_number.unwrap_or(9002)),
+                                    stat_prefix: self.name.clone() + "_ext_svc",
+                                    ..Default::default()
+                                })),
+                                ..Default::default()
+                            }),
                             ..Default::default()
-                        }),
-                        ..Default::default()
-                    })),
-                };
-                let mut per_route_filters = HashMap::new();
-                per_route_filters.insert(
-                    "envoy.filters.http.ext_proc".to_owned(),
-                    converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute".to_owned(), &ext_proc_route)),
-                );
-                per_route_filters
+                        })),
+                    };
+                    let mut per_route_filters = HashMap::new();
+                    per_route_filters.insert(
+                        "envoy.filters.http.ext_proc".to_owned(),
+                        converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute".to_owned(), &ext_proc_route)),
+                    );
+                    per_route_filters
+                })
             })
-        }).flatten().unwrap_or(HashMap::new());
+            .flatten()
+            .unwrap_or(HashMap::new());
 
         envoy_route.typed_per_filter_config = per_route_filters;
         envoy_route
-
-
-
     }
 }
 
@@ -123,8 +124,6 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
             _ => None,
         }));
 
-        
-
         let cluster_action = RouteAction {
             cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
             cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
@@ -157,11 +156,9 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
             r#match: Some(route_match),
             request_headers_to_add,
             request_headers_to_remove,
-            action: Some(action),        
+            action: Some(action),
             ..Default::default()
         })
-        
-
     }
 }
 

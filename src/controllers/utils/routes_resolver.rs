@@ -188,21 +188,21 @@ impl RouteResolver<'_> {
                         self.backend_reference_resolver.get_inference_pool_reference(&backend_resource_key).await;
 
                     if let Some(inference_pool) = maybe_inference_pool {
-                        let inference_pool_spec = inference_pool.spec();                        
-                        match inference_pool_spec.extension_ref.group.as_ref(){
-                            None=>{} 
-                            Some(val) if val == "Service" =>{ let service_api: Api<Service> = Api::namespaced(self.client.clone(), &route_resource_key.namespace);
-                                if let Ok(service) = service_api.get(&inference_pool_spec.extension_ref.name).await{
-                                    if let Some(service_spec) = service.spec{
-                                        service_spec.
-                                    }
-                                }else{
+                        let inference_pool_spec = inference_pool.spec();
+
+                        match inference_pool_spec.extension_ref.group.as_ref() {
+                            None => {}
+                            Some(val) if val == "Service" => {
+                                let service_api: Api<Service> = Api::namespaced(self.client.clone(), &route_resource_key.namespace);
+                                if let Ok(service) = service_api.get(&inference_pool_spec.extension_ref.name).await {
+                                    warn!("Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
+                                } else {
                                     warn!("Can't get endpoint picker service {:?} ", inference_pool_spec.extension_ref);
                                 }
-                            },
+                            }
                             _ => {}
                         }
-                        
+
                         backend_config.inference_config = Some(InferencePoolConfig(inference_pool.spec().clone()));
                         (Backend::Resolved(BackendType::InferencePool(backend_config)), ResolutionStatus::Resolved)
                     } else {
@@ -257,9 +257,15 @@ impl RoutesResolver<'_> {
         debug!("Validating routes");
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
-        let linked_routes = utils::resolve_route_backends(gateway_resource_key, self.backend_reference_resolver.clone(), self.reference_grants_resolver.clone(), linked_routes,self.client.clone())
-            .instrument(Span::current().clone())
-            .await;
+        let linked_routes = utils::resolve_route_backends(
+            gateway_resource_key,
+            self.backend_reference_resolver.clone(),
+            self.reference_grants_resolver.clone(),
+            linked_routes,
+            self.client.clone(),
+        )
+        .instrument(Span::current().clone())
+        .await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
 
         let (route_to_listeners_mapping, routes_with_no_listeners) = RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();

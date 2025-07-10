@@ -177,7 +177,7 @@ impl<'a> ResourceGenerator<'a> {
                 })
                 .cloned()
                 .collect::<Vec<_>>();
-            
+
             listener_map.insert(EnvoyVirtualHost {
                 http_routes: http_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
                 grpc_routes: grpc_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
