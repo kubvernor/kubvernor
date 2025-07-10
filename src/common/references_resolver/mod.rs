@@ -4,12 +4,13 @@ use std::{
     sync::Arc,
 };
 
+use gateway_api_inference_extension::inferencepools::InferencePool;
 use kube::{Api, Client, Resource, ResourceExt};
 use tokio::time;
 use tracing::{debug, span, warn, Instrument, Level};
 use typed_builder::TypedBuilder;
 
-use crate::common::{ReferenceValidateRequest, ResourceKey};
+use crate::common::{ReferenceValidateRequest, ResourceKey, DEFAULT_NAMESPACE_NAME};
 mod backends_resolver;
 mod reference_grants_resolver;
 mod secrets_resolver;
@@ -19,7 +20,14 @@ pub use reference_grants_resolver::{ReferenceGrantRef, ReferenceGrantsResolver};
 pub use secrets_resolver::SecretsResolver;
 
 #[derive(Clone, TypedBuilder)]
-pub struct ReferencesResolver<R> {
+pub struct ReferencesResolver<R>
+where
+    R: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug,
+    R: ResourceExt,
+    R: Resource<DynamicType = ()>,
+    R: Send + Sync + 'static + std::cmp::PartialEq,
+    R: Resource<Scope = kube_core::NamespaceResourceScope>,
+{
     client: Client,
     #[builder(default)]
     references: Arc<tokio::sync::Mutex<BTreeMap<ResourceKey, BTreeSet<ResourceKey>>>>,
@@ -135,8 +143,11 @@ where
                 let span = span!(Level::INFO, "ReferencesResolver", secret = %key);
                 tokio::spawn(
                     async move {
-                        debug!("Checking  reference  {key}");
-                        let api: Api<R> = Api::namespaced(myself.client.clone(), &key.namespace);
+                        debug!("Checking reference {key}");
+                        let api: Api<_> = Api::namespaced(myself.client.clone(), &key.namespace);
+
+                        let maybe_service = api.get(&key.name).await;
+                        warn!("Checking reference {maybe_service:?}");
                         if let Ok(service) = api.get(&key.name).await {
                             let mut update_gateway = false;
                             {

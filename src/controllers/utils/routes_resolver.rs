@@ -175,6 +175,7 @@ impl RouteResolver<'_> {
     async fn process_inference_pool_backend(&self, route_resource_key: &ResourceKey, backend: Backend) -> (Backend, ResolutionStatus) {
         let gateway_namespace = &self.gateway_resource_key.namespace;
         let route_namespace = &route_resource_key.namespace;
+        warn!("process_inference_pool_backend {}", backend.resource_key());
         match backend {
             Backend::Maybe(BackendType::InferencePool(backend_config)) => {
                 let backend_resource_key = backend_config.resource_key();
@@ -185,7 +186,10 @@ impl RouteResolver<'_> {
                     if let Some(_inference_pool) = maybe_inference_pool {
                         (Backend::Resolved(BackendType::InferencePool(backend_config)), ResolutionStatus::Resolved)
                     } else {
-                        debug!("can't resolve {}-{} {:?}", &backend_resource_key.name, &backend_resource_key.namespace, maybe_inference_pool);
+                        debug!(
+                            "Inference Backend can't resolve {}-{} {:?}",
+                            &backend_resource_key.name, &backend_resource_key.namespace, maybe_inference_pool
+                        );
                         (
                             Backend::Unresolved(BackendType::InferencePool(backend_config)),
                             ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound),
@@ -193,7 +197,7 @@ impl RouteResolver<'_> {
                     }
                 } else {
                     debug!(
-                        "Backend is not permitted gateway namespace is {} route namespace is {} backend namespace is {}",
+                        "Inference Backend is not permitted gateway namespace is {} route namespace is {} backend namespace is {}",
                         gateway_namespace, &route_namespace, &backend_namespace,
                     );
                     (

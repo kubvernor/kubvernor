@@ -12,7 +12,7 @@ use super::{
     DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME,
 };
 use crate::{
-    common::{route::HeaderComparator, BackendType, InvalidTypeConfig},
+    common::{route::HeaderComparator, BackendType},
     controllers::ControllerError,
 };
 

@@ -14,13 +14,13 @@ kubectl apply -f resources/inference-resources.yaml
 3. Deploy Gateway
 
 ```
-kubectl apply -f ~/Workspace/kubvernor/resources/inference-gateway.yaml
+kubectl apply -f resources/inference-gateway.yaml
 ```
 
 
 3. Deploy HTTP Route
 ```
-k apply -f ~/Workspace/kubvernor/resources/httproute-inference.yaml
+kubectl apply -f resources/inference-httproute.yaml
 ```
 
 ## Notes/Work

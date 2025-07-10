@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use gateway_api::{
     common::{GatewayAddress as CommonGatewayAddress, ParentReference, ParentRouteStatus, RouteStatus},
     constants,
@@ -14,7 +16,7 @@ use tokio::sync::{mpsc::Sender, oneshot};
 use tracing::{debug, info, warn, Instrument, Span};
 
 use crate::{
-    common::{self, GatewayAddress, NotResolvedReason, ResolutionStatus, ResourceKey, Route},
+    common::{self, GatewayAddress, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteType},
     controllers::ControllerError,
     services::patchers::{Operation, PatchContext},
     state::State,
@@ -79,9 +81,11 @@ impl GatewayProcessedHandler<'_> {
 
     async fn update_http_routes(&self) {
         let (attached_routes, unresolved_routes) = self.effective_gateway.routes();
+        let attached_routes: BTreeSet<&Route> = attached_routes.into_iter().filter(|r| only_http_routes(r)).collect();
+        let unresolved_routes: BTreeSet<&Route> = unresolved_routes.into_iter().filter(|r| only_http_routes(r)).collect();
 
         let routes_with_no_hostnames = self.effective_gateway.orphaned_routes();
-        debug!("Updating attached routes {attached_routes:?}");
+        debug!("HTTP Updating attached routes {attached_routes:?}");
         let gateway_id = &self.effective_gateway.key();
         for attached_route in attached_routes {
             let updated_route = self.update_http_attached_route_parents(attached_route, gateway_id);
@@ -109,7 +113,7 @@ impl GatewayProcessedHandler<'_> {
                 }
             }
         }
-        debug!("Updating unresolved routes  {unresolved_routes:?}");
+        debug!("HTTP Updating unresolved routes  {unresolved_routes:?}");
         for unresolve_route in unresolved_routes {
             let updated_route = self.update_http_unresolved_route_parents(unresolve_route, gateway_id);
             if let Some(route) = updated_route {
@@ -140,7 +144,7 @@ impl GatewayProcessedHandler<'_> {
                 }
             }
         }
-        debug!("Updating routes with no hostnames  {routes_with_no_hostnames:?}");
+        debug!("HTTP Updating routes with no hostnames  {routes_with_no_hostnames:?}");
         for route_with_no_hostname in self.effective_gateway.orphaned_routes() {
             let updated_route = self.update_http_non_attached_route_parents(route_with_no_hostname, gateway_id);
             if let Some(route) = updated_route {
@@ -175,6 +179,8 @@ impl GatewayProcessedHandler<'_> {
 
     async fn update_grpc_routes(&self) {
         let (attached_routes, unresolved_routes) = self.effective_gateway.routes();
+        let attached_routes: BTreeSet<&Route> = attached_routes.into_iter().filter(|r| only_grpc_routes(r)).collect();
+        let unresolved_routes: BTreeSet<&Route> = unresolved_routes.into_iter().filter(|r| only_grpc_routes(r)).collect();
 
         let routes_with_no_hostnames = self.effective_gateway.orphaned_routes();
         debug!("GRPC Updating attached routes {attached_routes:?}");
@@ -987,5 +993,19 @@ impl GatewayProcessedHandler<'_> {
             .collect::<Vec<_>>();
         status.addresses = Some(addresses);
         self.gateway.status = Some(status);
+    }
+}
+
+fn only_http_routes(route: &Route) -> bool {
+    match route.route_type() {
+        RouteType::Http(_) => true,
+        RouteType::Grpc(_) => false,
+    }
+}
+
+fn only_grpc_routes(route: &Route) -> bool {
+    match route.route_type() {
+        RouteType::Http(_) => false,
+        RouteType::Grpc(_) => true,
     }
 }

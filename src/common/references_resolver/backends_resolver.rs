@@ -24,7 +24,7 @@ where
         + std::cmp::PartialEq
         + Resource<Scope = kube_core::NamespaceResourceScope>,
 {
-    #[builder(setter(transform = |client:Client, reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>| ReferencesResolver::builder().client(client).reference_validate_channel_sender(reference_validate_channel_sender).build()))]
+    #[builder(setter(transform = |client:Client, reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>| ReferencesResolver::<R>::builder().client(client).reference_validate_channel_sender(reference_validate_channel_sender).build()))]
     reference_resolver: ReferencesResolver<R>,
     state: State,
 }

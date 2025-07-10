@@ -111,11 +111,6 @@ impl InferencePoolTypeConfig {
         self.resource_key.clone()
     }
 }
-impl InvalidTypeConfig {
-    pub fn resource_key(&self) -> ResourceKey {
-        self.resource_key.clone()
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub enum Backend {

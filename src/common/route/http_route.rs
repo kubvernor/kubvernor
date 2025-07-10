@@ -14,7 +14,7 @@ use super::{
 use crate::{
     common::{
         route::{HeaderComparator, QueryComparator},
-        BackendType, InvalidTypeConfig,
+        BackendType, InferencePoolTypeConfig,
     },
     controllers::ControllerError,
 };
@@ -44,7 +44,7 @@ impl TryFrom<&HTTPRoute> for Route {
     fn try_from(kube_route: &HTTPRoute) -> Result<Self, Self::Error> {
         let key = ResourceKey::from(kube_route);
         let parents = kube_route.spec.parent_refs.clone();
-        let local_namespace = key.namespace.clone();
+        let local_namespace = key.namespace.as_str();
 
         let empty_rules: Vec<HTTPRouteRule> = vec![];
         let mut has_invalid_backends = false;
@@ -61,30 +61,13 @@ impl TryFrom<&HTTPRoute> for Route {
                     .as_ref()
                     .unwrap_or(&vec![])
                     .iter()
-                    .map(|br| {
-                        let config = ServiceTypeConfig {
-                            resource_key: ResourceKey::from((br, local_namespace.clone())),
-                            endpoint: if let Some(namespace) = br.namespace.as_ref() {
-                                if *namespace == DEFAULT_NAMESPACE_NAME {
-                                    br.name.clone()
-                                } else {
-                                    format!("{}.{namespace}", br.name)
-                                }
-                            } else if local_namespace == DEFAULT_NAMESPACE_NAME {
-                                br.name.clone()
-                            } else {
-                                format!("{}.{local_namespace}", br.name)
-                            },
-                            port: br.port.unwrap_or(0),
-                            effective_port: br.port.unwrap_or(0),
-                            weight: br.weight.unwrap_or(1),
-                        };
-
-                        if br.kind.is_none() || br.kind == Some("Service".to_owned()) {
-                            Backend::Maybe(BackendType::Service(config))
-                        } else {
+                    .map(|br| match br.kind.as_ref() {
+                        None => Backend::Maybe(BackendType::Service(ServiceTypeConfig::from((br, local_namespace)))),
+                        Some(kind) if kind == "Service" => Backend::Maybe(BackendType::Service(ServiceTypeConfig::from((br, local_namespace)))),
+                        Some(kind) if kind == "InferencePool" => Backend::Maybe(BackendType::InferencePool(InferencePoolTypeConfig::from((br, local_namespace)))),
+                        _ => {
                             has_invalid_backends = true;
-                            Backend::Invalid(BackendType::Invalid(config))
+                            Backend::Invalid(BackendType::Invalid(ServiceTypeConfig::from((br, local_namespace))))
                         }
                     })
                     .collect(),
@@ -151,6 +134,28 @@ pub struct HTTPRoutingConfiguration {
 impl From<(&HTTPBackendReference, &str)> for ServiceTypeConfig {
     fn from((br, local_namespace): (&HTTPBackendReference, &str)) -> Self {
         ServiceTypeConfig {
+            resource_key: ResourceKey::from((br, local_namespace.to_owned())),
+            endpoint: if let Some(namespace) = br.namespace.as_ref() {
+                if *namespace == DEFAULT_NAMESPACE_NAME {
+                    br.name.clone()
+                } else {
+                    format!("{}.{namespace}", br.name)
+                }
+            } else if local_namespace == DEFAULT_NAMESPACE_NAME {
+                br.name.clone()
+            } else {
+                format!("{}.{local_namespace}", br.name)
+            },
+            port: br.port.unwrap_or(0),
+            effective_port: br.port.unwrap_or(0),
+            weight: br.weight.unwrap_or(1),
+        }
+    }
+}
+
+impl From<(&HTTPBackendReference, &str)> for InferencePoolTypeConfig {
+    fn from((br, local_namespace): (&HTTPBackendReference, &str)) -> Self {
+        InferencePoolTypeConfig {
             resource_key: ResourceKey::from((br, local_namespace.to_owned())),
             endpoint: if let Some(namespace) = br.namespace.as_ref() {
                 if *namespace == DEFAULT_NAMESPACE_NAME {
