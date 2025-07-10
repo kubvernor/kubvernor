@@ -28,7 +28,7 @@ use gateway_api::httproutes;
 use tracing::warn;
 
 use crate::{
-    backends::envoy_xds_backend::converters,
+    backends::{common::INFERENCE_EXT_PROC_FILTER_NAME, envoy_xds_backend::converters},
     common::{Backend, HTTPEffectiveRoutingRule, InferencePoolTypeConfig},
 };
 
@@ -68,7 +68,7 @@ impl HTTPEffectiveRoutingRule {
                         };
                         let mut per_route_filters = HashMap::new();
                         per_route_filters.insert(
-                            "envoy.filters.http.ext_proc".to_owned(),
+                            INFERENCE_EXT_PROC_FILTER_NAME.to_owned(),
                             converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute".to_owned(), &ext_proc_route)),
                         );
                         per_route_filters

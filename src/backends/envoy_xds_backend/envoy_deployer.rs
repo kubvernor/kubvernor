@@ -10,7 +10,7 @@ use envoy_api_rs::{
                 cluster::{ClusterDiscoveryType, DiscoveryType, LbPolicy},
                 Cluster as EnvoyCluster, LoadBalancingPolicy,
             },
-            core::v3::{address, socket_address::PortSpecifier, Address, GrpcService, Http2ProtocolOptions, SocketAddress, TransportSocket},
+            core::v3::{address, grpc_service::{GoogleGrpc, TargetSpecifier}, socket_address::PortSpecifier, Address, GrpcService, Http2ProtocolOptions, SocketAddress, TransportSocket},
             endpoint::v3::{lb_endpoint::HostIdentifier, ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints},
             listener::v3::{Filter, FilterChain, Listener as EnvoyListener, ListenerFilter},
             route::v3::{RouteConfiguration, VirtualHost},
@@ -19,7 +19,7 @@ use envoy_api_rs::{
             filters::{
                 http::{
                     ext_proc::v3::{
-                        processing_mode::{BodySendMode, HeaderSendMode},
+                        processing_mode::HeaderSendMode,
                         ExternalProcessor, ProcessingMode,
                     },
                     router::v3::Router,
@@ -72,7 +72,7 @@ use super::{
     server::{start_aggregate_server, AckVersions, ServerAction},
 };
 use crate::{
-    backends::{self, common::ResourceGenerator, envoy_xds_backend::resources},
+    backends::{self, common::{ResourceGenerator, INFERENCE_EXT_PROC_FILTER_NAME}, envoy_xds_backend::resources},
     common::{
         self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendType, BackendTypeConfig, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, InferencePoolTypeConfig,
         Listener, ProtocolType, ResourceKey, RouteType, ServiceTypeConfig, TlsType,
@@ -383,7 +383,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 ..Default::default()
             }),
 
-            grpc_service: Some(GrpcService { ..Default::default() }),
+            grpc_service: Some(GrpcService { target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc{ target_uri: "127.0.0.1:1000".to_owned(), stat_prefix: listener.name.to_owned() + "ext_filter_stats", ..Default::default()})),..Default::default() }),
             failure_mode_allow: false,
             allow_mode_override: true,
             ..Default::default()
@@ -401,9 +401,9 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 http_connection_manager_router_filter_any,
             )),
         };
-
+        
         let external_processor_filter = HttpFilter {
-            name: "envoy.filters.http.ext_proc".to_owned(),
+            name: INFERENCE_EXT_PROC_FILTER_NAME.to_owned(),
             is_optional: false,
             disabled: false,
             config_type: Some(envoy_api_rs::envoy::extensions::filters::network::http_connection_manager::v3::http_filter::ConfigType::TypedConfig(
@@ -415,7 +415,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
         let http_connection_manager = HttpConnectionManager {
             stat_prefix: listener_name.clone(),
             codec_type: CodecType::Auto.into(),
-            http_filters: vec![router_filter, external_processor_filter],
+            http_filters: vec![external_processor_filter, router_filter ],
             route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
                 name: format!("{listener_name}-route"),
                 virtual_hosts,

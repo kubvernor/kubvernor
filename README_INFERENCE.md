@@ -44,5 +44,9 @@ curl -vki 172.18.255.200:2080/v1/chat/completions -d '{ "model": "meta-llama/Lla
 1. Change HTTPRoute to handle different backend types based on a Kind (Service or InferencePool)
 1. Change backends_resolver to resolve BackendsRefs with Kind: Inference Pool
 1. getting 503, no healthy upstream, not sure if we call to the ext service? will need to find the actual endpoint for epp ?
-
+1. building and running local epp
+```
+dawid@dawid-Alienware-Aurora-R6:~/Workspace/gateway-api-inference-extension/cmd/epp$ go build
+dawid@dawid-Alienware-Aurora-R6:~/Workspace/gateway-api-inference-extension/cmd/epp$ ./epp --poolName vllm-llama3-8b-instruct --poolNamespace default -v 4 json -grpcPort 9002 -grpcHealthPort 9003 -zap-devel
+```
 

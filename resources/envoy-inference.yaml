@@ -1,21 +1,36 @@
 admin:
   address:
     socket_address: { address: 0.0.0.0, port_value: 9901 }            
+  access_log:
+  - name: envoy.access_loggers.stdout
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+      log_format:
+        json_format:
+          # Individual field access
+          ext_proc_header_latency: "%FILTER_STATE(envoy.filters.http.ext_proc:FIELD:request_header_latency_us)%"
+          ext_proc_body_calls: "%FILTER_STATE(envoy.filters.http.ext_proc:FIELD:request_body_call_count)%"
+          # Full structured data
+          ext_proc_all_stats: "%FILTER_STATE(envoy.filters.http.ext_proc:TYPED)%"
+          # Compact format
+          ext_proc_summary: "%FILTER_STATE(envoy.filters.http.ext_proc:PLAIN)%"
+
 static_resources:                  
+
   listeners:
     - name: listener_http1
       address:
-        socket_address: { address: 0.0.0.0, port_value: 8080 }
+        socket_address: { address: 0.0.0.0, port_value: 3000 }
       filter_chains:
         - name: filter_chain_http
           filter_chain_match:
-            destination_port: 8080
+            destination_port: 3000
           filters:
             - name: http_gateway
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager                
                 httpFilters:
-                  - name: envoy.filters.http.router
+                  - name: my-config
                     typedConfig:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
                       processing_mode:
@@ -25,7 +40,7 @@ static_resources:
                       allow_mode_override: true
                       grpc_service:
                         google_grpc:
-                          target_uri: 127.0.0.1:10000
+                          target_uri: 10.220.239.180:10000
                           stat_prefix: "dkjfkdjfkdj"
                   - name: envoy.filters.http.ext_proc
                     typedConfig:
@@ -44,13 +59,13 @@ static_resources:
                 route_config: 
                   name: basic_http_route
                   virtual_hosts:
-                    - name: backend
+                    - name: backend                      
                       domains: ["*"]
                       routes:
                         - match:
                             prefix: "/"
                           typed_per_filter_config:
-                            "envoy.filters.http.ext_proc":
+                            my-config:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
                               overrides:
                                 processing_mode:
@@ -58,9 +73,9 @@ static_resources:
                                   request_body_mode: BUFFERED
                                 grpc_service:
                                   google_grpc:
-                                    target_uri: 127.0.0.1:10000
+                                    target_uri: 10.220.239.180:10100
                                     stat_prefix: "dkjfkdjfkdj"
-                              
+                                failure_mode_allow: false                                                            
                           route:
                             cluster: cluster_http
 
