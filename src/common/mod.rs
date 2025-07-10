@@ -7,7 +7,10 @@ mod route;
 mod test;
 
 use std::{
-    cmp, collections::{BTreeSet}, fmt::Display, net::{IpAddr, SocketAddr}
+    cmp,
+    collections::BTreeSet,
+    fmt::Display,
+    net::{IpAddr, SocketAddr},
 };
 
 pub use gateway::{ChangedContext, Gateway};
@@ -85,88 +88,118 @@ pub struct InferencePoolTypeConfig {
     pub port: i32,
     pub effective_port: i32,
     pub weight: i32,
-    pub inference_config: Option<InferencePoolConfig>        
+    pub inference_config: Option<InferencePoolConfig>,
 }
 
-#[derive(Clone, Debug, PartialEq )]
+impl InferencePoolTypeConfig {
+    pub fn cluster_name(&self) -> String {
+        self.resource_key.name.clone() + "." + &self.resource_key.namespace
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct InferencePoolConfig(pub InferencePoolSpec);
 
-impl PartialOrd for InferencePoolConfig{
+impl PartialOrd for InferencePoolConfig {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for InferencePoolConfig {}
+
+#[allow(clippy::match_same_arms)]
+impl Ord for InferencePoolConfig {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
         let this = &self.0;
         let other = &other.0;
-        
+
         let this_extension_ref = &this.extension_ref;
         let other_extension_ref = &other.extension_ref;
 
         let this_failure_mode = &this_extension_ref.failure_mode;
         let other_failure_mode = &other_extension_ref.failure_mode;
-        match (this_failure_mode, other_failure_mode){            
-            (None, Some(_)) => return Some(cmp::Ordering::Less),
-            (Some(_), None) => return Some(cmp::Ordering::Greater),
-            (Some(InferencePoolExtensionRefFailureMode::FailOpen), Some(InferencePoolExtensionRefFailureMode::FailClose)) => return Some(cmp::Ordering::Greater),
-            (Some(InferencePoolExtensionRefFailureMode::FailClose), Some(InferencePoolExtensionRefFailureMode::FailOpen)) => return Some(cmp::Ordering::Less),
-            _ => ()
+        match (this_failure_mode, other_failure_mode) {
+            (None, Some(_)) => return cmp::Ordering::Less,
+            (Some(_), None) => return cmp::Ordering::Greater,
+            (Some(InferencePoolExtensionRefFailureMode::FailOpen), Some(InferencePoolExtensionRefFailureMode::FailClose)) => return cmp::Ordering::Greater,
+            (Some(InferencePoolExtensionRefFailureMode::FailClose), Some(InferencePoolExtensionRefFailureMode::FailOpen)) => return cmp::Ordering::Less,
+            _ => (),
         }
 
-        let order = this_extension_ref.group.partial_cmp(&other_extension_ref.group);
-        if order != Some(cmp::Ordering::Equal){
+        let order = this_extension_ref.group.cmp(&other_extension_ref.group);
+        if order != cmp::Ordering::Equal {
             return order;
         }
-        let order = this_extension_ref.kind.partial_cmp(&other_extension_ref.kind);
-        if order != Some(cmp::Ordering::Equal){
+        let order = this_extension_ref.kind.cmp(&other_extension_ref.kind);
+        if order != cmp::Ordering::Equal {
             return order;
         }
-        let order = this_extension_ref.name.partial_cmp(&other_extension_ref.name);
-        if order != Some(cmp::Ordering::Equal){
-            return order;
-        }
-
-        let order = this_extension_ref.port_number.partial_cmp(&other_extension_ref.port_number);
-        if order != Some(cmp::Ordering::Equal){
+        let order = this_extension_ref.name.cmp(&other_extension_ref.name);
+        if order != cmp::Ordering::Equal {
             return order;
         }
 
-        let order = this.target_port_number.partial_cmp(&other.target_port_number);
-        if order != Some(cmp::Ordering::Equal){
+        let order = this_extension_ref.port_number.cmp(&other_extension_ref.port_number);
+        if order != cmp::Ordering::Equal {
             return order;
         }
 
-        this.selector.partial_cmp(&other.selector)
+        let order = this.target_port_number.cmp(&other.target_port_number);
+        if order != cmp::Ordering::Equal {
+            return order;
+        }
 
-
+        this.selector.cmp(&other.selector)
     }
 }
-
-impl Eq for InferencePoolConfig{}
-impl Ord for InferencePoolConfig{
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(cmp::Ordering::Equal)
-    }
-}
-
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub struct InvalidTypeConfig {
     pub resource_key: ResourceKey,
 }
 
-impl ServiceTypeConfig {
-    pub fn cluster_name(&self) -> String {
+impl BackendTypeConfig for ServiceTypeConfig {
+    fn cluster_name(&self) -> String {
         self.resource_key.name.clone() + "." + &self.resource_key.namespace
     }
-    pub fn weight(&self) -> i32 {
+    fn weight(&self) -> i32 {
         self.weight
     }
 
-    pub fn resource_key(&self) -> ResourceKey {
+    fn resource_key(&self) -> ResourceKey {
         self.resource_key.clone()
     }
 }
 
-impl InferencePoolTypeConfig {
-    pub fn resource_key(&self) -> ResourceKey {
+impl BackendTypeConfig for InvalidTypeConfig {
+    fn cluster_name(&self) -> String {
+        self.resource_key.name.clone() + "." + &self.resource_key.namespace
+    }
+    fn weight(&self) -> i32 {
+        1
+    }
+
+    fn resource_key(&self) -> ResourceKey {
         self.resource_key.clone()
+    }
+}
+
+pub trait BackendTypeConfig {
+    fn resource_key(&self) -> ResourceKey;
+    fn weight(&self) -> i32;
+    fn cluster_name(&self) -> String;
+}
+
+impl BackendTypeConfig for InferencePoolTypeConfig {
+    fn resource_key(&self) -> ResourceKey {
+        self.resource_key.clone()
+    }
+    fn cluster_name(&self) -> String {
+        self.resource_key.name.clone() + "." + &self.resource_key.namespace
+    }
+    fn weight(&self) -> i32 {
+        self.weight
     }
 }
 

@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 use super::envoy_deployer::{create_certificate_name, create_key_name, create_secret_name, TEMPLATES};
 use crate::{
     backends::common::calculate_hostnames_common,
-    common::{self, Backend, HTTPEffectiveRoutingRule, Listener, ProtocolType, Route, RouteType, TlsType},
+    common::{self, Backend, BackendTypeConfig, HTTPEffectiveRoutingRule, Listener, ProtocolType, Route, RouteType, TlsType},
     controllers::HostnameMatchFilter,
 };
 #[derive(Debug)]

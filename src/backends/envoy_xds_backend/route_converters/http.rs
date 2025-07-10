@@ -51,12 +51,20 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
         let request_headers_to_add = super::headers_to_add(request_filter_headers.add, request_filter_headers.set);
         let request_headers_to_remove = request_filter_headers.remove;
 
-        let cluster_names: Vec<_> = super::create_cluster_weights(&effective_routing_rule.backends);
+        let service_cluster_names: Vec<_> = super::create_cluster_weights(effective_routing_rule.backends.iter().filter_map(|b| match b.backend_type() {
+            crate::common::BackendType::Service(service_type_config) | crate::common::BackendType::Invalid(service_type_config) => Some(service_type_config),
+            crate::common::BackendType::InferencePool(_) => None,
+        }));
+
+        let inference_cluster_names: Vec<_> = super::create_cluster_weights(effective_routing_rule.backends.iter().filter_map(|b| match b.backend_type() {
+            crate::common::BackendType::InferencePool(inference_type_config) => Some(inference_type_config),
+            _ => None,
+        }));
 
         let cluster_action = RouteAction {
             cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
             cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
-                clusters: cluster_names,
+                clusters: service_cluster_names.into_iter().chain(inference_cluster_names).collect(),
                 ..Default::default()
             })),
             ..Default::default()

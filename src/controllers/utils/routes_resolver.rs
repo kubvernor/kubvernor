@@ -3,17 +3,19 @@ use std::collections::{BTreeSet, HashMap};
 use gateway_api::gateways::Gateway;
 use k8s_openapi::api::core::v1::Service;
 use kube::Client;
+use kube_core::object::HasSpec;
 use tracing::{debug, info, warn, Instrument, Span};
 use typed_builder::TypedBuilder;
 
 use super::BackendReferenceResolver;
 use crate::{
-    common::{self, Backend, BackendType, InferencePoolConfig, NotResolvedReason, ReferenceGrantRef, ReferenceGrantsResolver, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping, KUBERNETES_NONE},
+    common::{
+        self, Backend, BackendType, BackendTypeConfig, InferencePoolConfig, NotResolvedReason, ReferenceGrantRef, ReferenceGrantsResolver, ResolutionStatus, ResourceKey, Route,
+        RouteToListenersMapping, KUBERNETES_NONE,
+    },
     controllers::utils::{self, RouteListenerMatcher},
     state::State,
 };
-use kube_core::object::HasSpec;
-
 
 #[derive(TypedBuilder)]
 pub struct RouteResolver<'a> {
@@ -181,7 +183,8 @@ impl RouteResolver<'_> {
                 let backend_resource_key = backend_config.resource_key();
                 let backend_namespace = &backend_resource_key.namespace;
                 if PermittedBackends(gateway_namespace.to_owned()).is_permitted(route_namespace, backend_namespace) {
-                    let maybe_inference_pool: Option<gateway_api_inference_extension::inferencepools::InferencePool> = self.backend_reference_resolver.get_inference_pool_reference(&backend_resource_key).await;
+                    let maybe_inference_pool: Option<gateway_api_inference_extension::inferencepools::InferencePool> =
+                        self.backend_reference_resolver.get_inference_pool_reference(&backend_resource_key).await;
 
                     if let Some(inference_pool) = maybe_inference_pool {
                         backend_config.inference_config = Some(InferencePoolConfig(inference_pool.spec().clone()));

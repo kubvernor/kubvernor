@@ -1,5 +1,5 @@
 # Note: If you change this file, please also change the file used for e2e tests!
-# 
+#
 # https://github.com/kubernetes-sigs/gateway-api-inference-extension/blob/main/test/testdata/inferencepool-e2e.yaml
 apiVersion: inference.networking.x-k8s.io/v1alpha2
 kind: InferencePool
@@ -47,81 +47,76 @@ spec:
       # Conservatively, this timeout should mirror the longest grace period of the pods within the pool
       terminationGracePeriodSeconds: 130
       containers:
-      - name: epp
-        image: us-central1-docker.pkg.dev/k8s-staging-images/gateway-api-inference-extension/epp:main
-        imagePullPolicy: IfNotPresent
-        args:
-        - -poolName
-        - "vllm-llama3-8b-instruct"
-        - "-poolNamespace"
-        - "default"
-        - -v
-        - "4"
-        - --zap-encoder
-        - "json"
-        - -grpcPort
-        - "9002"
-        - -grpcHealthPort
-        - "9003"
-        ports:
-        - containerPort: 9002
-        - containerPort: 9003
-        - name: metrics
-          containerPort: 9090
-        livenessProbe:
-          grpc:
-            port: 9003
-            service: inference-extension
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        readinessProbe:
-          grpc:
-            port: 9003
-            service: inference-extension
-          initialDelaySeconds: 5
-          periodSeconds: 10
+        - name: epp
+          image: us-central1-docker.pkg.dev/k8s-staging-images/gateway-api-inference-extension/epp:main
+          imagePullPolicy: IfNotPresent
+          args:
+            - -poolName
+            - "vllm-llama3-8b-instruct"
+            - "-poolNamespace"
+            - "default"
+            - -v
+            - "4"
+            - --zap-encoder
+            - "json"
+            - -grpcPort
+            - "9002"
+            - -grpcHealthPort
+            - "9003"
+          ports:
+            - containerPort: 9002
+            - containerPort: 9003
+            - name: metrics
+              containerPort: 9090
+          livenessProbe:
+            grpc:
+              port: 9003
+              service: inference-extension
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            grpc:
+              port: 9003
+              service: inference-extension
+            initialDelaySeconds: 5
+            periodSeconds: 10
 ---
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: pod-read
 rules:
-- apiGroups: ["inference.networking.x-k8s.io"]
-  resources: ["inferencepools"]
-  verbs: ["get", "watch", "list"]
-- apiGroups: ["inference.networking.x-k8s.io"]
-  resources: ["inferencemodels"]
-  verbs: ["get", "watch", "list"]
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get", "watch", "list"]
-- apiGroups:
-  - authentication.k8s.io
-  resources:
-  - tokenreviews
-  verbs:
-  - create
-- apiGroups:
-  - authorization.k8s.io
-  resources:
-  - subjectaccessreviews
-  verbs:
-  - create
---- 
+  - apiGroups: ["inference.networking.x-k8s.io"]
+    resources: ["inferencepools"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["inference.networking.x-k8s.io"]
+    resources: ["inferencemodels"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups:
+      - authentication.k8s.io
+    resources:
+      - tokenreviews
+    verbs:
+      - create
+  - apiGroups:
+      - authorization.k8s.io
+    resources:
+      - subjectaccessreviews
+    verbs:
+      - create
+---
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: pod-read-binding
 subjects:
-- kind: ServiceAccount
-  name: default
-  namespace: default
+  - kind: ServiceAccount
+    name: default
+    namespace: default
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: pod-read
-
-
-
-
-    

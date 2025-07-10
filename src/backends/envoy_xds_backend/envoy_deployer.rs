@@ -7,7 +7,7 @@ use envoy_api_rs::{
     envoy::{
         config::{
             cluster::v3::{
-                cluster::{ClusterDiscoveryType, DiscoveryType, LbPolicy},
+                cluster::{ClusterDiscoveryType, DiscoveryType, LbConfig, LbPolicy, OriginalDstLbConfig},
                 Cluster as EnvoyCluster,
             },
             core::v3::{address, socket_address::PortSpecifier, Address, Http2ProtocolOptions, SocketAddress, TransportSocket},
@@ -64,8 +64,8 @@ use super::{
 use crate::{
     backends::{self, common::ResourceGenerator, envoy_xds_backend::resources},
     common::{
-        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendType, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, Listener, ProtocolType, ResourceKey,
-        ServiceTypeConfig, TlsType,
+        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendType, BackendTypeConfig, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, InferencePoolTypeConfig,
+        Listener, ProtocolType, ResourceKey, RouteType, ServiceTypeConfig, TlsType,
     },
     Error,
 };
@@ -736,6 +736,8 @@ impl Ord for ClusterHolder {
 }
 
 fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) -> Vec<EnvoyCluster> {
+    //let ext_proc_options = envoy_api_rs::envoy::extensions::filters::http::ext_proc::v3::ExternalProcessor { ..Default::default() };
+
     let grpc_protocol_options = envoy_api_rs::envoy::extensions::upstreams::http::v3::HttpProtocolOptions {
         upstream_protocol_options: Some(UpstreamProtocolOptions::ExplicitHttpConfig(ExplicitHttpConfig {
             protocol_config: Some(ProtocolConfig::Http2ProtocolOptions(Http2ProtocolOptions {
@@ -743,6 +745,14 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
                 ..Default::default()
             })),
         })),
+        // http_filters: vec![HttpFilter {
+        //     name: "StupidName".to_owned(),
+        //     is_optional: false,
+        //     disabled: false,
+        //     config_type: Some(envoy_api_rs::envoy::extensions::filters::network::http_connection_manager::v3::http_filter::ConfigType::TypedConfig(
+        //         converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor".to_owned(), &ext_proc_options)),
+        //     )),
+        // }],
         ..Default::default()
     };
 
@@ -753,8 +763,8 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
             listener.http_listener_map.iter().flat_map(|evc| {
                 evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
                     let route_type = r.route_type();
-
-                    r.backends()
+                    let backends = r.backends();
+                    let service_backends = backends
                         .iter()
                         .filter_map(|b| {
                             if let Backend::Resolved(BackendType::Service(backend_service_config) | BackendType::Invalid(backend_service_config)) = b {
@@ -765,42 +775,22 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
                             }
                         })
                         .filter(|b| b.weight() > 0)
-                        .map(|r| ClusterHolder {
-                            name: r.cluster_name(),
-                            cluster: EnvoyCluster {
-                                name: r.cluster_name(),
-                                cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::StrictDns.into())),
-                                lb_policy: LbPolicy::RoundRobin.into(),
-                                connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
-                                load_assignment: Some(ClusterLoadAssignment {
-                                    cluster_name: r.cluster_name(),
-                                    endpoints: vec![LocalityLbEndpoints {
-                                        lb_endpoints: vec![LbEndpoint {
-                                            host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
-                                                address: Some(SocketAddressFactory::from_backend(r)),
-                                                ..Default::default()
-                                            })),
-                                            load_balancing_weight: Some(UInt32Value {
-                                                value: r.weight().try_into().expect("For time being we expect this to work"),
-                                            }),
+                        .map(|r| create_service_cluster(r, route_type, &grpc_http_configuration));
 
-                                            ..Default::default()
-                                        }],
-                                        ..Default::default()
-                                    }],
-                                    ..Default::default()
-                                }),
-                                typed_extension_protocol_options: match route_type {
-                                    common::RouteType::Http(_) => HashMap::new(),
-                                    common::RouteType::Grpc(_) => vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
-                                        .into_iter()
-                                        .collect(),
-                                },
-
-                                ..Default::default()
-                            },
+                    let inference_backends = backends
+                        .iter()
+                        .filter_map(|b| {
+                            if let Backend::Resolved(BackendType::InferencePool(backend_service_config)) = b {
+                                Some(backend_service_config)
+                            } else {
+                                warn!("Filtering out backend not resolved {:?}", b);
+                                None
+                            }
                         })
-                        .collect::<Vec<_>>()
+                        .filter(|b| b.weight > 0)
+                        .map(|r| create_inference_cluster(r, route_type, &grpc_http_configuration));
+
+                    service_backends.chain(inference_backends).collect::<Vec<_>>()
                 })
             })
         })
@@ -809,6 +799,67 @@ fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) ->
     clusters.into_iter().map(|c| c.cluster).collect::<Vec<_>>()
 }
 
+fn create_service_cluster(config: &ServiceTypeConfig, route_type: &RouteType, grpc_http_configuration: &envoy_api_rs::google::protobuf::Any) -> ClusterHolder {
+    ClusterHolder {
+        name: config.cluster_name(),
+        cluster: EnvoyCluster {
+            name: config.cluster_name(),
+            cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::StrictDns.into())),
+            lb_policy: LbPolicy::RoundRobin.into(),
+            connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
+            load_assignment: Some(ClusterLoadAssignment {
+                cluster_name: config.cluster_name(),
+                endpoints: vec![LocalityLbEndpoints {
+                    lb_endpoints: vec![LbEndpoint {
+                        host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
+                            address: Some(SocketAddressFactory::from_backend(config)),
+                            ..Default::default()
+                        })),
+                        load_balancing_weight: Some(UInt32Value {
+                            value: config.weight().try_into().expect("For time being we expect this to work"),
+                        }),
+
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            typed_extension_protocol_options: match route_type {
+                common::RouteType::Http(_) => HashMap::new(),
+                common::RouteType::Grpc(_) => vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
+                    .into_iter()
+                    .collect(),
+            },
+
+            ..Default::default()
+        },
+    }
+}
+
+fn create_inference_cluster(config: &InferencePoolTypeConfig, route_type: &RouteType, grpc_http_configuration: &envoy_api_rs::google::protobuf::Any) -> ClusterHolder {
+    ClusterHolder {
+        name: config.cluster_name(),
+        cluster: EnvoyCluster {
+            name: config.cluster_name(),
+            cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::OriginalDst.into())),
+            lb_policy: LbPolicy::ClusterProvided.into(),
+            connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
+            lb_config: Some(LbConfig::OriginalDstLbConfig(OriginalDstLbConfig {
+                use_http_header: true,
+                http_header_name: "x-gateway-destination-endpoint".to_owned(),
+                upstream_port_override: config.inference_config.as_ref().map(|c| UInt32Value { value: c.0.target_port_number as u32 }),
+                ..Default::default()
+            })),
+
+            typed_extension_protocol_options: vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
+                .into_iter()
+                .collect(),
+
+            ..Default::default()
+        },
+    }
+}
 const ENVOY_POD_SPEC: &str = r#"
 {
     "volumes": [
