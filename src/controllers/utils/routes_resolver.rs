@@ -101,41 +101,43 @@ impl RouteResolver<'_> {
         let gateway_namespace = &self.gateway_resource_key.namespace;
         let route_namespace = &route_resource_key.namespace;
         match backend {
-            Backend::Maybe(mut backend_service_config) => {
+            Backend::Maybe(mut backend_type) => {
                 let reference_grant_allowed = self
                     .reference_grants_resolver
-                    .is_allowed(route_resource_key, &backend_service_config.resource_key, gateway_resource_key)
+                    .is_allowed(route_resource_key, &backend_type.resource_key(), gateway_resource_key)
                     .await;
 
                 let grant_ref = ReferenceGrantRef::builder()
-                    .namespace(backend_service_config.resource_key.namespace.clone())
+                    .namespace(backend_type.resource_key().namespace)
                     .from(route_resource_key.into())
-                    .to((&backend_service_config.resource_key).into())
+                    .to((&backend_type.resource_key()).into())
                     .gateway_key(gateway_resource_key.clone())
                     .build();
 
                 info!("Allowed because of reference grant {grant_ref:?} {reference_grant_allowed}");
 
-                let backend_namespace = &backend_service_config.resource_key.namespace;
+                let backend_config  = backend_type.config_mut ();
+                let backend_resource_key = backend_config.resource_key();
+                let backend_namespace = &backend_resource_key.namespace;
                 if reference_grant_allowed || PermittedBackends(gateway_namespace.to_owned()).is_permitted(route_namespace, backend_namespace) {
-                    let maybe_service = self.backend_reference_resolver.get_reference(&backend_service_config.resource_key).await;
+                    let maybe_service = self.backend_reference_resolver.get_reference(&backend_resource_key).await;
 
                     if let Some(service) = maybe_service {
-                        backend_service_config.effective_port = Self::backend_remap_port(backend_service_config.port, service);
-                        (Backend::Resolved(backend_service_config), ResolutionStatus::Resolved)
+                        backend_config.effective_port = Self::backend_remap_port(backend_config.port, service);
+                        (Backend::Resolved(backend_type), ResolutionStatus::Resolved)
                     } else {
                         debug!(
                             "can't resolve {}-{} {:?}",
-                            &backend_service_config.resource_key.name, &backend_service_config.resource_key.namespace, maybe_service
+                            &backend_resource_key.name, &backend_resource_key.namespace, maybe_service
                         );
-                        (Backend::Unresolved(backend_service_config), ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound))
+                        (Backend::Unresolved(backend_type), ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound))
                     }
                 } else {
                     debug!(
                         "Backend is not permitted gateway namespace is {} route namespace is {} backend namespace is {}",
                         gateway_namespace, &route_namespace, &backend_namespace,
                     );
-                    (Backend::NotAllowed(backend_service_config), ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted))
+                    (Backend::NotAllowed(backend_type), ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted))
                 }
             }
             Backend::Unresolved(_) | Backend::NotAllowed(_) | Backend::Invalid(_) => {

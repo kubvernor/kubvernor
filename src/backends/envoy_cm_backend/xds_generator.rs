@@ -340,7 +340,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         }),
                         cluster_name: er.name.clone(),
                         cluster_names: er
-                            .backends
+                            .backends                            
                             .iter()
                             .filter(|b| b.weight() > 0)
                             .map(|b| TeraClusterName {
@@ -417,7 +417,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                             .iter()
                             .filter(|b| b.weight() > 0)
                             .filter_map(|b| match b {
-                                Backend::Resolved(backend_service_config) => Some(backend_service_config),
+                                Backend::Resolved(backend_type) => Some(backend_type.config()),
                                 _ => None,
                             })
                             .map(|r| TeraCluster {

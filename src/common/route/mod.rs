@@ -9,7 +9,7 @@ pub use http_route::HTTPEffectiveRoutingRule;
 use thiserror::Error;
 use typed_builder::TypedBuilder;
 
-use super::{Backend, BackendServiceConfig, ResourceKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME};
+use super::{Backend, BackendTypeConfig, ResourceKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME};
 use crate::common::route::{grpc_route::GRPCRoutingConfiguration, http_route::HTTPRoutingConfiguration};
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]

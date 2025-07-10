@@ -2,17 +2,17 @@ use std::{cmp, net::IpAddr};
 
 use gateway_api::{
     common::{HTTPFilterType, HTTPHeader, HeaderModifier, RequestRedirect},
-    httproutes::{HTTPRoute, HTTPRouteFilter, HTTPRouteRule, HTTPRouteRulesMatchesPathType, PathMatch, RouteMatch},
+    httproutes::{HTTPBackendReference, HTTPRoute, HTTPRouteFilter, HTTPRouteRule, HTTPRouteRulesMatchesPathType, PathMatch, RouteMatch},
 };
 use kube::ResourceExt;
 use tracing::debug;
 
 use super::{
-    get_add_headers, get_remove_headers, get_set_headers, Backend, BackendServiceConfig, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType,
+    get_add_headers, get_remove_headers, get_set_headers, Backend, BackendTypeConfig, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType,
     DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME,
 };
 use crate::{
-    common::route::{HeaderComparator, QueryComparator},
+    common::{route::{HeaderComparator, QueryComparator}, BackendType},
     controllers::ControllerError,
 };
 
@@ -59,7 +59,7 @@ impl TryFrom<&HTTPRoute> for Route {
                     .unwrap_or(&vec![])
                     .iter()
                     .map(|br| {
-                        let config = BackendServiceConfig {
+                        let config = BackendTypeConfig {
                             resource_key: ResourceKey::from((br, local_namespace.clone())),
                             endpoint: if let Some(namespace) = br.namespace.as_ref() {
                                 if *namespace == DEFAULT_NAMESPACE_NAME {
@@ -78,10 +78,10 @@ impl TryFrom<&HTTPRoute> for Route {
                         };
 
                         if br.kind.is_none() || br.kind == Some("Service".to_owned()) {
-                            Backend::Maybe(config)
+                            Backend::Maybe(BackendType::Service(config))
                         } else {
                             has_invalid_backends = true;
-                            Backend::Invalid(config)
+                            Backend::Invalid(BackendType::Invalid(config))
                         }
                     })
                     .collect(),
@@ -143,6 +143,28 @@ impl TryFrom<&HTTPRoute> for Route {
 pub struct HTTPRoutingConfiguration {
     pub routing_rules: Vec<HTTPRoutingRule>,
     pub effective_routing_rules: Vec<HTTPEffectiveRoutingRule>,
+}
+
+impl From<(&HTTPBackendReference, &str)> for BackendTypeConfig{
+    fn from((br, local_namespace):(&HTTPBackendReference, &str)) -> Self {
+            BackendTypeConfig {
+            resource_key: ResourceKey::from((br, local_namespace.to_owned())),
+            endpoint: if let Some(namespace) = br.namespace.as_ref() {
+                if *namespace == DEFAULT_NAMESPACE_NAME {
+                    br.name.clone()
+                } else {
+                    format!("{}.{namespace}", br.name)
+                }
+            } else if local_namespace == DEFAULT_NAMESPACE_NAME {
+                br.name.clone()
+            } else {
+                format!("{}.{local_namespace}", br.name)
+            },
+            port: br.port.unwrap_or(0),
+            effective_port: br.port.unwrap_or(0),
+            weight: br.weight.unwrap_or(1),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

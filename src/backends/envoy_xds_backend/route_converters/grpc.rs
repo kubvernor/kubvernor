@@ -66,6 +66,7 @@ impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
         let cluster_names: Vec<_> = effective_routing_rule
             .backends
             .iter()
+            
             .filter(|b| b.weight() > 0)
             .map(|b| ClusterWeight {
                 name: b.cluster_name(),

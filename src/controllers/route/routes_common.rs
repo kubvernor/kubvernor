@@ -54,8 +54,8 @@ pub fn extract_references(route: &Route) -> BTreeSet<ResourceKey> {
     let mut backend_reference_keys = BTreeSet::new();
 
     for backend in &route.backends() {
-        if let Backend::Maybe(backend_service_config) = backend {
-            backend_reference_keys.insert(backend_service_config.resource_key.clone());
+        if let Backend::Maybe(backend_type) = backend {
+            backend_reference_keys.insert(backend_type.resource_key());
         }
     }
 

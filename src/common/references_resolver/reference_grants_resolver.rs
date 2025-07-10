@@ -117,8 +117,8 @@ impl ReferenceGrantsResolver {
             let from = route.resource_key();
 
             for backend in &route.backends() {
-                if let Backend::Maybe(backend_service_config) = backend {
-                    let to = &backend_service_config.resource_key;
+                if let Backend::Maybe(backend_type) = backend {
+                    let to = &backend_type.config().resource_key;
                     backend_reference_keys.insert(
                         ReferenceGrantRef::builder()
                             .namespace(to.namespace.clone())

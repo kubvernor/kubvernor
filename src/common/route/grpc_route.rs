@@ -8,10 +8,10 @@ use kube::ResourceExt;
 use tracing::debug;
 
 use super::{
-    get_add_headers, get_remove_headers, get_set_headers, Backend, BackendServiceConfig, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType,
+    get_add_headers, get_remove_headers, get_set_headers, Backend, BackendTypeConfig, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType,
     DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME,
 };
-use crate::{common::route::HeaderComparator, controllers::ControllerError};
+use crate::{common::{route::HeaderComparator, BackendType}, controllers::ControllerError};
 
 fn get_grpc_default_rules_matches() -> GRPCRouteMatch {
     GRPCRouteMatch { headers: Some(vec![]), method: None }
@@ -48,7 +48,7 @@ impl TryFrom<&GRPCRoute> for Route {
                     .unwrap_or(&vec![])
                     .iter()
                     .map(|br| {
-                        let config = BackendServiceConfig {
+                        let config = BackendTypeConfig {                            
                             resource_key: ResourceKey::from((br, local_namespace.clone())),
                             endpoint: if let Some(namespace) = br.namespace.as_ref() {
                                 if *namespace == DEFAULT_NAMESPACE_NAME {
@@ -67,10 +67,10 @@ impl TryFrom<&GRPCRoute> for Route {
                         };
 
                         if br.kind.is_none() || br.kind == Some("Service".to_owned()) {
-                            Backend::Maybe(config)
+                            Backend::Maybe(BackendType::Service(config))
                         } else {
                             has_invalid_backends = true;
-                            Backend::Invalid(config)
+                            Backend::Invalid(BackendType::Invalid(config))
                         }
                     })
                     .collect(),
@@ -123,6 +123,8 @@ impl TryFrom<&GRPCRoute> for Route {
         Ok(Route { config })
     }
 }
+
+
 
 #[derive(Clone, Debug)]
 pub struct GRPCRoutingConfiguration {
