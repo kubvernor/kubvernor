@@ -25,7 +25,7 @@ use envoy_api_rs::{
     google::protobuf::BoolValue,
 };
 use gateway_api::httproutes;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{
     backends::common::{converters, envoy_route_name, get_inference_extension_configurations, inference_cluster_name, INFERENCE_EXT_PROC_FILTER_NAME},
@@ -109,7 +109,7 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
 
         let path_specifier = if path_specifier.is_none() { Some(PathSpecifier::Path("/".to_owned())) } else { path_specifier };
 
-        warn!("Headers to match {:?}", &effective_routing_rule.route_matcher.headers);
+        debug!("Headers to match {:?}", &effective_routing_rule.route_matcher.headers);
         let headers = super::create_header_matchers(effective_routing_rule.route_matcher.headers.clone());
 
         let route_match = RouteMatch {

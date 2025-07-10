@@ -40,16 +40,22 @@ impl RouteResolver<'_> {
         let route_config = route.config_mut();
         let mut route_resolution_status = ResolutionStatus::Resolved;
 
+        // ####  BIG PROBLEM HERE ####
+        // ####  the numbers of effective and normal rules probably don't match
+
         match &mut route_config.route_type {
             common::RouteType::Http(httprouting_configuration) => {
-                let mut rules = httprouting_configuration.routing_rules.iter_mut().zip(httprouting_configuration.effective_routing_rules.iter_mut());
-                for (rule, effective_rule) in &mut rules {
+                for rule in &mut httprouting_configuration.routing_rules {
                     let (new_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;
                     if resolution_status != ResolutionStatus::Resolved {
                         route_resolution_status = resolution_status;
                     }
                     rule.backends.clone_from(&new_backends);
-                    effective_rule.backends = new_backends;
+                    httprouting_configuration
+                        .effective_routing_rules
+                        .iter_mut()
+                        .filter(|r| r.name == rule.name)
+                        .for_each(|r| r.backends.clone_from(&new_backends));
                 }
             }
             common::RouteType::Grpc(grpcrouting_configuration) => {

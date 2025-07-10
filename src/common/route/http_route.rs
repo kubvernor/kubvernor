@@ -85,7 +85,7 @@ impl TryFrom<&HTTPRoute> for Route {
 
         let effective_routing_rules: Vec<_> = routing_rules
             .iter()
-            .flat_map(|rr| {
+            .flat_map(|rr: &HTTPRoutingRule| {
                 let mut matching_rules = rr.matching_rules.clone();
                 if matching_rules.is_empty() {
                     matching_rules.push(get_http_default_rules_matches());

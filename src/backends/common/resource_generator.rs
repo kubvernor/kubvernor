@@ -178,7 +178,7 @@ impl<'a> ResourceGenerator<'a> {
                                 }
                             })
                             .filter(|b| b.weight > 0)
-                            .map(|r| create_inference_cluster(r, route_type, &grpc_http_configuration));
+                            .map(|r| create_inference_cluster(r, route_type));
 
                         service_backends.chain(inference_backends).collect::<Vec<_>>()
                     })
@@ -363,8 +363,6 @@ fn generate_ext_service_cluster(config: &InferenceClusterInfo) -> Option<Cluster
     let Some(extension_config) = &config.config.inference_config else { return None };
 
     let address_port = (extension_config.extension_ref().name.clone(), extension_config.extension_ref().port_number.unwrap_or(9002));
-    //let address_port = ("10.96.18.211".to_owned(), 9002);
-    //let address_port = ("192.168.1.10".to_owned(), 9002);
     let cluster_name = config.cluster_name().to_owned();
 
     let grpc_protocol_options = envoy_api_rs::envoy::extensions::upstreams::http::v3::HttpProtocolOptions {
@@ -439,7 +437,7 @@ fn generate_ext_service_cluster(config: &InferenceClusterInfo) -> Option<Cluster
     })
 }
 
-fn create_inference_cluster(config: &InferencePoolTypeConfig, route_type: &RouteType, grpc_http_configuration: &envoy_api_rs::google::protobuf::Any) -> ClusterHolder {
+fn create_inference_cluster(config: &InferencePoolTypeConfig, _route_type: &RouteType) -> ClusterHolder {
     let fallback_policy = envoy_api_rs::envoy::config::cluster::v3::load_balancing_policy::Policy {
         typed_extension_config: Some(envoy_api_rs::envoy::config::core::v3::TypedExtensionConfig {
             name: "envoy.load_balancing_policies.round_robing".to_owned(),
