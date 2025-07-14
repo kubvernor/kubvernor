@@ -147,7 +147,8 @@ pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route>
     http_routes
 }
 
-pub async fn resolve_route_backends(
+pub async fn resolve_route_backends(    
+    controller_name:String, 
     gateway_resource_key: &ResourceKey,
     backend_reference_resolver: BackendReferenceResolver,
     reference_grants_resolver: ReferenceGrantsResolver,
@@ -158,6 +159,7 @@ pub async fn resolve_route_backends(
         .into_iter()
         .map(|route| {
             RouteResolver::builder()
+                .controller_name(controller_name.clone())
                 .gateway_resource_key(gateway_resource_key)
                 .route(route)
                 .backend_reference_resolver(backend_reference_resolver.clone())

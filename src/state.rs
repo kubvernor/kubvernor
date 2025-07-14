@@ -4,6 +4,7 @@ use std::{
 };
 
 use gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
+use gateway_api_inference_extension::inferencepools::InferencePool;
 
 use crate::common::ResourceKey;
 
@@ -24,6 +25,7 @@ pub struct State {
     http_routes: Arc<Mutex<HashMap<ResourceKey, Arc<HTTPRoute>>>>,
     grpc_routes: Arc<Mutex<HashMap<ResourceKey, Arc<GRPCRoute>>>>,
     gateways_with_routes: Arc<Mutex<HashMap<ResourceKey, BTreeSet<ResourceKey>>>>,
+    inference_pools: Arc<Mutex<HashMap<ResourceKey, BTreeSet<InferencePool>>>>,
 }
 #[allow(dead_code)]
 impl State {
@@ -34,6 +36,7 @@ impl State {
             http_routes: Arc::new(Mutex::new(HashMap::new())),
             grpc_routes: Arc::new(Mutex::new(HashMap::new())),
             gateways_with_routes: Arc::new(Mutex::new(HashMap::new())),
+            inference_pools:Arc::new(Mutex::new(HashMap::new()))
         }
     }
     pub fn save_gateway(&self, id: ResourceKey, gateway: &Arc<Gateway>) -> Result<(), StorageError> {

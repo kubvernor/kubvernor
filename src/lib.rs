@@ -95,6 +95,7 @@ pub async fn start(args: Args) -> Result<()> {
         .build();
 
     let resolver_service = ReferenceValidatorService::builder()
+        .controller_name(args.controller_name.clone())
         .client(client.clone())
         .reference_validate_channel_receiver(reference_validate_channel_receiver)
         .gateway_deployer_channel_sender(gateway_deployer_channel_sender.clone())

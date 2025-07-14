@@ -60,7 +60,7 @@ impl BackendReferenceResolver {
 
     pub async fn delete_all_references(&self, reference_keys: BTreeSet<ResourceKey>) -> BTreeSet<ResourceKey> {
         let service_references = self.reference_resolver.delete_references(reference_keys.iter().cloned()).await;
-        let inference_pool_references = self.reference_resolver.delete_references(reference_keys.iter().cloned()).await;
+        let inference_pool_references = self.inference_pool_reference_resolver.delete_references(reference_keys.iter().cloned()).await;
         service_references.into_iter().chain(inference_pool_references.into_iter()).collect()
     }
 
@@ -73,7 +73,7 @@ impl BackendReferenceResolver {
 
     pub async fn delete_references_by_gateway(&self, gateway: &Gateway) {
         let gateway_key = gateway.key();
-        let references = || {
+        let service_references = || {
             let linked_routes = find_linked_routes(&self.state, gateway_key);
 
             let mut backend_reference_keys = BTreeSet::new();
@@ -86,7 +86,22 @@ impl BackendReferenceResolver {
             }
             backend_reference_keys
         };
-        self.reference_resolver.delete_references_for_gateway(gateway_key, references).await;
+
+        let inference_pool_references = || {
+            let linked_routes = find_linked_routes(&self.state, gateway_key);
+
+            let mut backend_reference_keys = BTreeSet::new();
+            for route in linked_routes {
+                for backend in &route.backends() {
+                    if let Backend::Maybe(backend_type) = backend {
+                        backend_reference_keys.insert(backend_type.resource_key());
+                    }
+                }
+            }
+            backend_reference_keys.into_iter().filter(|k| k.kind == "InferencePool").collect()
+        };
+        self.reference_resolver.delete_references_for_gateway(gateway_key, service_references).await;
+        self.inference_pool_reference_resolver.delete_references_for_gateway(gateway_key, inference_pool_references).await;
     }
 
     pub async fn get_service_reference(&self, resource_key: &ResourceKey) -> Option<Service> {

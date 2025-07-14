@@ -1,9 +1,9 @@
 use std::collections::{BTreeSet, HashMap};
 
 use gateway_api::gateways::Gateway;
-use gateway_api_inference_extension::inferencepools::InferencePoolSpec;
-use k8s_openapi::api::core::v1::{Pod, Service};
-use kube::{api::ListParams, Api, Client};
+use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolSpec, InferencePoolStatus, InferencePoolStatusParent};
+use k8s_openapi::api::core::v1::{ObjectReference, Pod, Service};
+use kube::{api::{ListParams, Patch, PatchParams}, Api, Client};
 use kube_core::{object::HasSpec, Expression, Selector};
 use tracing::{debug, info, warn, Instrument, Span};
 use typed_builder::TypedBuilder;
@@ -20,6 +20,7 @@ use crate::{
 
 #[derive(TypedBuilder)]
 pub struct RouteResolver<'a> {
+    controller_name: String, 
     client: Client,
     gateway_resource_key: &'a ResourceKey,
     route: common::Route,
@@ -40,8 +41,6 @@ impl RouteResolver<'_> {
         let route_config = route.config_mut();
         let mut route_resolution_status = ResolutionStatus::Resolved;
 
-        // ####  BIG PROBLEM HERE ####
-        // ####  the numbers of effective and normal rules probably don't match
 
         match &mut route_config.route_type {
             common::RouteType::Http(httprouting_configuration) => {
@@ -211,6 +210,7 @@ impl RouteResolver<'_> {
     }
 
     async fn process_inference_pool_backend(&self, route_resource_key: &ResourceKey, backend: Backend) -> (Backend, ResolutionStatus) {
+        let gateway_name = &self.gateway_resource_key.name;
         let gateway_namespace = &self.gateway_resource_key.namespace;
         let route_namespace = &route_resource_key.namespace;
         warn!("process_inference_pool_backend {}", backend.resource_key());
@@ -222,7 +222,7 @@ impl RouteResolver<'_> {
                     let maybe_inference_pool: Option<gateway_api_inference_extension::inferencepools::InferencePool> =
                         self.backend_reference_resolver.get_inference_pool_reference(&backend_resource_key).await;
 
-                    if let Some(inference_pool) = maybe_inference_pool {
+                    if let Some(mut inference_pool) = maybe_inference_pool {
                         let inference_pool_spec = inference_pool.spec();
                         let model_endpoints = Self::get_model_endpoints(self.client.clone(), &route_resource_key.namespace, inference_pool_spec).await;
 
@@ -246,8 +246,41 @@ impl RouteResolver<'_> {
                             "Inference Pool: Setting backend config {}-{} {:?}",
                             &backend_resource_key.name, &backend_resource_key.namespace, inference_pool_spec
                         );
+                        
+                        let inference_pool_api: Api<InferencePool> = Api::namespaced(self.client.clone(), &route_resource_key.namespace);
+                        
+                        let pp = PatchParams {
+                          field_manager: Some(self.controller_name.clone()),
+                        ..Default::default()
+                        };
 
-                        (Backend::Resolved(BackendType::InferencePool(backend_config)), ResolutionStatus::Resolved)
+                        
+                        if let Some(inference_pool_name) = inference_pool.metadata.name.clone(){    
+                            inference_pool.metadata.managed_fields = None;
+                            inference_pool.status = Some(InferencePoolStatus{
+                                parent: Some(vec![InferencePoolStatusParent{ 
+                                    parent_ref: ObjectReference{ name: Some(gateway_name.clone()), namespace: Some(gateway_namespace.clone()), kind: Some("Gateway".to_owned()), ..Default::default() },
+                                    conditions: Some(vec![]), 
+                                }])                                
+                            });                        
+                            if let Ok(_) = inference_pool_api.patch(&inference_pool_name, &pp, &Patch::Apply(&inference_pool)).await{
+                                (Backend::Resolved(BackendType::InferencePool(backend_config)), ResolutionStatus::Resolved)
+                            }else{
+                                warn!("Inference Pool: Can't update the status");
+                                (
+                                    Backend::Unresolved(BackendType::InferencePool(backend_config)),
+                                    ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound),
+                                )    
+                            }
+                            
+                        }else{
+                            warn!("Inference Pool: No name");
+                            (
+                                Backend::Unresolved(BackendType::InferencePool(backend_config)),
+                                ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound),
+                            )
+                        }
+                        
                     } else {
                         warn!(
                             "Inference Pool: Backend can't resolve {}-{} {:?}",
@@ -287,6 +320,7 @@ impl RouteResolver<'_> {
 
 #[derive(TypedBuilder)]
 pub struct RoutesResolver<'a> {
+    controller_name:String, 
     gateway: common::Gateway,
     state: &'a State,
     kube_gateway: &'a Gateway,
@@ -301,6 +335,7 @@ impl RoutesResolver<'_> {
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
         let linked_routes = utils::resolve_route_backends(
+            self.controller_name, 
             gateway_resource_key,
             self.backend_reference_resolver.clone(),
             self.reference_grants_resolver.clone(),

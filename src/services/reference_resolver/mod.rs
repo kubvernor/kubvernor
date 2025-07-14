@@ -10,7 +10,8 @@ use crate::{
 };
 
 #[derive(TypedBuilder)]
-pub struct ReferenceValidatorService {
+pub struct ReferenceValidatorService {    
+    controller_name:String, 
     client: Client,
     state: State,
     secrets_resolver: SecretsResolver,
@@ -21,6 +22,7 @@ pub struct ReferenceValidatorService {
 }
 
 struct ReferenceResolverHandler {
+    controller_name:String, 
     client: Client,
     state: State,
     secrets_resolver: SecretsResolver,
@@ -33,6 +35,7 @@ impl ReferenceValidatorService {
     pub async fn start(self) -> crate::Result<()> {
         let mut resolve_receiver = self.reference_validate_channel_receiver;
         let handler = ReferenceResolverHandler {
+            controller_name: self.controller_name.clone(), 
             client: self.client.clone(),
             state: self.state,
             secrets_resolver: self.secrets_resolver,
@@ -173,6 +176,7 @@ impl ReferenceResolverHandler {
             .instrument(span.clone())
             .await;
         let resolver = RoutesResolver::builder()
+            .controller_name(self.controller_name.clone())
             .gateway(backend_gateway)
             .kube_gateway(kube_gateway)
             .client(self.client.clone())
