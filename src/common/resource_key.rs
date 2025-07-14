@@ -7,6 +7,7 @@ use gateway_api::{
     grpcroutes::{GRPCBackendReference, GRPCRoute},
     httproutes::{HTTPBackendReference, HTTPRoute},
 };
+use gateway_api_inference_extension::inferencepools::InferencePool;
 use k8s_openapi::api::core::v1::Service;
 use kube::{Resource, ResourceExt};
 
@@ -211,6 +212,19 @@ impl From<&GRPCBackendReference> for BackendResourceKey {
             namespace,
             name: value.name.clone(),
             kind: value.kind.clone().unwrap_or_default(),
+        }
+    }
+}
+
+impl From<&InferencePool> for ResourceKey {
+    fn from(value: &InferencePool) -> Self {
+        let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+
+        Self {
+            group: DEFAULT_GROUP_NAME.to_owned(),
+            namespace,
+            name: value.name_any(),
+            kind: "InferencePool".to_owned(),
         }
     }
 }

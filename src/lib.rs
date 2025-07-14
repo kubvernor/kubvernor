@@ -36,12 +36,15 @@ cfg_if::cfg_if! {
 use controllers::{
     gateway::{self, GatewayController},
     gateway_class::GatewayClassController,
+    inference_pool::InferencePoolController,
     route::{
         grpc_route::{self, GRPCRouteController},
         http_route::{self, HttpRouteController},
     },
 };
 use typed_builder::TypedBuilder;
+
+use crate::{controllers::inference_pool, services::patchers::InferencePoolPatcherService};
 
 const STARTUP_DURATION: Duration = Duration::from_secs(10);
 
@@ -65,6 +68,7 @@ pub async fn start(args: Args) -> Result<()> {
     let (gateway_class_patcher_channel_sender, gateway_class_patcher_channel_receiver) = mpsc::channel(1024);
     let (http_route_patcher_channel_sender, http_route_patcher_channel_receiver) = mpsc::channel(1024);
     let (grpc_route_patcher_channel_sender, grpc_route_patcher_channel_receiver) = mpsc::channel(1024);
+    let (inference_pool_patcher_channel_sender, inference_pool_patcher_channel_receiver) = mpsc::channel(1024);
     let (backend_deployer_channel_sender, backend_deployer_channel_receiver) = mpsc::channel(1024);
     let (backend_response_channel_sender, backend_response_channel_receiver) = mpsc::channel(1024);
 
@@ -103,12 +107,14 @@ pub async fn start(args: Args) -> Result<()> {
         .secrets_resolver(secrets_resolver.clone())
         .backend_references_resolver(backend_references_resolver.clone())
         .reference_grants_resolver(reference_grants_resolver.clone())
+        .inference_pool_patcher_sender(inference_pool_patcher_channel_sender.clone())
         .build();
 
     let mut gateway_patcher_service = GatewayPatcherService::builder().client(client.clone()).receiver(gateway_patcher_channel_receiver).build();
     let mut gateway_class_patcher_service = GatewayClassPatcherService::builder().client(client.clone()).receiver(gateway_class_patcher_channel_receiver).build();
     let mut http_route_patcher_service = HttpRoutePatcherService::builder().client(client.clone()).receiver(http_route_patcher_channel_receiver).build();
     let mut grpc_route_patcher_service = GRPCRoutePatcherService::builder().client(client.clone()).receiver(grpc_route_patcher_channel_receiver).build();
+    let mut inference_pool_patcher_service = InferencePoolPatcherService::builder().client(client.clone()).receiver(inference_pool_patcher_channel_receiver).build();
 
     let control_plane_config = ControlPlaneConfig {
         host: args.envoy_control_plane_host.clone(),
@@ -158,6 +164,18 @@ pub async fn start(args: Args) -> Result<()> {
                 .controller_name(args.controller_name.clone())
                 .state(state.clone())
                 .grpc_route_patcher(grpc_route_patcher_channel_sender.clone())
+                .validate_references_channel_sender(reference_validate_channel_sender.clone())
+                .build(),
+        ))
+        .build();
+
+    let inference_pool_controller = InferencePoolController::builder()
+        .ctx(Arc::new(
+            inference_pool::InferencePoolControllerContext::builder()
+                .client(client.clone())
+                .controller_name(args.controller_name.clone())
+                .state(state.clone())
+                .inference_pool_patcher(inference_pool_patcher_channel_sender.clone())
                 .validate_references_channel_sender(reference_validate_channel_sender)
                 .build(),
         ))
@@ -169,6 +187,7 @@ pub async fn start(args: Args) -> Result<()> {
     let gateway_class_patcher_service = gateway_class_patcher_service.start().boxed();
     let http_route_patcher_service = http_route_patcher_service.start().boxed();
     let grpc_route_patcher_service = grpc_route_patcher_service.start().boxed();
+    let inference_pool_patcher_service = inference_pool_patcher_service.start().boxed();
     let envoy_deployer_service = envoy_deployer_service.start().boxed();
     let gateway_class_controller_task = async move {
         info!("Gateway Class controller...started");
@@ -200,6 +219,14 @@ pub async fn start(args: Args) -> Result<()> {
         crate::Result::<()>::Ok(())
     };
 
+    let inference_pool_controller_task = async move {
+        sleep(2 * STARTUP_DURATION).await;
+        info!("Inference Pool controller...started");
+        inference_pool_controller.get_controller().await;
+        info!("Inference Pool controller...stopped");
+        crate::Result::<()>::Ok(())
+    };
+
     let secret_resolver_service = async move { secrets_resolver.resolve().await }.boxed();
     let backend_references_resolver_service = async move { backend_references_resolver.resolve().await }.boxed();
     let reference_grants_resolver_service = async move { reference_grants_resolver.resolve().await }.boxed();
@@ -213,11 +240,13 @@ pub async fn start(args: Args) -> Result<()> {
         gateway_patcher_service,
         http_route_patcher_service,
         grpc_route_patcher_service,
+        inference_pool_patcher_service,
         envoy_deployer_service,
         gateway_class_controller_task.boxed(),
         gateway_controller_task.boxed(),
         http_route_controller_task.boxed(),
         grpc_route_controller_task.boxed(),
+        inference_pool_controller_task.boxed(),
     ])
     .await;
     info!("Kubvernor stopped");

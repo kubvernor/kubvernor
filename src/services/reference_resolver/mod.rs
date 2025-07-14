@@ -1,17 +1,20 @@
 use gateway_api::gateways::Gateway;
+use gateway_api_inference_extension::inferencepools::InferencePool;
 use kube::Client;
+use tokio::sync::mpsc;
 use tracing::{debug, info, span, warn, Instrument, Level, Span};
 use typed_builder::TypedBuilder;
 
 use crate::{
     common::{self, BackendReferenceResolver, GatewayDeployRequest, ReferenceGrantsResolver, ReferenceValidateRequest, RequestContext, SecretsResolver},
     controllers::{ListenerTlsConfigValidator, RoutesResolver},
+    services::patchers::Operation,
     state::State,
 };
 
 #[derive(TypedBuilder)]
-pub struct ReferenceValidatorService {    
-    controller_name:String, 
+pub struct ReferenceValidatorService {
+    controller_name: String,
     client: Client,
     state: State,
     secrets_resolver: SecretsResolver,
@@ -19,29 +22,32 @@ pub struct ReferenceValidatorService {
     reference_grants_resolver: ReferenceGrantsResolver,
     reference_validate_channel_receiver: tokio::sync::mpsc::Receiver<ReferenceValidateRequest>,
     gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<GatewayDeployRequest>,
+    inference_pool_patcher_sender: mpsc::Sender<Operation<InferencePool>>,
 }
 
 struct ReferenceResolverHandler {
-    controller_name:String, 
+    controller_name: String,
     client: Client,
     state: State,
     secrets_resolver: SecretsResolver,
     backend_references_resolver: BackendReferenceResolver,
     reference_grants_resolver: ReferenceGrantsResolver,
-    gateway_deployer_channel_sender: tokio::sync::mpsc::Sender<GatewayDeployRequest>,
+    gateway_deployer_channel_sender: mpsc::Sender<GatewayDeployRequest>,
+    inference_pool_patcher_sender: mpsc::Sender<Operation<InferencePool>>,
 }
 
 impl ReferenceValidatorService {
     pub async fn start(self) -> crate::Result<()> {
         let mut resolve_receiver = self.reference_validate_channel_receiver;
         let handler = ReferenceResolverHandler {
-            controller_name: self.controller_name.clone(), 
+            controller_name: self.controller_name.clone(),
             client: self.client.clone(),
             state: self.state,
             secrets_resolver: self.secrets_resolver,
             backend_references_resolver: self.backend_references_resolver,
             reference_grants_resolver: self.reference_grants_resolver,
             gateway_deployer_channel_sender: self.gateway_deployer_channel_sender,
+            inference_pool_patcher_sender: self.inference_pool_patcher_sender,
         };
 
         loop {
@@ -176,13 +182,14 @@ impl ReferenceResolverHandler {
             .instrument(span.clone())
             .await;
         let resolver = RoutesResolver::builder()
-            .controller_name(self.controller_name.clone())
             .gateway(backend_gateway)
             .kube_gateway(kube_gateway)
             .client(self.client.clone())
             .backend_reference_resolver(&self.backend_references_resolver)
             .reference_grants_resolver(&self.reference_grants_resolver)
             .state(&self.state)
+            .inference_pool_patcher_sender(self.inference_pool_patcher_sender.clone())
+            .controller_name(self.controller_name.clone())
             .build();
 
         resolver.validate().instrument(span.clone()).await

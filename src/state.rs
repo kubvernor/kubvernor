@@ -25,7 +25,7 @@ pub struct State {
     http_routes: Arc<Mutex<HashMap<ResourceKey, Arc<HTTPRoute>>>>,
     grpc_routes: Arc<Mutex<HashMap<ResourceKey, Arc<GRPCRoute>>>>,
     gateways_with_routes: Arc<Mutex<HashMap<ResourceKey, BTreeSet<ResourceKey>>>>,
-    inference_pools: Arc<Mutex<HashMap<ResourceKey, BTreeSet<InferencePool>>>>,
+    inference_pools: Arc<Mutex<HashMap<ResourceKey, Arc<InferencePool>>>>,
 }
 #[allow(dead_code)]
 impl State {
@@ -36,7 +36,7 @@ impl State {
             http_routes: Arc::new(Mutex::new(HashMap::new())),
             grpc_routes: Arc::new(Mutex::new(HashMap::new())),
             gateways_with_routes: Arc::new(Mutex::new(HashMap::new())),
-            inference_pools:Arc::new(Mutex::new(HashMap::new()))
+            inference_pools: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     pub fn save_gateway(&self, id: ResourceKey, gateway: &Arc<Gateway>) -> Result<(), StorageError> {
@@ -49,6 +49,14 @@ impl State {
         let mut lock = self.gateways.lock().map_err(|_| StorageError::LockingError)?;
         if lock.contains_key(&id) {
             lock.insert(id, Arc::clone(gateway));
+        }
+        Ok(())
+    }
+
+    pub fn maybe_save_inference_pool(&self, id: ResourceKey, inference_pool: &Arc<InferencePool>) -> Result<(), StorageError> {
+        let mut lock = self.inference_pools.lock().map_err(|_| StorageError::LockingError)?;
+        if lock.contains_key(&id) {
+            lock.insert(id, Arc::clone(inference_pool));
         }
         Ok(())
     }
@@ -194,5 +202,21 @@ impl State {
 
     pub fn gateways_with_routes(&self) -> Result<MutexGuard<'_, HashMap<ResourceKey, BTreeSet<ResourceKey>>>, StorageError> {
         self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)
+    }
+
+    pub fn save_inference_pool(&self, id: ResourceKey, inference_pool: &Arc<InferencePool>) -> Result<(), StorageError> {
+        let mut lock = self.inference_pools.lock().map_err(|_| StorageError::LockingError)?;
+        lock.insert(id, Arc::clone(inference_pool));
+        Ok(())
+    }
+
+    pub fn delete_inference_pool(&self, id: &ResourceKey) -> Result<Option<Arc<InferencePool>>, StorageError> {
+        let mut lock = self.inference_pools.lock().map_err(|_| StorageError::LockingError)?;
+        Ok(lock.remove(id))
+    }
+
+    pub fn get_http_routes(&self) -> Result<Vec<Arc<HTTPRoute>>, StorageError> {
+        let lock = self.http_routes.lock().map_err(|_| StorageError::LockingError)?;
+        Ok(lock.values().cloned().collect())
     }
 }

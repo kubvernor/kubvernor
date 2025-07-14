@@ -1,8 +1,8 @@
 use std::time::Duration;
 pub mod gateway;
 pub mod gateway_class;
-pub mod inference_pool;
 mod handlers;
+pub mod inference_pool;
 pub mod route;
 
 mod utils;

@@ -7,6 +7,7 @@ mod tls_config_validator;
 
 use std::{collections::BTreeMap, sync::Arc};
 
+use gateway_api_inference_extension::inferencepools::InferencePool;
 pub use hostname_match_filter::HostnameMatchFilter;
 use k8s_openapi::api::core::v1::Namespace;
 use kube::{
@@ -23,11 +24,13 @@ use routes_resolver::RouteResolver;
 pub use routes_resolver::RoutesResolver;
 use serde::Serialize;
 pub use tls_config_validator::ListenerTlsConfigValidator;
+use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::{
     common::{BackendReferenceResolver, ReferenceGrantsResolver, ResourceKey, Route},
     controllers::ControllerError,
+    services::patchers::Operation,
     state::State,
 };
 
@@ -147,8 +150,9 @@ pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route>
     http_routes
 }
 
-pub async fn resolve_route_backends(    
-    controller_name:String, 
+pub async fn resolve_route_backends(
+    controller_name: String,
+    inference_pool_patcher_sender: mpsc::Sender<Operation<InferencePool>>,
     gateway_resource_key: &ResourceKey,
     backend_reference_resolver: BackendReferenceResolver,
     reference_grants_resolver: ReferenceGrantsResolver,
@@ -159,12 +163,13 @@ pub async fn resolve_route_backends(
         .into_iter()
         .map(|route| {
             RouteResolver::builder()
-                .controller_name(controller_name.clone())
                 .gateway_resource_key(gateway_resource_key)
                 .route(route)
                 .backend_reference_resolver(backend_reference_resolver.clone())
                 .reference_grants_resolver(reference_grants_resolver.clone())
                 .client(client.clone())
+                .inference_pool_patcher_sender(inference_pool_patcher_sender.clone())
+                .controller_name(controller_name.clone())
                 .build()
                 .resolve()
         })
