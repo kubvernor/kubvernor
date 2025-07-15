@@ -70,6 +70,7 @@ where
                     span,
                 }) => {
                     let span = span!(parent: &span, Level::INFO, "PatcherService", resource= %std::any::type_name_of_val(&resource), operation="PatchStatus", id = %resource_key);
+                    resource.meta_mut().managed_fields = None;
                     resource.meta_mut().resource_version = Option::<String>::None;
                     let api = self.api(&resource_key.namespace);
                     let patch_params = PatchParams::apply(&controller_name).force();

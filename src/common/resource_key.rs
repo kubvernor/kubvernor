@@ -8,7 +8,7 @@ use gateway_api::{
     httproutes::{HTTPBackendReference, HTTPRoute},
 };
 use gateway_api_inference_extension::inferencepools::InferencePool;
-use k8s_openapi::api::core::v1::Service;
+use k8s_openapi::api::core::v1::{ObjectReference, Service};
 use kube::{Resource, ResourceExt};
 
 use crate::common::create_id;
@@ -228,6 +228,20 @@ impl From<&InferencePool> for ResourceKey {
         }
     }
 }
+
+
+impl From<&ObjectReference> for ResourceKey {
+    fn from(value: &ObjectReference) -> Self {
+        
+        Self {
+            group: value.name.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
+            namespace: value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
+            name: value.name.clone().unwrap_or_default(),
+            kind: value.kind.clone().unwrap_or_default(),
+        }
+    }
+}
+
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Default)]
 pub struct RouteRefKey {
