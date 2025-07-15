@@ -138,7 +138,7 @@ where
             for key in references.keys() {
                 let key = key.clone();
                 let myself = (*self).clone();
-                let span = span!(Level::INFO, "ReferencesResolver", secret = %key);
+                let span = span!(Level::INFO, "ReferencesResolver", key = %key);
                 tokio::spawn(
                     async move {
                         debug!("Checking reference {key}");
@@ -150,8 +150,9 @@ where
                                 let mut resolved_references = myself.resolved_references.lock().await;
                                 resolved_references
                                     .entry(key.clone())
-                                    .and_modify(|f| {
+                                    .and_modify(|f: &mut R| {
                                         if *f != reference {
+                                            warn!("Comparing references {:#?} {:#?}", *f, reference);
                                             *f = reference.clone();
                                             update_gateway = true;
                                         }

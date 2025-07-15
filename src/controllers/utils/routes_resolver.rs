@@ -19,7 +19,10 @@ use crate::{
         self, Backend, BackendType, BackendTypeConfig, InferencePoolConfig, NotResolvedReason, ReferenceGrantRef, ReferenceGrantsResolver, ResolutionStatus, ResourceKey, Route,
         RouteToListenersMapping, KUBERNETES_NONE,
     },
-    controllers::utils::{self, RouteListenerMatcher},
+    controllers::{
+        utils::{self, RouteListenerMatcher},
+        INFERENCE_POOL_CONDITION_MESSAGE,
+    },
     services::patchers::{Operation, PatchContext},
     state::State,
 };
@@ -325,23 +328,36 @@ impl RouteResolver<'_> {
 
         let accepted = Condition {
             last_transition_time: Time(Utc::now()),
-            message: "Updated by controller".to_owned(),
+            message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
             observed_generation: inference_pool.metadata.generation,
-            reason: "AcceptedByController".to_owned(),
+            reason: "Accepted".to_owned(),
             status: "True".to_owned(),
             type_: "Accepted".to_owned(),
         };
 
         let resolved = Condition {
             last_transition_time: Time(Utc::now()),
-            message: "Updated by controller".to_owned(),
+            message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
             observed_generation: None,
             reason: "ResolvedRefs".to_owned(),
             status: "True".to_owned(),
             type_: "ResolvedRefs".to_owned(),
         };
 
-        let conditions = if resolved_endpoint_picker { Some(vec![accepted, resolved]) } else { Some(vec![accepted]) };
+        let not_resolved = Condition {
+            last_transition_time: Time(Utc::now()),
+            message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
+            observed_generation: None,
+            reason: "ResolvedRefs".to_owned(),
+            status: "False".to_owned(),
+            type_: "ResolvedRefs".to_owned(),
+        };
+
+        let conditions = if resolved_endpoint_picker {
+            Some(vec![accepted, resolved])
+        } else {
+            Some(vec![accepted, not_resolved])
+        };
 
         let new_parent = InferencePoolStatusParent {
             conditions,
@@ -362,17 +378,7 @@ impl RouteResolver<'_> {
             parents.push(new_parent);
         }
 
-        inference_pool.status = Some(InferencePoolStatus {
-            parent: Some(vec![InferencePoolStatusParent {
-                parent_ref: ObjectReference {
-                    name: Some(gateway_name.clone()),
-                    namespace: Some(gateway_namespace.clone()),
-                    kind: Some("Gateway".to_owned()),
-                    ..Default::default()
-                },
-                conditions: Some(vec![]),
-            }]),
-        });
+        inference_pool.status = Some(InferencePoolStatus { parent: Some(parents) });
         inference_pool
     }
 }

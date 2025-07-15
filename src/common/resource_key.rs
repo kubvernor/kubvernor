@@ -229,10 +229,8 @@ impl From<&InferencePool> for ResourceKey {
     }
 }
 
-
 impl From<&ObjectReference> for ResourceKey {
     fn from(value: &ObjectReference) -> Self {
-        
         Self {
             group: value.name.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
             namespace: value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
@@ -241,7 +239,6 @@ impl From<&ObjectReference> for ResourceKey {
         }
     }
 }
-
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Default)]
 pub struct RouteRefKey {

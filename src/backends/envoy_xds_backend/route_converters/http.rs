@@ -1,28 +1,25 @@
 use std::collections::HashMap;
 
-use envoy_api_rs::{
-    envoy::{
-        config::{
-            core::v3::{
-                grpc_service::{EnvoyGrpc, TargetSpecifier},
-                GrpcService,
-            },
-            route::v3::{
-                redirect_action,
-                route::Action,
-                route_action::{self, ClusterSpecifier},
-                route_match::PathSpecifier,
-                RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster,
-            },
+use envoy_api_rs::envoy::{
+    config::{
+        core::v3::{
+            grpc_service::{EnvoyGrpc, TargetSpecifier},
+            GrpcService,
         },
-        extensions::filters::http::ext_proc::v3::{
-            ext_proc_per_route::Override,
-            processing_mode::{BodySendMode, HeaderSendMode},
-            ExtProcOverrides, ExtProcPerRoute, ProcessingMode,
+        route::v3::{
+            redirect_action,
+            route::Action,
+            route_action::{self, ClusterSpecifier},
+            route_match::PathSpecifier,
+            RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster,
         },
-        r#type::matcher::v3::RegexMatcher,
     },
-    google::protobuf::BoolValue,
+    extensions::filters::http::ext_proc::v3::{
+        ext_proc_per_route::Override,
+        processing_mode::{BodySendMode, HeaderSendMode},
+        ExtProcOverrides, ExtProcPerRoute, ProcessingMode,
+    },
+    r#type::matcher::v3::RegexMatcher,
 };
 use gateway_api::httproutes;
 use tracing::{debug, warn};
@@ -63,7 +60,6 @@ impl HTTPEffectiveRoutingRule {
                                     })),
                                     ..Default::default()
                                 }),
-                                failure_mode_allow: Some(BoolValue { value: false }),
                                 ..Default::default()
                             })),
                         };

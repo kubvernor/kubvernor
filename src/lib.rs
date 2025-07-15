@@ -174,7 +174,7 @@ pub async fn start(args: Args) -> Result<()> {
             inference_pool::InferencePoolControllerContext::builder()
                 .client(client.clone())
                 .controller_name(args.controller_name.clone())
-                .state(state.clone())                
+                .state(state.clone())
                 .validate_references_channel_sender(reference_validate_channel_sender)
                 .inference_pool_patcher_sender(inference_pool_patcher_channel_sender)
                 .build(),

@@ -212,7 +212,7 @@ impl State {
 
     pub fn get_inference_pool(&self, id: &ResourceKey) -> Result<Option<Arc<InferencePool>>, StorageError> {
         let lock = self.inference_pools.lock().map_err(|_| StorageError::LockingError)?;
-        Ok(lock.get(id).cloned())        
+        Ok(lock.get(id).cloned())
     }
 
     pub fn delete_inference_pool(&self, id: &ResourceKey) -> Result<Option<Arc<InferencePool>>, StorageError> {
@@ -225,12 +225,12 @@ impl State {
         Ok(lock.values().cloned().collect())
     }
 
-    pub fn get_gateways_with_http_routes(&self, routes: BTreeSet<ResourceKey>)->Result<BTreeSet<ResourceKey>,StorageError>{
+    pub fn get_gateways_with_http_routes(&self, routes: &BTreeSet<ResourceKey>) -> Result<BTreeSet<ResourceKey>, StorageError> {
         let mut owned_gateways = BTreeSet::new();
-        let gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;        
-        for (gateway_id, stored_routes) in gateways_with_routes.iter(){
-            let mut instesection = stored_routes.intersection(&routes);
-            if instesection.next().is_some(){
+        let gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
+        for (gateway_id, stored_routes) in gateways_with_routes.iter() {
+            let mut instesection = stored_routes.intersection(routes);
+            if instesection.next().is_some() {
                 owned_gateways.insert(gateway_id.clone());
             }
         }

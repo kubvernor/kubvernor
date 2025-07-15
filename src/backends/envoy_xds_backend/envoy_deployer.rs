@@ -380,7 +380,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 ..Default::default()
             }),
             message_timeout: Some(DurationConverter::from(std::time::Duration::from_secs(2))),
-            failure_mode_allow: false,
+            failure_mode_allow: true,
             allow_mode_override: true,
             ..Default::default()
         };
