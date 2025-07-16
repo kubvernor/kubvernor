@@ -27,7 +27,6 @@ pub enum ControllerError {
 const RECONCILE_LONG_WAIT: Duration = Duration::from_secs(3600);
 const RECONCILE_ERROR_WAIT: Duration = Duration::from_secs(100);
 
-pub const INFERENCE_POOL_CONDITION_MESSAGE: &str = "Inference Pool status updated by controller";
 
 impl std::fmt::Display for ControllerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

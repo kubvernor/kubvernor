@@ -6,6 +6,7 @@ use gateway_api::{
     common::RouteStatus,
     httproutes::{self, HTTPRoute},
 };
+use gateway_api_inference_extension::inferencepools::InferencePool;
 use kube::{
     runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource,
@@ -35,6 +36,7 @@ pub struct HttpRouteControllerContext {
     state: State,
     http_route_patcher: mpsc::Sender<Operation<HTTPRoute>>,
     validate_references_channel_sender: mpsc::Sender<ReferenceValidateRequest>,
+    inference_pool_patcher_channel_sender: mpsc::Sender<Operation<InferencePool>>,
 }
 
 #[derive(TypedBuilder)]
@@ -88,6 +90,7 @@ impl HttpRouteController {
                     .resource_key(resource_key)
                     .state(state.clone())
                     .version(version)
+                    .inference_pool_patcher_channel_sender(Some(ctx.inference_pool_patcher_channel_sender.clone()))
                     .build(),
             )
             .build();

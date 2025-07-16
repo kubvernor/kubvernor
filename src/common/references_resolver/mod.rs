@@ -5,6 +5,7 @@ use std::{
 };
 
 use kube::{Api, Client, Resource, ResourceExt};
+use kube_core::{object::HasSpec, ObjectMeta};
 use tokio::time;
 use tracing::{debug, span, warn, Instrument, Level};
 use typed_builder::TypedBuilder;
@@ -142,7 +143,7 @@ where
                 tokio::spawn(
                     async move {
                         debug!("Checking reference {key}");
-                        let api: Api<_> = Api::namespaced(myself.client.clone(), &key.namespace);
+                        let api: Api<R> = Api::namespaced(myself.client.clone(), &key.namespace);
                         let maybe_reference = api.get(&key.name).await;
                         if let Ok(reference) = maybe_reference {
                             let mut update_gateway = false;
@@ -151,8 +152,14 @@ where
                                 resolved_references
                                     .entry(key.clone())
                                     .and_modify(|f: &mut R| {
-                                        if *f != reference {
-                                            warn!("Comparing references {:#?} {:#?}", *f, reference);
+                                        let mut this = f.clone();
+                                        *this.meta_mut()= ObjectMeta::default();
+
+                                        let mut other = reference.clone();
+                                        *other.meta_mut()= ObjectMeta::default();
+
+                                        if this != other {
+                                            warn!("Comparing references {:#?} {:#?}", this, other);
                                             *f = reference.clone();
                                             update_gateway = true;
                                         }

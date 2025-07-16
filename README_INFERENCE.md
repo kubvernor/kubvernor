@@ -91,3 +91,6 @@ docker run --rm -p 3000:3000 -p 9901:9901 -it -v ./resources/envoy-inference.yam
         --- PASS: TestConformance/InferencePoolResolvedRefsCondition/InferencePool_should_show_Accepted:True_by_parents_and_be_routable_via_multiple_HTTPRoutes (0.01s)
         --- FAIL: TestConformance/InferencePoolResolvedRefsCondition/Delete_httproute-for-primary-gw_and_verify_InferencePool_status_and_routing_via_secondary_gw (205.10s)
         --- FAIL: TestConformance/InferencePoolResolvedRefsCondition/Delete_httproute-for-secondary-gw_and_verify_InferencePool_has_no_parent_statuses_and_is_not_routable (305.03s)
+
+
+go test -v -count=1 -timeout=3h ./conformance --debug -run TestConformance/InferencePoolResolvedRefsCondition  --allow-crds-mismatch

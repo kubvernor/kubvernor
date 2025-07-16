@@ -153,6 +153,7 @@ pub async fn start(args: Args) -> Result<()> {
                 .state(state.clone())
                 .http_route_patcher(http_route_patcher_channel_sender.clone())
                 .validate_references_channel_sender(reference_validate_channel_sender.clone())
+                .inference_pool_patcher_channel_sender(inference_pool_patcher_channel_sender.clone())
                 .build(),
         ))
         .build();

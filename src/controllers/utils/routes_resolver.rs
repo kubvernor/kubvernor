@@ -1,11 +1,9 @@
 use std::collections::{BTreeSet, HashMap};
 
 use gateway_api::gateways::Gateway;
-use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolSpec, InferencePoolStatus, InferencePoolStatusParent};
+use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolSpec};
 use k8s_openapi::{
-    api::core::v1::{ObjectReference, Pod, Service},
-    apimachinery::pkg::apis::meta::v1::{Condition, Time},
-    chrono::Utc,
+    api::core::v1::{ Pod, Service},    
 };
 use kube::{api::ListParams, Api, Client};
 use kube_core::{object::HasSpec, Expression, Selector};
@@ -20,8 +18,7 @@ use crate::{
         RouteToListenersMapping, KUBERNETES_NONE,
     },
     controllers::{
-        utils::{self, RouteListenerMatcher},
-        INFERENCE_POOL_CONDITION_MESSAGE,
+        inference_pool::{self,}, utils::{self, RouteListenerMatcher}        
     },
     services::patchers::{Operation, PatchContext},
     state::State,
@@ -254,7 +251,7 @@ impl RouteResolver<'_> {
                         );
 
                         if inference_pool.metadata.name.is_some() {
-                            let inference_pool = Self::update_inference_pool_parents(self.gateway_resource_key, inference_pool, resolved_endpoint_picker);
+                            let inference_pool = inference_pool::update_inference_pool_parents(self.gateway_resource_key, inference_pool, resolved_endpoint_picker);
 
                             let (sender, receiver) = oneshot::channel();
                             let _ = self
@@ -320,67 +317,7 @@ impl RouteResolver<'_> {
         }
     }
 
-    fn update_inference_pool_parents(gateway: &ResourceKey, mut inference_pool: InferencePool, resolved_endpoint_picker: bool) -> InferencePool {
-        let gateway_name = gateway.name.clone();
-        let gateway_namespace = gateway.namespace.clone();
-
-        let mut parents = inference_pool.status.clone().map(|s| s.parent.unwrap_or_default()).unwrap_or_default();
-
-        let accepted = Condition {
-            last_transition_time: Time(Utc::now()),
-            message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
-            observed_generation: inference_pool.metadata.generation,
-            reason: "Accepted".to_owned(),
-            status: "True".to_owned(),
-            type_: "Accepted".to_owned(),
-        };
-
-        let resolved = Condition {
-            last_transition_time: Time(Utc::now()),
-            message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
-            observed_generation: None,
-            reason: "ResolvedRefs".to_owned(),
-            status: "True".to_owned(),
-            type_: "ResolvedRefs".to_owned(),
-        };
-
-        let not_resolved = Condition {
-            last_transition_time: Time(Utc::now()),
-            message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
-            observed_generation: None,
-            reason: "ResolvedRefs".to_owned(),
-            status: "False".to_owned(),
-            type_: "ResolvedRefs".to_owned(),
-        };
-
-        let conditions = if resolved_endpoint_picker {
-            Some(vec![accepted, resolved])
-        } else {
-            Some(vec![accepted, not_resolved])
-        };
-
-        let new_parent = InferencePoolStatusParent {
-            conditions,
-            parent_ref: ObjectReference {
-                name: Some(gateway_name.clone()),
-                namespace: Some(gateway_namespace.clone()),
-                kind: Some("Gateway".to_owned()),
-                ..Default::default()
-            },
-        };
-
-        if let Some(parent) = parents
-            .iter_mut()
-            .find(|p| p.parent_ref.kind == Some("Gateway".to_owned()) && p.parent_ref.name == Some(gateway_name.clone()) && p.parent_ref.namespace == Some(gateway_namespace.clone()))
-        {
-            *parent = new_parent;
-        } else {
-            parents.push(new_parent);
-        }
-
-        inference_pool.status = Some(InferencePoolStatus { parent: Some(parents) });
-        inference_pool
-    }
+    
 }
 
 #[derive(TypedBuilder)]
