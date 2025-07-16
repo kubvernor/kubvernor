@@ -2,9 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use gateway_api::gateways::Gateway;
 use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolSpec};
-use k8s_openapi::{
-    api::core::v1::{ Pod, Service},    
-};
+use k8s_openapi::api::core::v1::{Pod, Service};
 use kube::{api::ListParams, Api, Client};
 use kube_core::{object::HasSpec, Expression, Selector};
 use tokio::sync::{mpsc, oneshot};
@@ -18,7 +16,8 @@ use crate::{
         RouteToListenersMapping, KUBERNETES_NONE,
     },
     controllers::{
-        inference_pool::{self,}, utils::{self, RouteListenerMatcher}        
+        inference_pool::{self},
+        utils::{self, RouteListenerMatcher},
     },
     services::patchers::{Operation, PatchContext},
     state::State,
@@ -316,8 +315,6 @@ impl RouteResolver<'_> {
             }
         }
     }
-
-    
 }
 
 #[derive(TypedBuilder)]

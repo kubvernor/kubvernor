@@ -232,7 +232,7 @@ impl From<&InferencePool> for ResourceKey {
 impl From<&ObjectReference> for ResourceKey {
     fn from(value: &ObjectReference) -> Self {
         Self {
-            group: value.name.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
+            group: DEFAULT_GROUP_NAME.to_owned(),
             namespace: value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
             name: value.name.clone().unwrap_or_default(),
             kind: value.kind.clone().unwrap_or_default(),

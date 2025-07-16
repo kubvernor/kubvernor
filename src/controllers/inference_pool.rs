@@ -17,7 +17,7 @@ use tokio::sync::{
     mpsc::{self},
     oneshot,
 };
-use tracing::{warn, Span};
+use tracing::{info, warn, Span};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -185,10 +185,11 @@ impl InferencePoolControllerHandler<InferencePool> {
                 .state
                 .get_gateways_with_http_routes(&routes.iter().map(|r| ResourceKey::from(r.as_ref())).collect())
                 .expect("We expect the lock to work");
-            
+
             let inference_pool = create_accepted_inference_pool_status((**resource).clone(), &gateways_ids);
-            let (sender, receiver) = oneshot::channel();            
-            let _ = self.inference_pool_patcher_sender
+            let (sender, receiver) = oneshot::channel();
+            let _ = self
+                .inference_pool_patcher_sender
                 .send(Operation::PatchStatus(PatchContext {
                     resource_key: inference_pool_key.clone(),
                     resource: inference_pool,
@@ -238,48 +239,57 @@ fn has_inference_pool(route: &HTTPRoute, inference_pool_key: &ResourceKey) -> bo
     })
 }
 
-fn create_accepted_inference_pool_status(inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>)->InferencePool{
-    create_inference_pool_status_with_conditions(inference_pool, gateways_ids, vec![InferencePoolCondition::Accepted(None).get_condition()])
+fn create_accepted_inference_pool_status(inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
+    create_inference_pool_status_with_conditions(inference_pool, gateways_ids, &[InferencePoolCondition::Accepted(None).get_condition()])
 }
 
-fn create_inference_pool_status_with_conditions(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>, conditions: Vec<Condition>)->InferencePool{    
-            
+fn create_inference_pool_status_with_conditions(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>, conditions: &[Condition]) -> InferencePool {
     let mut inference_pool_status = inference_pool.status.clone().unwrap_or_default();
-            inference_pool_status.parent = Some(
-                gateways_ids
-                    .iter()
-                    .map(|id| InferencePoolStatusParent {
-                        conditions: Some(conditions.clone()),
-                        parent_ref: ObjectReference {
-                            kind: Some(id.kind.clone()),
-                            name: Some(id.name.clone()),
-                            namespace: Some(id.namespace.clone()),
-                            ..Default::default()
-                        },
-                    })
-                    .collect(),
-            );
+    inference_pool_status.parent = Some(
+        gateways_ids
+            .iter()
+            .map(|id| InferencePoolStatusParent {
+                conditions: Some(conditions.to_vec()),
+                parent_ref: ObjectReference {
+                    kind: Some(id.kind.clone()),
+                    name: Some(id.name.clone()),
+                    namespace: Some(id.namespace.clone()),
+                    ..Default::default()
+                },
+            })
+            .collect(),
+    );
 
     inference_pool.status = Some(inference_pool_status);
     inference_pool
-
 }
 
-
 pub fn update_inference_pool_parents(gateway: &ResourceKey, mut inference_pool: InferencePool, resolved_endpoint_picker: bool) -> InferencePool {
-        let gateway_name = gateway.name.clone();
-        let gateway_namespace = gateway.namespace.clone();
+    let gateway_name = gateway.name.clone();
+    let gateway_namespace = gateway.namespace.clone();
 
-        let mut parents = inference_pool.status.clone().map(|s| s.parent.unwrap_or_default()).unwrap_or_default();    
+    let mut parents = inference_pool.status.clone().map(|s| s.parent.unwrap_or_default()).unwrap_or_default();
 
-        let conditions = if resolved_endpoint_picker {
-            Some(vec![InferencePoolCondition::Accepted(inference_pool.metadata.generation).get_condition(), InferencePoolCondition::Resolved.get_condition()])
-        } else {
-            Some(vec![InferencePoolCondition::Accepted(inference_pool.metadata.generation).get_condition(), InferencePoolCondition::NotResolved.get_condition()])
-        };
+    let conditions = if resolved_endpoint_picker {
+        vec![
+            InferencePoolCondition::Accepted(inference_pool.metadata.generation).get_condition(),
+            InferencePoolCondition::Resolved.get_condition(),
+        ]
+    } else {
+        vec![
+            InferencePoolCondition::Accepted(inference_pool.metadata.generation).get_condition(),
+            InferencePoolCondition::NotResolved.get_condition(),
+        ]
+    };
 
+    if let Some(parent) = parents
+        .iter_mut()
+        .find(|p| p.parent_ref.kind == Some("Gateway".to_owned()) && p.parent_ref.name == Some(gateway_name.clone()) && p.parent_ref.namespace == Some(gateway_namespace.clone()))
+    {
+        update_conditions(parent, conditions);
+    } else {
         let new_parent = InferencePoolStatusParent {
-            conditions,
+            conditions: Some(conditions),
             parent_ref: ObjectReference {
                 name: Some(gateway_name.clone()),
                 namespace: Some(gateway_namespace.clone()),
@@ -287,68 +297,114 @@ pub fn update_inference_pool_parents(gateway: &ResourceKey, mut inference_pool: 
                 ..Default::default()
             },
         };
-
-        if let Some(parent) = parents
-            .iter_mut()
-            .find(|p| p.parent_ref.kind == Some("Gateway".to_owned()) && p.parent_ref.name == Some(gateway_name.clone()) && p.parent_ref.namespace == Some(gateway_namespace.clone()))
-        {
-            *parent = new_parent;
-        } else {
-            parents.push(new_parent);
-        }
-
-        inference_pool.status = Some(InferencePoolStatus { parent: Some(parents) });
-        inference_pool
+        parents.push(new_parent);
     }
 
-    pub fn remove_inference_pool_parents(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {        
-        let parents = inference_pool.status.clone().map(|s| s.parent.unwrap_or_default()).unwrap_or_default();    
-        let parents  = parents
-            .into_iter()
-            .filter(|p| {let key = ResourceKey::from(&p.parent_ref); !gateways_ids.contains(&key)}).collect();
-        
+    inference_pool.status = Some(InferencePoolStatus { parent: Some(parents) });
+    inference_pool
+}
 
-        inference_pool.status = Some(InferencePoolStatus { parent: Some(parents) });
-        inference_pool
+fn update_conditions(parent: &mut InferencePoolStatusParent, new_conditions: Vec<Condition>) {
+    if let Some(conditions) = &parent.conditions {
+        let conditions: BTreeSet<_> = conditions.clone().into_iter().map(ConditionHolder).collect();
+        let new_conditions: BTreeSet<_> = new_conditions.into_iter().map(ConditionHolder).collect();
+
+        // common conditions such as accepted
+        let same_conditions: BTreeSet<ConditionHolder> = conditions.intersection(&new_conditions).cloned().collect();
+        // new unique conditions
+        let new_conditions: BTreeSet<ConditionHolder> = new_conditions.difference(&same_conditions).cloned().collect();
+
+        let conditions = same_conditions.union(&new_conditions).cloned().map(std::convert::Into::into).collect();
+        parent.conditions = Some(conditions);
+    } else {
+        parent.conditions = Some(new_conditions);
     }
+}
+#[derive(Debug, Clone)]
+struct ConditionHolder(Condition);
 
-pub enum InferencePoolCondition{
+impl From<ConditionHolder> for Condition {
+    fn from(val: ConditionHolder) -> Self {
+        val.0
+    }
+}
+
+impl From<Condition> for ConditionHolder {
+    fn from(value: Condition) -> Self {
+        ConditionHolder(value)
+    }
+}
+impl Ord for ConditionHolder {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.status.cmp(&other.0.status)
+    }
+}
+
+impl PartialOrd for ConditionHolder {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for ConditionHolder {}
+
+impl PartialEq for ConditionHolder {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.status == other.0.status
+    }
+}
+
+pub fn remove_inference_pool_parents(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
+    let parents = inference_pool.status.clone().map(|s| s.parent.unwrap_or_default()).unwrap_or_default();
+    let parents = parents
+        .into_iter()
+        .filter(|p| {
+            let key = ResourceKey::from(&p.parent_ref);
+            let contains = !gateways_ids.contains(&key);
+            info!("Filtering inference pools {key:?} in {gateways_ids:?} {contains}");
+            !gateways_ids.contains(&key)
+        })
+        .collect();
+
+    inference_pool.status = Some(InferencePoolStatus { parent: Some(parents) });
+    inference_pool
+}
+
+pub enum InferencePoolCondition {
     Accepted(Option<i64>),
     Resolved,
-    NotResolved
+    NotResolved,
 }
 
 const INFERENCE_POOL_CONDITION_MESSAGE: &str = "Inference Pool status updated by controller";
 
-
-impl InferencePoolCondition{
-    pub fn get_condition(self)->Condition{
-        match self{
+impl InferencePoolCondition {
+    pub fn get_condition(self) -> Condition {
+        match self {
             InferencePoolCondition::Accepted(generation) => Condition {
-            last_transition_time: Time(Utc::now()),
-            message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
-            observed_generation: generation,
-            reason: "Accepted".to_owned(),
-            status: "True".to_owned(),
-            type_: "Accepted".to_owned(),
-        },
+                last_transition_time: Time(Utc::now()),
+                message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
+                observed_generation: generation,
+                reason: "Accepted".to_owned(),
+                status: "True".to_owned(),
+                type_: "Accepted".to_owned(),
+            },
             InferencePoolCondition::Resolved => Condition {
-            last_transition_time: Time(Utc::now()),
-            message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
-            observed_generation: None,
-            reason: "ResolvedRefs".to_owned(),
-            status: "True".to_owned(),
-            type_: "ResolvedRefs".to_owned(),
-        },
+                last_transition_time: Time(Utc::now()),
+                message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
+                observed_generation: None,
+                reason: "ResolvedRefs".to_owned(),
+                status: "True".to_owned(),
+                type_: "ResolvedRefs".to_owned(),
+            },
             InferencePoolCondition::NotResolved => Condition {
-            last_transition_time: Time(Utc::now()),
-            message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
-            observed_generation: None,
-            reason: "ResolvedRefs".to_owned(),
-            status: "False".to_owned(),
-            type_: "ResolvedRefs".to_owned(),
-        },
+                last_transition_time: Time(Utc::now()),
+                message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
+                observed_generation: None,
+                reason: "ResolvedRefs".to_owned(),
+                status: "False".to_owned(),
+                type_: "ResolvedRefs".to_owned(),
+            },
         }
     }
 }
-                 

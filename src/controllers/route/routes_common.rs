@@ -91,7 +91,7 @@ pub struct CommonRouteHandler<R: serde::Serialize> {
     pub route_patcher_sender: mpsc::Sender<Operation<R>>,
     pub references_validator_sender: mpsc::Sender<ReferenceValidateRequest>,
     pub version: Option<String>,
-     #[builder(default)]
+    #[builder(default)]
     pub inference_pool_patcher_channel_sender: Option<mpsc::Sender<Operation<InferencePool>>>,
 }
 
@@ -173,9 +173,12 @@ where
         let parent_gateway_refs_keys = parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
 
         debug!("Parent keys = {parent_gateway_refs_keys:?}");
-        let gateway_ids = parent_gateway_refs_keys.map(|(_, r)|r.resource_key).collect::<BTreeSet<_>>();
-        gateway_ids.clone().iter().for_each(|gateway_key| state.detach_http_route_from_gateway(gateway_key, &route_key).expect("We expect the lock to work"));
-        
+        let gateway_ids = parent_gateway_refs_keys.map(|(_, r)| r.resource_key).collect::<BTreeSet<_>>();
+        gateway_ids
+            .clone()
+            .iter()
+            .for_each(|gateway_key| state.detach_http_route_from_gateway(gateway_key, &route_key).expect("We expect the lock to work"));
+
         let Some(route) = state.delete_http_route(&route_key).expect("We expect the lock to work") else {
             return Err(ControllerError::InvalidPayload("Route doesn't exist".to_owned()));
         };
@@ -210,34 +213,34 @@ where
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 
-
-    async fn update_inference_pools(&self, route: &Route, gateway_ids: &BTreeSet<ResourceKey> ){
-        if let Some(inference_pool_patcher_sender) = self.inference_pool_patcher_channel_sender.as_ref(){
-            for inference_pool_backend in route.backends().iter().filter_map(|b| match b.backend_type() {            
+    async fn update_inference_pools(&self, route: &Route, gateway_ids: &BTreeSet<ResourceKey>) {
+        warn!("Updating inference pools of route delete {} {gateway_ids:?}", route.name());
+        if let Some(inference_pool_patcher_sender) = self.inference_pool_patcher_channel_sender.as_ref() {
+            for inference_pool_backend in route.backends().iter().filter_map(|b| match b.backend_type() {
                 BackendType::InferencePool(pool) => Some(&pool.resource_key),
                 _ => None,
-            }){
-                
-                if let Some(inference_pool) = self.state.get_inference_pool(inference_pool_backend).expect("We expect the lock to work"){
-                    let inference_pool =inference_pool::remove_inference_pool_parents((*inference_pool).clone(), gateway_ids);
+            }) {
+                if let Some(inference_pool) = self.state.get_inference_pool(inference_pool_backend).expect("We expect the lock to work") {
+                    let inference_pool = inference_pool::remove_inference_pool_parents((*inference_pool).clone(), gateway_ids);
                     let (sender, receiver) = oneshot::channel();
+                    warn!("Patching updating inference pools of route delete {} {gateway_ids:?}", route.name());
                     let _ = inference_pool_patcher_sender
-                    .send(Operation::PatchStatus(PatchContext {
-                        resource_key: ResourceKey::from(&inference_pool),
-                        resource: inference_pool,
-                        controller_name: self.controller_name.clone(),
-                        response_sender: sender,
-                        span: Span::current(),
-                    }))
-                    .await;
-                match receiver.await {
-                    Ok(Err(_)) | Err(_) => warn!("Could't patch status"),
-                    _ => (),
+                        .send(Operation::PatchStatus(PatchContext {
+                            resource_key: ResourceKey::from(&inference_pool),
+                            resource: inference_pool,
+                            controller_name: self.controller_name.clone(),
+                            response_sender: sender,
+                            span: Span::current(),
+                        }))
+                        .await;
+                    match receiver.await {
+                        Ok(Err(_)) | Err(_) => warn!("Could't patch status"),
+                        _ => (),
+                    }
+                } else {
+                    warn!("No inference pool - Updating inference pools of route delete {} {gateway_ids:?}", route.name());
                 }
-
-                }            
             }
         }
-
     }
 }

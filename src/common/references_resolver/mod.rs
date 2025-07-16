@@ -5,7 +5,7 @@ use std::{
 };
 
 use kube::{Api, Client, Resource, ResourceExt};
-use kube_core::{object::HasSpec, ObjectMeta};
+use kube_core::ObjectMeta;
 use tokio::time;
 use tracing::{debug, span, warn, Instrument, Level};
 use typed_builder::TypedBuilder;
@@ -153,10 +153,10 @@ where
                                     .entry(key.clone())
                                     .and_modify(|f: &mut R| {
                                         let mut this = f.clone();
-                                        *this.meta_mut()= ObjectMeta::default();
+                                        *this.meta_mut() = ObjectMeta::default();
 
                                         let mut other = reference.clone();
-                                        *other.meta_mut()= ObjectMeta::default();
+                                        *other.meta_mut() = ObjectMeta::default();
 
                                         if this != other {
                                             warn!("Comparing references {:#?} {:#?}", this, other);

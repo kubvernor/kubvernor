@@ -87,7 +87,7 @@ impl GRPCRouteController {
                     .resource(resource)
                     .resource_key(resource_key)
                     .state(state.clone())
-                    .version(version)                    
+                    .version(version)
                     .build(),
             )
             .build();
