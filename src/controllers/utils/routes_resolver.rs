@@ -250,8 +250,8 @@ impl RouteResolver<'_> {
                         );
 
                         if inference_pool.metadata.name.is_some() {
-                            let inference_pool = inference_pool::update_inference_pool_parents(self.gateway_resource_key, inference_pool, resolved_endpoint_picker);
-
+                            let mut inference_pool = inference_pool::update_inference_pool_parents(self.gateway_resource_key, inference_pool, resolved_endpoint_picker);
+                            inference_pool.metadata.managed_fields = None;
                             let (sender, receiver) = oneshot::channel();
                             let _ = self
                                 .inference_pool_patcher_sender
@@ -345,7 +345,7 @@ impl RoutesResolver<'_> {
         .await;
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
 
-        info!("Linked routes {:?}", linked_routes.iter().map(|r| r.resource_key()));
+        info!("Linked routes {:?}", linked_routes.iter().map(Route::resource_key));
 
         let (route_to_listeners_mapping, routes_with_no_listeners) = RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();
         let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);

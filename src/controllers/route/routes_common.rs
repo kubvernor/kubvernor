@@ -219,7 +219,8 @@ where
             }) {
                 if let Some(inference_pool) = self.state.get_inference_pool(inference_pool_backend).expect("We expect the lock to work") {
                     debug!("Retrieved inference pool is {inference_pool:#?}");
-                    let inference_pool = inference_pool::remove_inference_pool_parents((*inference_pool).clone(), gateway_ids);
+                    let mut inference_pool = inference_pool::remove_inference_pool_parents((*inference_pool).clone(), gateway_ids);
+                    inference_pool.metadata.managed_fields = None;
                     let inference_pool_resource_key = ResourceKey::from(&inference_pool);
                     let (sender, receiver) = oneshot::channel();
                     debug!("Patching updating inference pools of route delete {} {gateway_ids:?}", route.name());
@@ -233,10 +234,10 @@ where
                         .await;
                     match receiver.await {
                         Ok(Err(_)) | Err(_) => warn!("Could't patch status"),
-                        _ => self
-                            .state
-                            .save_inference_pool(inference_pool_resource_key, &Arc::new(inference_pool))
-                            .expect("We expect the lock to work"),
+                        _ => (), // self
+                                 // .state
+                                 // .save_inference_pool(inference_pool_resource_key, &Arc::new(inference_pool))
+                                 // .expect("We expect the lock to work"),
                     }
                 } else {
                     warn!("No inference pool - Updating inference pools of route delete {} {gateway_ids:?}", route.name());

@@ -154,8 +154,10 @@ impl ResourceHandler<InferencePool> for InferencePoolControllerHandler<Inference
         self.on_new_or_changed(id, resource, state).await
     }
 
-    async fn on_status_changed(&self, _id: ResourceKey, _resource: &Arc<InferencePool>, _state: &State) -> Result<Action> {
-        Ok(Action::await_change())
+    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<InferencePool>, state: &State) -> Result<Action> {
+        warn!("Saving inference pool on status change");
+        let () = state.maybe_save_inference_pool(id, resource).expect("We expect the lock to work");
+        Err(ControllerError::AlreadyAdded)
     }
 
     async fn on_spec_changed(&self, id: ResourceKey, resource: &Arc<InferencePool>, state: &State) -> Result<Action> {
@@ -186,7 +188,11 @@ impl InferencePoolControllerHandler<InferencePool> {
                 .get_gateways_with_http_routes(&routes.iter().map(|r| ResourceKey::from(r.as_ref())).collect())
                 .expect("We expect the lock to work");
 
-            let inference_pool = create_accepted_inference_pool_status((**resource).clone(), &gateways_ids);
+            let mut inference_pool = create_accepted_inference_pool_status((**resource).clone(), &gateways_ids);
+            self.state
+                .save_inference_pool(inference_pool_key.clone(), &Arc::new(inference_pool.clone()))
+                .expect("We expect the lock to work");
+            inference_pool.metadata.managed_fields = None;
             let (sender, receiver) = oneshot::channel();
             let _ = self
                 .inference_pool_patcher_sender
@@ -201,7 +207,6 @@ impl InferencePoolControllerHandler<InferencePool> {
                 Ok(Err(_)) | Err(_) => warn!("Could't patch status"),
                 _ => (),
             }
-            self.state.save_inference_pool(inference_pool_key.clone(), resource).expect("We expect the lock to work");
 
             let _ = self
                 .validate_references_channel_sender
@@ -286,6 +291,7 @@ pub fn update_inference_pool_parents(gateway: &ResourceKey, mut inference_pool: 
         .find(|p| p.parent_ref.kind == Some("Gateway".to_owned()) && p.parent_ref.name == Some(gateway_name.clone()) && p.parent_ref.namespace == Some(gateway_namespace.clone()))
     {
         update_conditions(parent, conditions);
+        info!("Updating conditions {gateway} {parent:?}");
     } else {
         let new_parent = InferencePoolStatusParent {
             conditions: Some(conditions),
@@ -310,10 +316,12 @@ fn update_conditions(parent: &mut InferencePoolStatusParent, new_conditions: Vec
 
         // common conditions such as accepted
         let same_conditions: BTreeSet<ConditionHolder> = conditions.intersection(&new_conditions).cloned().collect();
+
         // new unique conditions
         let new_conditions: BTreeSet<ConditionHolder> = new_conditions.difference(&same_conditions).cloned().collect();
 
         let conditions = same_conditions.union(&new_conditions).cloned().map(std::convert::Into::into).collect();
+
         parent.conditions = Some(conditions);
     } else {
         parent.conditions = Some(new_conditions);
@@ -335,7 +343,7 @@ impl From<Condition> for ConditionHolder {
 }
 impl Ord for ConditionHolder {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.status.cmp(&other.0.status)
+        self.0.reason.cmp(&other.0.reason)
     }
 }
 
@@ -349,7 +357,7 @@ impl Eq for ConditionHolder {}
 
 impl PartialEq for ConditionHolder {
     fn eq(&self, other: &Self) -> bool {
-        self.0.status == other.0.status
+        self.0.reason == other.0.reason
     }
 }
 

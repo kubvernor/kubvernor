@@ -362,7 +362,10 @@ fn create_service_cluster(config: &ServiceTypeConfig, route_type: &RouteType, gr
 fn generate_ext_service_cluster(config: &InferenceClusterInfo) -> Option<ClusterHolder> {
     let Some(extension_config) = &config.config.inference_config else { return None };
 
-    let address_port = (extension_config.extension_ref().name.clone(), extension_config.extension_ref().port_number.unwrap_or(9002));
+    let address_port = (
+        extension_config.extension_ref().name.clone() + "." + &config.config.resource_key.namespace,
+        extension_config.extension_ref().port_number.unwrap_or(9002),
+    );
     let cluster_name = config.cluster_name().to_owned();
 
     let grpc_protocol_options = envoy_api_rs::envoy::extensions::upstreams::http::v3::HttpProtocolOptions {

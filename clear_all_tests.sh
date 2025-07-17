@@ -24,6 +24,10 @@ kubectl patch --namespace gateway-conformance-infra httproute/backend-v1 --type 
 kubectl patch --namespace gateway-conformance-infra httproute/backend-v2 --type json --patch='[ { "op": "remove", "path": "/metadata/finalizers" } ]'
 kubectl patch --namespace gateway-conformance-infra httproute/backend-v3 --type json --patch='[ { "op": "remove", "path": "/metadata/finalizers" } ]'
 
+kubectl patch --namespace gateway-conformance-infra grpcroute/backend-v1 --type json --patch='[ { "op": "remove", "path": "/metadata/finalizers" } ]'
+kubectl patch --namespace gateway-conformance-infra grpcroute/backend-v2 --type json --patch='[ { "op": "remove", "path": "/metadata/finalizers" } ]'
+kubectl patch --namespace gateway-conformance-infra grpcroute/backend-v3 --type json --patch='[ { "op": "remove", "path": "/metadata/finalizers" } ]'
+
 kubectl patch --namespace gateway-conformance-infra httproute/http-route-1 --type json --patch='[ { "op": "remove", "path": "/metadata/finalizers" } ]'
 kubectl patch --namespace gateway-conformance-infra httproute/http-route-2 --type json --patch='[ { "op": "remove", "path": "/metadata/finalizers" } ]'
 kubectl patch --namespace gateway-conformance-infra httproute/http-route-3 --type json --patch='[ { "op": "remove", "path": "/metadata/finalizers" } ]'

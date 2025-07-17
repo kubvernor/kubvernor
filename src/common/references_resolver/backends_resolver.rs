@@ -60,7 +60,7 @@ impl BackendReferenceResolver {
 
     pub async fn delete_all_references(&self, reference_keys: BTreeSet<ResourceKey>) -> BTreeSet<ResourceKey> {
         let service_references = self.reference_resolver.delete_references(reference_keys.iter().cloned()).await;
-        let inference_pool_references = self.reference_resolver.delete_references(reference_keys.iter().cloned()).await;
+        let inference_pool_references = self.inference_pool_reference_resolver.delete_references(reference_keys.iter().cloned()).await;
         service_references.into_iter().chain(inference_pool_references.into_iter()).collect()
     }
 

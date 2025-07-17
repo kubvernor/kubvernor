@@ -7,7 +7,7 @@ use kube::{
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info};
 
 use crate::{
     common::ResourceKey,
@@ -66,7 +66,6 @@ where
                     response_sender,
                 }) => {
                     info!("PatcherService {} PatchStatus {}", std::any::type_name_of_val(&resource), resource_key);
-                    resource.meta_mut().managed_fields = None;
                     resource.meta_mut().resource_version = Option::<String>::None;
                     let api = self.api(&resource_key.namespace);
                     let patch_params = PatchParams::apply(&controller_name).force();
@@ -74,7 +73,7 @@ where
                     let res = api.patch_status(&resource_key.name, &patch_params, &Patch::Apply(resource)).await;
                     match &res {
                         Ok(_new_gateway) => debug!("patch status result ok"),
-                        Err(e) => warn!("patch status failed {e:?}"),
+                        Err(e) => error!("patch status failed {e:?}"),
                     }
                     let _ = response_sender.send(res);
                 }
@@ -88,7 +87,7 @@ where
                     let res = FinalizerPatcher::patch_finalizer(&api, &resource_key.name, &controller_name, &finalizer_name).await;
                     match &res {
                         Ok(_new_gateway) => debug!("finalizer ok"),
-                        Err(e) => warn!("finalizer failed {resource_key} {controller_name} {finalizer_name} {e:?}"),
+                        Err(e) => error!("finalizer failed {resource_key} {controller_name} {finalizer_name} {e:?}"),
                     }
                 }
                 Operation::Delete(DeleteContext {
@@ -102,7 +101,7 @@ where
                         ResourceFinalizer::delete_resource(&api, &controller_name, &Arc::new(resource)).await;
                     match res {
                         Ok(_new_gateway) => debug!("delete result ok"),
-                        Err(e) => warn!("delete failed {e:?}"),
+                        Err(e) => error!("delete failed {e:?}"),
                     }
                 }
             }

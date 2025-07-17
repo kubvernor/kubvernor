@@ -25,7 +25,7 @@ where
         let resource_state = ResourceStateChecker::check_status(resource, stored_resource.clone(), resource_spec_checker, resource_status_checker);
 
         info!(
-            "ResourceHandler {} {} verrsion = {} Resource state {resource_state:?}",
+            "ResourceHandler {} {} version = {} Resource state {resource_state:?}",
             self.resource_key(),
             std::any::type_name::<R>(),
             self.version()
