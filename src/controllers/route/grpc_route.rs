@@ -22,7 +22,7 @@ use crate::{
         utils::{ResourceCheckerArgs, ResourceState},
         ControllerError, RECONCILE_LONG_WAIT,
     },
-    services::patchers::Operation,
+    services::patchers::{DeleteContext, Operation},
     state::State,
 };
 
@@ -188,6 +188,16 @@ impl GRPCRouteHandler<GRPCRoute> {
         let _ = Route::try_from(&**resource)?;
 
         let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
+            // we got delete for the route that we don't know anything about... which means that there must be a finalizer with our name so let's just delte it
+            let _ = self
+                .common_handler
+                .route_patcher_sender
+                .send(Operation::Delete(DeleteContext {
+                    resource_key: route_key,
+                    resource: (**resource).clone(),
+                    controller_name: self.common_handler.controller_name.clone(),
+                }))
+                .await;
             return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
         };
 

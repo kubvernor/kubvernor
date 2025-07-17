@@ -4,7 +4,6 @@ use std::{
 };
 
 use thiserror::Error;
-use tracing::Span;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -121,7 +120,6 @@ pub enum GatewayError {
 
 #[derive(Debug, TypedBuilder)]
 pub struct ChangedContext {
-    pub span: Span,
     pub gateway: Gateway,
     pub kube_gateway: KubeGateway,
     pub gateway_class_name: String,

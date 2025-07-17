@@ -13,7 +13,7 @@ use kube::{
     Client, Resource,
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{warn, Span};
+use tracing::warn;
 use uuid::Uuid;
 
 use super::{
@@ -186,7 +186,6 @@ impl GatewayClassResourceHandler<GatewayClass> {
                 resource: updated_gateway_class,
                 controller_name: self.controller_name.clone(),
                 response_sender: sender,
-                span: Span::current().clone(),
             }))
             .await;
         let patched_gateway_class = receiver.await;
@@ -245,7 +244,6 @@ impl ResourceHandler<GatewayClass> for GatewayClassResourceHandler<GatewayClass>
                 resource_key: id.clone(),
                 resource: (**resource).clone(),
                 controller_name: controller_name.to_owned(),
-                span: Span::current().clone(),
             }))
             .await;
         Ok(Action::requeue(RECONCILE_LONG_WAIT))

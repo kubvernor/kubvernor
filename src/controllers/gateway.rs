@@ -11,7 +11,7 @@ use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
 };
-use tracing::{warn, Instrument, Span};
+use tracing::warn;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -211,7 +211,6 @@ impl GatewayResourceHandler<Gateway> {
                 resource_key: id.clone(),
                 resource: (**kube_gateway).clone(),
                 controller_name: self.controller_name.clone(),
-                span: Span::current().clone(),
             }))
             .await;
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
@@ -225,21 +224,9 @@ impl GatewayResourceHandler<Gateway> {
         };
 
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = BackendGatewayEvent::Deleted(Box::new(
-            DeletedContext::builder()
-                .response_sender(response_sender)
-                .gateway(backend_gateway.clone())
-                .span(Span::current().clone())
-                .build(),
-        ));
+        let listener_event = BackendGatewayEvent::Deleted(Box::new(DeletedContext::builder().response_sender(response_sender).gateway(backend_gateway.clone()).build()));
 
-        let _ = self
-            .validate_references_channel_sender
-            .send(ReferenceValidateRequest::DeleteGateway {
-                gateway: backend_gateway,
-                span: Span::current(),
-            })
-            .await;
+        let _ = self.validate_references_channel_sender.send(ReferenceValidateRequest::DeleteGateway { gateway: backend_gateway }).await;
 
         let _ = sender.send(listener_event).await;
         let _response = response_receiver.await;
@@ -262,7 +249,6 @@ impl GatewayResourceHandler<Gateway> {
                     .gateway(backend_gateway)
                     .kube_gateway(kube_gateway)
                     .gateway_class_name(self.gateway_class_name.clone())
-                    .span(Span::current())
                     .build(),
             )))
             .await;
@@ -277,9 +263,7 @@ impl GatewayResourceHandler<Gateway> {
             if let Some(conditions) = &status.conditions {
                 if conditions.iter().any(|c| c.type_ == constants::GatewayConditionType::Ready.to_string()) {
                     let () = state.save_gateway(gateway_id.clone(), resource).expect("We expect the lock to work");
-                    common::add_finalizer_to_gateway_class(&self.gateway_class_patcher, gateway_class_name, controller_name)
-                        .instrument(Span::current().clone())
-                        .await;
+                    common::add_finalizer_to_gateway_class(&self.gateway_class_patcher, gateway_class_name, controller_name).await;
                     let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
                         finalizers.iter().any(|f| f == controller_name)
                     } else {

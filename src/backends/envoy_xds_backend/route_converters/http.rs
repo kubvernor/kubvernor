@@ -1,25 +1,28 @@
 use std::collections::HashMap;
 
-use envoy_api_rs::envoy::{
-    config::{
-        core::v3::{
-            grpc_service::{EnvoyGrpc, TargetSpecifier},
-            GrpcService,
+use envoy_api_rs::{
+    envoy::{
+        config::{
+            core::v3::{
+                grpc_service::{EnvoyGrpc, TargetSpecifier},
+                GrpcService,
+            },
+            route::v3::{
+                redirect_action,
+                route::Action,
+                route_action::{self, ClusterSpecifier},
+                route_match::PathSpecifier,
+                RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster,
+            },
         },
-        route::v3::{
-            redirect_action,
-            route::Action,
-            route_action::{self, ClusterSpecifier},
-            route_match::PathSpecifier,
-            RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster,
+        extensions::filters::http::ext_proc::v3::{
+            ext_proc_per_route::Override,
+            processing_mode::{BodySendMode, HeaderSendMode},
+            ExtProcOverrides, ExtProcPerRoute, ProcessingMode,
         },
+        r#type::matcher::v3::RegexMatcher,
     },
-    extensions::filters::http::ext_proc::v3::{
-        ext_proc_per_route::Override,
-        processing_mode::{BodySendMode, HeaderSendMode},
-        ExtProcOverrides, ExtProcPerRoute, ProcessingMode,
-    },
-    r#type::matcher::v3::RegexMatcher,
+    google::protobuf::BoolValue,
 };
 use gateway_api::httproutes;
 use tracing::{debug, warn};
@@ -42,7 +45,7 @@ impl HTTPEffectiveRoutingRule {
                 warn!("Inference Pool: setting up external service with {conf:?}");
                 conf.inference_config
                     .as_ref()
-                    .map(|_conf| {
+                    .map(|conf| {
                         let inference_cluster_name = inference_cluster_name(&envoy_route);
                         let ext_proc_route = ExtProcPerRoute {
                             r#override: Some(Override::Overrides(ExtProcOverrides {
@@ -60,6 +63,10 @@ impl HTTPEffectiveRoutingRule {
                                     })),
                                     ..Default::default()
                                 }),
+                                failure_mode_allow: match conf.extension_ref().failure_mode.as_ref() {
+                                    Some(gateway_api_inference_extension::inferencepools::InferencePoolExtensionRefFailureMode::FailOpen) => Some(BoolValue { value: true }),
+                                    Some(gateway_api_inference_extension::inferencepools::InferencePoolExtensionRefFailureMode::FailClose) | None => Some(BoolValue { value: false }),
+                                },
                                 ..Default::default()
                             })),
                         };

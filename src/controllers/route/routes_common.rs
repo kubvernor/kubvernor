@@ -12,7 +12,7 @@ use k8s_openapi::{
 use kube::{runtime::controller::Action, Resource};
 use kube_core::ObjectMeta;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, warn, Span};
+use tracing::{debug, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -77,7 +77,6 @@ pub fn needs_finalizer<T: serde::Serialize>(resource_key: &ResourceKey, controll
             resource_key: resource_key.clone(),
             controller_name: controller_name.clone(),
             finalizer_name: controller_name.clone(),
-            span: Span::current().clone(),
         }))
     }
 }
@@ -128,7 +127,7 @@ where
 
         let references = extract_references(&route);
 
-        let _ = self.references_validator_sender.send(ReferenceValidateRequest::AddRoute { references, span: Span::current() }).await;
+        let _ = self.references_validator_sender.send(ReferenceValidateRequest::AddRoute { references }).await;
 
         for kube_gateway in matching_gateways {
             let gateway_class_name = {
@@ -158,7 +157,6 @@ where
                         .gateway(common::Gateway::try_from(&kube_gateway).expect("We expect the lock to work"))
                         .kube_gateway(kube_gateway)
                         .gateway_class_name(gateway_class_name)
-                        .span(Span::current())
                         .build(),
                 )))
                 .await;
@@ -194,13 +192,12 @@ where
                 resource_key: resource_key.clone(),
                 resource: http_route,
                 controller_name: controller_name.to_owned(),
-                span: Span::current().clone(),
             }))
             .await;
 
         let references = extract_references(&route);
 
-        let _ = self.references_validator_sender.send(ReferenceValidateRequest::DeleteRoute { references, span: Span::current() }).await;
+        let _ = self.references_validator_sender.send(ReferenceValidateRequest::DeleteRoute { references }).await;
 
         Ok(Action::await_change())
     }
@@ -214,28 +211,32 @@ where
     }
 
     async fn update_inference_pools(&self, route: &Route, gateway_ids: &BTreeSet<ResourceKey>) {
-        warn!("Updating inference pools of route delete {} {gateway_ids:?}", route.name());
+        debug!("Updating inference pools of route delete {} {gateway_ids:?}", route.name());
         if let Some(inference_pool_patcher_sender) = self.inference_pool_patcher_channel_sender.as_ref() {
             for inference_pool_backend in route.backends().iter().filter_map(|b| match b.backend_type() {
                 BackendType::InferencePool(pool) => Some(&pool.resource_key),
                 _ => None,
             }) {
                 if let Some(inference_pool) = self.state.get_inference_pool(inference_pool_backend).expect("We expect the lock to work") {
+                    debug!("Retrieved inference pool is {inference_pool:#?}");
                     let inference_pool = inference_pool::remove_inference_pool_parents((*inference_pool).clone(), gateway_ids);
+                    let inference_pool_resource_key = ResourceKey::from(&inference_pool);
                     let (sender, receiver) = oneshot::channel();
-                    warn!("Patching updating inference pools of route delete {} {gateway_ids:?}", route.name());
+                    debug!("Patching updating inference pools of route delete {} {gateway_ids:?}", route.name());
                     let _ = inference_pool_patcher_sender
                         .send(Operation::PatchStatus(PatchContext {
-                            resource_key: ResourceKey::from(&inference_pool),
-                            resource: inference_pool,
+                            resource_key: inference_pool_resource_key.clone(),
+                            resource: inference_pool.clone(),
                             controller_name: self.controller_name.clone(),
                             response_sender: sender,
-                            span: Span::current(),
                         }))
                         .await;
                     match receiver.await {
                         Ok(Err(_)) | Err(_) => warn!("Could't patch status"),
-                        _ => (),
+                        _ => self
+                            .state
+                            .save_inference_pool(inference_pool_resource_key, &Arc::new(inference_pool))
+                            .expect("We expect the lock to work"),
                     }
                 } else {
                     warn!("No inference pool - Updating inference pools of route delete {} {gateway_ids:?}", route.name());

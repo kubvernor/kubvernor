@@ -17,7 +17,7 @@ use tokio::sync::{
     mpsc::{self},
     oneshot,
 };
-use tracing::{info, warn, Span};
+use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -195,7 +195,6 @@ impl InferencePoolControllerHandler<InferencePool> {
                     resource: inference_pool,
                     controller_name: self.controller_name.clone(),
                     response_sender: sender,
-                    span: Span::current(),
                 }))
                 .await;
             match receiver.await {

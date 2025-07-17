@@ -22,7 +22,6 @@ pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, Refer
 pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE};
 pub use route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule, NotResolvedReason, ResolutionStatus, Route, RouteStatus, RouteType};
 use tokio::sync::{mpsc, oneshot};
-use tracing::Span;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -285,7 +284,6 @@ pub enum BackendGatewayResponse {
     ProcessedWithContext {
         gateway: Box<Gateway>,
         kube_gateway: Box<KubeGateway>,
-        span: Span,
         gateway_class_name: String,
     },
     Deleted(Vec<RouteStatus>),
@@ -319,7 +317,6 @@ impl Display for RouteToListenersMapping {
 
 #[derive(Debug, TypedBuilder)]
 pub struct DeletedContext {
-    pub span: Span,
     pub response_sender: oneshot::Sender<BackendGatewayResponse>,
     pub gateway: Gateway,
 }
@@ -403,15 +400,14 @@ pub struct RequestContext {
     pub gateway: Gateway,
     pub kube_gateway: KubeGateway,
     pub gateway_class_name: String,
-    pub span: Span,
 }
 
 pub enum ReferenceValidateRequest {
     AddGateway(Box<RequestContext>),
-    AddRoute { references: BTreeSet<ResourceKey>, span: Span },
+    AddRoute { references: BTreeSet<ResourceKey> },
     UpdatedGateways { reference: ResourceKey, gateways: BTreeSet<ResourceKey> },
-    DeleteRoute { references: BTreeSet<ResourceKey>, span: Span },
-    DeleteGateway { gateway: Gateway, span: Span },
+    DeleteRoute { references: BTreeSet<ResourceKey> },
+    DeleteGateway { gateway: Gateway },
 }
 
 pub enum GatewayDeployRequest {
@@ -424,7 +420,6 @@ pub async fn add_finalizer(sender: &mpsc::Sender<Operation<KubeGateway>>, gatewa
             resource_key: gateway_id.clone(),
             controller_name: controller_name.to_owned(),
             finalizer_name: controller_name.to_owned(),
-            span: Span::current().clone(),
         }))
         .await;
 }
@@ -438,7 +433,6 @@ pub async fn add_finalizer_to_gateway_class(sender: &mpsc::Sender<Operation<Gate
             resource_key: key,
             controller_name: controller_name.to_owned(),
             finalizer_name: GATEWAY_CLASS_FINALIZER_NAME.to_owned(),
-            span: Span::current().clone(),
         }))
         .await;
 }

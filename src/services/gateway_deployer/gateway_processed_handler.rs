@@ -13,7 +13,7 @@ use k8s_openapi::{
 };
 use kube::Resource;
 use tokio::sync::{mpsc::Sender, oneshot};
-use tracing::{debug, info, warn, Instrument, Span};
+use tracing::{debug, info, warn};
 
 use crate::{
     common::{self, GatewayAddress, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteType},
@@ -38,8 +38,8 @@ pub struct GatewayProcessedHandler<'a> {
 impl GatewayProcessedHandler<'_> {
     pub async fn deploy_gateway(mut self) -> Result<Gateway> {
         self.update_gateway_resource();
-        self.update_http_routes().instrument(Span::current().clone()).await;
-        self.update_grpc_routes().instrument(Span::current().clone()).await;
+        self.update_http_routes().await;
+        self.update_grpc_routes().await;
         Ok(self.gateway)
     }
 
@@ -99,7 +99,6 @@ impl GatewayProcessedHandler<'_> {
                         resource: route,
                         controller_name: self.controller_name.clone(),
                         response_sender: sender,
-                        span: Span::current().clone(),
                     }))
                     .await;
                 let patched_route = receiver.await;
@@ -126,7 +125,6 @@ impl GatewayProcessedHandler<'_> {
                         resource: route,
                         controller_name: self.controller_name.clone(),
                         response_sender: sender,
-                        span: Span::current().clone(),
                     }))
                     .await;
 
@@ -157,7 +155,6 @@ impl GatewayProcessedHandler<'_> {
                         resource: route,
                         controller_name: self.controller_name.clone(),
                         response_sender: sender,
-                        span: Span::current().clone(),
                     }))
                     .await;
 
@@ -197,7 +194,6 @@ impl GatewayProcessedHandler<'_> {
                         resource: route,
                         controller_name: self.controller_name.clone(),
                         response_sender: sender,
-                        span: Span::current().clone(),
                     }))
                     .await;
                 let patched_route = receiver.await;
@@ -224,7 +220,6 @@ impl GatewayProcessedHandler<'_> {
                         resource: route,
                         controller_name: self.controller_name.clone(),
                         response_sender: sender,
-                        span: Span::current().clone(),
                     }))
                     .await;
 
@@ -255,7 +250,6 @@ impl GatewayProcessedHandler<'_> {
                         resource: route,
                         controller_name: self.controller_name.clone(),
                         response_sender: sender,
-                        span: Span::current().clone(),
                     }))
                     .await;
 

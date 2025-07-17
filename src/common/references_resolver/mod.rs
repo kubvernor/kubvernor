@@ -7,7 +7,7 @@ use std::{
 use kube::{Api, Client, Resource, ResourceExt};
 use kube_core::ObjectMeta;
 use tokio::time;
-use tracing::{debug, span, warn, Instrument, Level};
+use tracing::{debug, warn};
 use typed_builder::TypedBuilder;
 
 use crate::common::{ReferenceValidateRequest, ResourceKey};
@@ -139,56 +139,52 @@ where
             for key in references.keys() {
                 let key = key.clone();
                 let myself = (*self).clone();
-                let span = span!(Level::INFO, "ReferencesResolver", key = %key);
-                tokio::spawn(
-                    async move {
-                        debug!("Checking reference {key}");
-                        let api: Api<R> = Api::namespaced(myself.client.clone(), &key.namespace);
-                        let maybe_reference = api.get(&key.name).await;
-                        if let Ok(reference) = maybe_reference {
-                            let mut update_gateway = false;
-                            {
-                                let mut resolved_references = myself.resolved_references.lock().await;
-                                resolved_references
-                                    .entry(key.clone())
-                                    .and_modify(|f: &mut R| {
-                                        let mut this = f.clone();
-                                        *this.meta_mut() = ObjectMeta::default();
+                tokio::spawn(async move {
+                    debug!("Checking reference {key}");
+                    let api: Api<R> = Api::namespaced(myself.client.clone(), &key.namespace);
+                    let maybe_reference = api.get(&key.name).await;
+                    if let Ok(reference) = maybe_reference {
+                        let mut update_gateway = false;
+                        {
+                            let mut resolved_references = myself.resolved_references.lock().await;
+                            resolved_references
+                                .entry(key.clone())
+                                .and_modify(|f: &mut R| {
+                                    let mut this = f.clone();
+                                    *this.meta_mut() = ObjectMeta::default();
 
-                                        let mut other = reference.clone();
-                                        *other.meta_mut() = ObjectMeta::default();
+                                    let mut other = reference.clone();
+                                    *other.meta_mut() = ObjectMeta::default();
 
-                                        if this != other {
-                                            warn!("Comparing references {:#?} {:#?}", this, other);
-                                            *f = reference.clone();
-                                            update_gateway = true;
-                                        }
-                                    })
-                                    .or_insert_with(|| {
+                                    if this != other {
+                                        //    warn!("Comparing references {:#?} {:#?}", this, other);
+                                        *f = reference.clone();
                                         update_gateway = true;
-                                        reference
-                                    });
-                            };
+                                    }
+                                })
+                                .or_insert_with(|| {
+                                    update_gateway = true;
+                                    reference
+                                });
+                        };
 
-                            debug!("Resolved reference {key} {update_gateway}");
+                        debug!("Resolved reference {key} {update_gateway}");
 
-                            if update_gateway {
-                                myself.update_gateways(&key).await;
-                            }
-                        } else {
-                            debug!("Problem with checking reference {key} {:?}", maybe_reference.err());
-                            let resolved_references = {
-                                let mut resolved_references = myself.resolved_references.lock().await;
-                                resolved_references.remove(&key).is_some()
-                            };
+                        if update_gateway {
+                            myself.update_gateways(&key).await;
+                        }
+                    } else {
+                        debug!("Problem with checking reference {key} {:?}", maybe_reference.err());
+                        let resolved_references = {
+                            let mut resolved_references = myself.resolved_references.lock().await;
+                            resolved_references.remove(&key).is_some()
+                        };
 
-                            if resolved_references {
-                                myself.update_gateways(&key).await;
-                            }
+                        if resolved_references {
+                            myself.update_gateways(&key).await;
                         }
                     }
-                    .instrument(span.clone()),
-                );
+                });
             }
         }
     }

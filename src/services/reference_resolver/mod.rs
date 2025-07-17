@@ -2,7 +2,7 @@ use gateway_api::gateways::Gateway;
 use gateway_api_inference_extension::inferencepools::InferencePool;
 use kube::Client;
 use tokio::sync::mpsc;
-use tracing::{debug, info, span, warn, Instrument, Level, Span};
+use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -73,17 +73,15 @@ impl ReferenceResolverHandler {
                     gateway,
                     kube_gateway,
                     gateway_class_name,
-                    span,
                 } = *boxed;
-                let span = span!(parent: &span, Level::INFO, "ReferenceResolverService", action = "AddGateway", id = %gateway.key());
-                let _entered = span.enter();
+                info!("ReferenceResolverService action = AddGateway {}", gateway.key());
                 let key = gateway.key().clone();
                 self.secrets_resolver.add_secretes_by_gateway(&gateway).await;
 
                 self.backend_references_resolver.add_references_by_gateway(&gateway).await;
                 self.reference_grants_resolver.add_references_by_gateway(&gateway).await;
 
-                let backend_gateway = self.process(span.clone(), gateway, &kube_gateway).await;
+                let backend_gateway = self.process(gateway, &kube_gateway).await;
 
                 info!("Adding gateway {} Send on channel", key);
                 let _ = self
@@ -93,42 +91,34 @@ impl ReferenceResolverHandler {
                             .gateway(backend_gateway)
                             .kube_gateway(kube_gateway)
                             .gateway_class_name(gateway_class_name)
-                            .span(span.clone())
                             .build(),
                     ))
                     .await;
             }
 
-            ReferenceValidateRequest::DeleteGateway { gateway, span: parent_span } => {
-                let span = span!(parent: &parent_span, Level::INFO, "ReferenceResolverService", action = "DeleteGateway", id = %gateway.key());
-                let _entered = span.enter();
-
+            ReferenceValidateRequest::DeleteGateway { gateway } => {
+                info!("ReferenceResolverService action = DeleteGateway {}", gateway.key());
                 self.secrets_resolver.delete_secrets_by_gateway(&gateway).await;
                 self.backend_references_resolver.delete_references_by_gateway(&gateway).await;
                 self.reference_grants_resolver.delete_references_by_gateway(&gateway).await;
             }
 
-            ReferenceValidateRequest::AddRoute { references, span: parent_span } => {
-                let span = span!(parent: &parent_span, Level::INFO, "ReferenceResolverService", action = "AddRouteReferences");
-                let _entered = span.enter();
+            ReferenceValidateRequest::AddRoute { references } => {
+                info!("ReferenceResolverService action = AddRouteReferences {references:?}");
                 debug!("Adding route references {references:?}");
                 self.backend_references_resolver.add_references(references).await;
             }
 
-            ReferenceValidateRequest::DeleteRoute { references, span: parent_span } => {
-                let span = span!(parent: &parent_span, Level::INFO, "ReferenceResolverService", action = "DeleteRouteAndValidateRequest");
-                let _entered = span.enter();
-                info!("Update gateways due to deleted references {references:?} ");
+            ReferenceValidateRequest::DeleteRoute { references } => {
+                info!("ReferenceResolverService action = DeleteRouteAndValidateRequest {references:?}");
                 let affected_gateways = self.backend_references_resolver.delete_all_references(references).await;
 
                 info!("Update gateways affected gateways  {affected_gateways:?}");
                 for gateway_id in affected_gateways {
                     if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
-                        let span = span!(Level::INFO, "ReferenceResolverService", action = "DeleteRouteAndValidateRequest", id = %gateway_id);
-
                         let gateway = common::Gateway::try_from(&*kube_gateway).expect("We expect this to work since KubeGateway was validated");
                         let gateway_class_name = kube_gateway.spec.gateway_class_name.clone();
-                        let backend_gateway = self.process(span.clone(), gateway, &kube_gateway).await;
+                        let backend_gateway = self.process(gateway, &kube_gateway).await;
 
                         let kube_gateway = (*kube_gateway).clone();
                         let _ = self
@@ -138,7 +128,6 @@ impl ReferenceResolverHandler {
                                     .gateway(backend_gateway)
                                     .kube_gateway(kube_gateway)
                                     .gateway_class_name(gateway_class_name)
-                                    .span(span.clone())
                                     .build(),
                             ))
                             .await;
@@ -147,17 +136,13 @@ impl ReferenceResolverHandler {
             }
 
             ReferenceValidateRequest::UpdatedGateways { reference, gateways } => {
-                let span = span!(Level::INFO, "ReferenceResolverService", action = "UpdatedGateways");
-                let _entered = span.enter();
-                info!("Update gateways due to reference {reference} changing state {gateways:#?}");
+                info!("ReferenceResolverService action = UpdatedGateways {reference} {gateways:?}");
                 for gateway_id in gateways {
                     if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
-                        let span = span!(Level::INFO, "ReferenceResolverService", id = %gateway_id);
                         let gateway = common::Gateway::try_from(&*kube_gateway).expect("We expect this to work since KubeGateway was validated");
                         let key = gateway.key().clone();
                         let gateway_class_name = kube_gateway.spec.gateway_class_name.clone();
-                        let backend_gateway = self.process(span.clone(), gateway, &kube_gateway).await;
-
+                        let backend_gateway = self.process(gateway, &kube_gateway).await;
                         let kube_gateway = (*kube_gateway).clone();
                         info!("Update gateway {} Send on channel", key);
                         let _ = self
@@ -167,7 +152,6 @@ impl ReferenceResolverHandler {
                                     .gateway(backend_gateway)
                                     .kube_gateway(kube_gateway)
                                     .gateway_class_name(gateway_class_name)
-                                    .span(span.clone())
                                     .build(),
                             ))
                             .await;
@@ -176,11 +160,8 @@ impl ReferenceResolverHandler {
             }
         }
     }
-    async fn process(&self, span: Span, gateway: common::Gateway, kube_gateway: &Gateway) -> common::Gateway {
-        let backend_gateway = ListenerTlsConfigValidator::new(gateway, &self.secrets_resolver, &self.reference_grants_resolver)
-            .validate()
-            .instrument(span.clone())
-            .await;
+    async fn process(&self, gateway: common::Gateway, kube_gateway: &Gateway) -> common::Gateway {
+        let backend_gateway = ListenerTlsConfigValidator::new(gateway, &self.secrets_resolver, &self.reference_grants_resolver).validate().await;
         let resolver = RoutesResolver::builder()
             .gateway(backend_gateway)
             .kube_gateway(kube_gateway)
@@ -192,6 +173,6 @@ impl ReferenceResolverHandler {
             .controller_name(self.controller_name.clone())
             .build();
 
-        resolver.validate().instrument(span.clone()).await
+        resolver.validate().await
     }
 }
