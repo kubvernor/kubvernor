@@ -18,6 +18,9 @@ mod secrets_resolver;
 pub use backends_resolver::BackendReferenceResolver;
 pub use reference_grants_resolver::{ReferenceGrantRef, ReferenceGrantsResolver};
 pub use secrets_resolver::SecretsResolver;
+pub use multiset::HashMultiSet;
+
+
 
 #[derive(Clone, TypedBuilder)]
 pub struct ReferencesResolver<R>
@@ -30,11 +33,13 @@ where
 {
     client: Client,
     #[builder(default)]
-    references: Arc<tokio::sync::Mutex<BTreeMap<ResourceKey, BTreeSet<ResourceKey>>>>,
+    references: Arc<tokio::sync::Mutex<BTreeMap<ResourceKey, HashMultiSet<ResourceKey>>>>,
     #[builder(default)]
     resolved_references: Arc<tokio::sync::Mutex<BTreeMap<ResourceKey, R>>>,
     reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>,
 }
+
+
 
 impl<R> ReferencesResolver<R>
 where
@@ -63,7 +68,7 @@ where
                     set.insert(gateway_key.clone());
                 })
                 .or_insert_with(|| {
-                    let mut set = BTreeSet::new();
+                    let mut set = HashMultiSet::new();
                     set.insert(gateway_key.clone());
                     set
                 });
@@ -81,6 +86,11 @@ where
         let mut lock = self.references.lock().await;
         for reference_key in &reference_keys {
             if let Some(references) = lock.get_mut(reference_key) {
+                // if references.remove(gateway_key) && references.is_empty() {
+                //     lock.remove(reference_key);
+                //     let mut reference_lock = self.resolved_references.lock().await;
+                //     reference_lock.remove(reference_key);
+                // }
                 if references.remove(gateway_key) && references.is_empty() {
                     lock.remove(reference_key);
                     let mut reference_lock = self.resolved_references.lock().await;
@@ -99,7 +109,7 @@ where
         let mut lock = self.references.lock().await;
 
         for key in reference_keys {
-            lock.entry(key.clone()).or_insert_with(BTreeSet::new);
+            lock.entry(key.clone()).or_insert_with(HashMultiSet::new);
         }
     }
 
@@ -109,13 +119,29 @@ where
     {
         debug!("Deleting all references {reference_keys:?}");
         let mut affected_gateways = BTreeSet::new();
-        let mut lock = self.references.lock().await;
+        let mut references_lock = self.references.lock().await;
         let mut resolved_lock = self.resolved_references.lock().await;
         for reference_key in reference_keys {
-            if let Some(mut gateways) = lock.remove(&reference_key) {
-                affected_gateways.append(&mut gateways);
+            let mut remove_gateways = false;
+            if let Some(gateways)  = references_lock.get_mut(&reference_key){
+                for key in gateways.distinct_elements().cloned().collect::<Vec<_>>(){
+                    if gateways.count_of(&key) > 1{
+
+                    }else{
+                        let _ = resolved_lock.remove(&reference_key);                        
+                    }
+                    gateways.remove(&key);
+                }
+                remove_gateways = gateways.is_empty();                                    
+                affected_gateways.append(&mut gateways.distinct_elements().cloned().collect::<BTreeSet<_>>());
             }
-            let _ = resolved_lock.remove(&reference_key);
+            if remove_gateways{
+                references_lock.remove(&reference_key);
+            }
+            // if let Some(gateways) = references_lock.remove(&reference_key) {
+            //     affected_gateways.append(&mut gateways.distinct_elements().cloned().collect::<BTreeSet<_>>());
+            // }
+            // let _ = resolved_lock.remove(&reference_key);
         }
         affected_gateways
     }
@@ -191,7 +217,7 @@ where
 
     async fn update_gateways(&self, key: &ResourceKey) {
         let references = self.references.lock().await;
-        let gateways = references.get(key).cloned().unwrap_or_default();
+        let gateways = references.get(key).cloned().map(|set| set.distinct_elements().cloned().collect::<BTreeSet<_>>()).unwrap_or_default();
         debug!("Reference changed... updating gateways {key} {gateways:?}");
         let _res = self
             .reference_validate_channel_sender

@@ -77,10 +77,8 @@ impl ReferenceResolverHandler {
                 info!("ReferenceResolverService action = AddGateway {}", gateway.key());
                 let key = gateway.key().clone();
                 self.secrets_resolver.add_secretes_by_gateway(&gateway).await;
-
                 self.backend_references_resolver.add_references_by_gateway(&gateway).await;
                 self.reference_grants_resolver.add_references_by_gateway(&gateway).await;
-
                 let backend_gateway = self.process(gateway, &kube_gateway).await;
 
                 info!("Adding gateway {} Send on channel", key);

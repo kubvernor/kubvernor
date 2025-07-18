@@ -39,6 +39,7 @@ opentelemetry-otlp = {version = "0.30", features = ["grpc-tonic"]}
 cfg-if = "1.0"
 tokio-stream = "0.1.17"
 gateway-api-inference-extension = { version = "0.1.0", git = "https://github.com/kubvernor/gateway-api-inference-extension-rs.git", optional = true }
+multiset = "0.0.5"
 
 
 [dev-dependencies]
