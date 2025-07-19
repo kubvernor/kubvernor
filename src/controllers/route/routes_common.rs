@@ -127,7 +127,7 @@ where
 
         let references = extract_references(&route);
 
-        let _ = self.references_validator_sender.send(ReferenceValidateRequest::AddRoute { references }).await;
+        let _ = self.references_validator_sender.send(ReferenceValidateRequest::AddRoute { route_key, references }).await;
 
         for kube_gateway in matching_gateways {
             let gateway_class_name = {
@@ -197,7 +197,10 @@ where
 
         let references = extract_references(&route);
 
-        let _ = self.references_validator_sender.send(ReferenceValidateRequest::DeleteRoute { references }).await;
+        let _ = self
+            .references_validator_sender
+            .send(ReferenceValidateRequest::DeleteRoute { route_key: resource_key, references })
+            .await;
 
         Ok(Action::await_change())
     }

@@ -101,15 +101,14 @@ impl ReferenceResolverHandler {
                 self.reference_grants_resolver.delete_references_by_gateway(&gateway).await;
             }
 
-            ReferenceValidateRequest::AddRoute { references } => {
-                info!("ReferenceResolverService action = AddRouteReferences {references:?}");
+            ReferenceValidateRequest::AddRoute { route_key, references } => {
+                info!("ReferenceResolverService action = AddRouteReferences {route_key} {references:?}");
                 debug!("Adding route references {references:?}");
-                self.backend_references_resolver.add_references(references).await;
+                //self.backend_references_resolver.add_route_references(route_key, references).await;
             }
-
-            ReferenceValidateRequest::DeleteRoute { references } => {
+            ReferenceValidateRequest::DeleteRoute { route_key, references } => {
                 info!("ReferenceResolverService action = DeleteRouteAndValidateRequest {references:?}");
-                let affected_gateways = self.backend_references_resolver.delete_all_references(references).await;
+                let affected_gateways = self.backend_references_resolver.delete_route_references(route_key, references).await;
 
                 info!("Update gateways affected gateways  {affected_gateways:?}");
                 for gateway_id in affected_gateways {

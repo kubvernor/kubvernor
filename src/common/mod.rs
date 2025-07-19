@@ -404,9 +404,9 @@ pub struct RequestContext {
 
 pub enum ReferenceValidateRequest {
     AddGateway(Box<RequestContext>),
-    AddRoute { references: BTreeSet<ResourceKey> },
+    AddRoute { route_key: ResourceKey, references: BTreeSet<ResourceKey> },
     UpdatedGateways { reference: ResourceKey, gateways: BTreeSet<ResourceKey> },
-    DeleteRoute { references: BTreeSet<ResourceKey> },
+    DeleteRoute { route_key: ResourceKey, references: BTreeSet<ResourceKey> },
     DeleteGateway { gateway: Gateway },
 }
 
