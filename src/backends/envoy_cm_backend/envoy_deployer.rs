@@ -139,6 +139,18 @@ impl EnvoyDeployerChannelHandlerService {
         Ok(service)
     }
 
+    fn print_delete_error<S>(f: Result<itertools::Either<S, kube_core::Status>, kube::Error>, gateway: &Gateway) {
+        match f {
+            Ok(_) => (),
+            Err(kube::Error::Api(e)) if e.code != 404 => {
+                debug!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
+            }
+            Err(e) => {
+                warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
+            }
+        }
+    }
+
     async fn delete_envoy(&self, gateway: &Gateway) {
         debug!("Deleting Envoy {gateway:?}");
         let service_api: Api<Service> = Api::namespaced(self.client.clone(), gateway.namespace());
@@ -148,46 +160,11 @@ impl EnvoyDeployerChannelHandlerService {
         let dp = DeleteParams { ..Default::default() };
         let (xds_cm, bootstrap_cm) = config_map_names(gateway);
         let futures = [
-            service_account_api
-                .delete(gateway.name(), &dp)
-                .map(|f| {
-                    if f.is_err() {
-                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
-                    }
-                })
-                .boxed(),
-            service_api
-                .delete(gateway.name(), &dp)
-                .map(|f| {
-                    if f.is_err() {
-                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
-                    }
-                })
-                .boxed(),
-            deployment_api
-                .delete(gateway.name(), &dp)
-                .map(|f| {
-                    if f.is_err() {
-                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
-                    }
-                })
-                .boxed(),
-            config_map_api
-                .delete(&xds_cm, &dp)
-                .map(|f| {
-                    if f.is_err() {
-                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
-                    }
-                })
-                .boxed(),
-            config_map_api
-                .delete(&bootstrap_cm, &dp)
-                .map(|f| {
-                    if f.is_err() {
-                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
-                    }
-                })
-                .boxed(),
+            service_account_api.delete(gateway.name(), &dp).map(|e| Self::print_delete_error(e, gateway)).boxed(),
+            service_api.delete(gateway.name(), &dp).map(|e| Self::print_delete_error(e, gateway)).boxed(),
+            deployment_api.delete(gateway.name(), &dp).map(|e| Self::print_delete_error(e, gateway)).boxed(),
+            config_map_api.delete(&xds_cm, &dp).map(|e| Self::print_delete_error(e, gateway)).boxed(),
+            config_map_api.delete(&bootstrap_cm, &dp).map(|e| Self::print_delete_error(e, gateway)).boxed(),
         ];
         let _res = futures::future::join_all(futures).await;
     }

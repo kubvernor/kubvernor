@@ -156,7 +156,7 @@ impl RouteResolver<'_> {
                         backend_config.effective_port = Self::backend_remap_port(backend_config.port, service);
                         (Backend::Resolved(BackendType::Service(backend_config)), ResolutionStatus::Resolved)
                     } else {
-                        debug!("can't resolve {}-{} {:?}", &backend_resource_key.name, &backend_resource_key.namespace, maybe_service);
+                        debug!("can't resolve {:?} {:?}", &backend_resource_key, maybe_service);
                         (
                             Backend::Unresolved(BackendType::Service(backend_config)),
                             ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound),
@@ -219,7 +219,6 @@ impl RouteResolver<'_> {
     async fn process_inference_pool_backend(&self, route_resource_key: &ResourceKey, backend: Backend) -> (Backend, ResolutionStatus) {
         let gateway_namespace = &self.gateway_resource_key.namespace;
         let route_namespace = &route_resource_key.namespace;
-        warn!("process_inference_pool_backend {}", backend.resource_key());
         match backend {
             Backend::Maybe(BackendType::InferencePool(mut backend_config)) => {
                 let backend_resource_key = backend_config.resource_key();
@@ -244,7 +243,7 @@ impl RouteResolver<'_> {
                         backend_config.effective_port = inference_pool_spec.target_port_number;
                         backend_config.endpoints = Some(model_endpoints);
 
-                        warn!(
+                        debug!(
                             "Inference Pool: Setting backend config {}-{} {:?}",
                             &backend_resource_key.name, &backend_resource_key.namespace, inference_pool_spec
                         );
@@ -273,14 +272,14 @@ impl RouteResolver<'_> {
                                 )
                             }
                         } else {
-                            warn!("Inference Pool: No name");
+                            info!("Inference Pool: No name");
                             (
                                 Backend::Unresolved(BackendType::InferencePool(backend_config)),
                                 ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound),
                             )
                         }
                     } else {
-                        warn!(
+                        info!(
                             "Inference Pool: Backend can't resolve {}-{} {:?}",
                             &backend_resource_key.name, &backend_resource_key.namespace, maybe_inference_pool
                         );

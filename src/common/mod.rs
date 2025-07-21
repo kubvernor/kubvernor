@@ -406,6 +406,7 @@ pub enum ReferenceValidateRequest {
     AddGateway(Box<RequestContext>),
     AddRoute { route_key: ResourceKey, references: BTreeSet<ResourceKey> },
     UpdatedGateways { reference: ResourceKey, gateways: BTreeSet<ResourceKey> },
+    UpdatedRoutes { reference: ResourceKey, updated_routes: BTreeSet<ResourceKey> },
     DeleteRoute { route_key: ResourceKey, references: BTreeSet<ResourceKey> },
     DeleteGateway { gateway: Gateway },
 }

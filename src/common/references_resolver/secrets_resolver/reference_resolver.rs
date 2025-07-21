@@ -7,7 +7,7 @@ use kube::{Api, Client, Resource, ResourceExt};
 use kube_core::ObjectMeta;
 pub use multiset::HashMultiSet;
 use tokio::time;
-use tracing::{debug, warn};
+use tracing::debug;
 use typed_builder::TypedBuilder;
 
 use crate::common::{ReferenceValidateRequest, ResourceKey};
@@ -86,7 +86,6 @@ where
 
     pub async fn get_reference(&self, resource_key: &ResourceKey) -> Option<R> {
         let resolved_backend_references = { self.resolved_references.lock().await.get(resource_key).cloned() };
-        warn!("Getting reference for {resource_key} {}", resolved_backend_references.is_some());
         resolved_backend_references
     }
 

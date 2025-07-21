@@ -155,7 +155,6 @@ impl ResourceHandler<InferencePool> for InferencePoolControllerHandler<Inference
     }
 
     async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<InferencePool>, state: &State) -> Result<Action> {
-        warn!("Saving inference pool on status change");
         let () = state.maybe_save_inference_pool(id, resource).expect("We expect the lock to work");
         Err(ControllerError::AlreadyAdded)
     }

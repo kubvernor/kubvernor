@@ -7,7 +7,7 @@ use std::{
 use kube::{Api, Client, Resource, ResourceExt};
 use kube_core::ObjectMeta;
 use tokio::time;
-use tracing::{debug, warn};
+use tracing::debug;
 use typed_builder::TypedBuilder;
 
 use crate::common::{ReferenceValidateRequest, ResourceKey};
@@ -21,23 +21,54 @@ pub type GatewayToRouteReferenceMapping = BTreeMap<GatewayKey, RouteToReferenceM
 #[derive(Clone, Debug)]
 struct References<R> {
     parents: BTreeMap<ResourceKey, usize>,
-    references: BTreeMap<ResourceKey, R>,
+    resolved_references: BTreeMap<ResourceKey, R>,
 }
 impl<R> Default for References<R> {
     fn default() -> Self {
         Self {
             parents: BTreeMap::new(),
-            references: BTreeMap::new(),
+            resolved_references: BTreeMap::new(),
         }
     }
 }
 impl<R> References<R> {
     fn remove(&mut self, k: &ResourceKey) -> Option<R> {
         self.parents.remove(k);
-        self.references.remove(k)
+        self.resolved_references.remove(k)
+    }
+
+    fn remove_resolved_reference(&mut self, k: &ResourceKey) -> Option<R> {
+        self.resolved_references.remove(k)
+    }
+
+    fn add_resolved_reference(&mut self, key: &ResourceKey, reference: R) -> bool
+    where
+        R: Clone + std::cmp::PartialEq,
+        R: ResourceExt,
+    {
+        let mut update_gateway = false;
+        self.resolved_references
+            .entry(key.clone())
+            .and_modify(|f: &mut R| {
+                let mut this = f.clone();
+                *this.meta_mut() = ObjectMeta::default();
+
+                let mut other = reference.clone();
+                *other.meta_mut() = ObjectMeta::default();
+
+                if this != other {
+                    *f = reference.clone();
+                    update_gateway = true;
+                }
+            })
+            .or_insert_with(|| {
+                update_gateway = true;
+                reference
+            });
+        update_gateway
     }
     fn get(&self, k: &ResourceKey) -> Option<&R> {
-        self.references.get(k)
+        self.resolved_references.get(k)
     }
 }
 
@@ -55,7 +86,7 @@ where
     gateway_route_reference_mapping: Arc<tokio::sync::Mutex<GatewayToRouteReferenceMapping>>,
 
     #[builder(default)]
-    resolved_references: Arc<tokio::sync::Mutex<References<R>>>,
+    references: Arc<tokio::sync::Mutex<References<R>>>,
     reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>,
 }
 
@@ -88,7 +119,7 @@ where
             })
             .or_insert(route_to_reference_mapping.clone());
 
-        let references = &mut self.resolved_references.lock().await;
+        let references = &mut self.references.lock().await;
 
         let resolved_references_parents = &mut references.parents;
 
@@ -116,7 +147,7 @@ where
         debug!("Deleting references for Gateway {gateway_key} Reference {route_to_reference_mapping:?}");
         let mut lock = self.gateway_route_reference_mapping.lock().await;
         if let Some(old_mappings) = lock.remove(gateway_key) {
-            let references = &mut self.resolved_references.lock().await;
+            let references = &mut self.references.lock().await;
             let resolved_references_parents = &mut references.parents;
 
             for (_, resources) in old_mappings {
@@ -147,7 +178,7 @@ where
 
         let resources_to_delete: BTreeSet<_> = resources_to_delete.iter().flatten().cloned().collect();
 
-        let references = &mut self.resolved_references.lock().await;
+        let references = &mut self.references.lock().await;
         let resolved_references_parents = &mut references.parents;
 
         for resource_key in resources_to_delete {
@@ -164,8 +195,7 @@ where
     }
 
     pub async fn get_reference(&self, resource_key: &ResourceKey) -> Option<R> {
-        let resolved_backend_references = { self.resolved_references.lock().await.get(resource_key).cloned() };
-        warn!("Getting reference for {resource_key} {}", resolved_backend_references.is_some());
+        let resolved_backend_references = { self.references.lock().await.get(resource_key).cloned() };
         resolved_backend_references
     }
 
@@ -175,7 +205,7 @@ where
         loop {
             interval.tick().await;
             let references = {
-                let references = self.resolved_references.lock().await;
+                let references = self.references.lock().await;
                 references.parents.keys().cloned().collect::<BTreeSet<_>>()
             };
 
@@ -187,27 +217,29 @@ where
                     let api: Api<R> = Api::namespaced(myself.client.clone(), &key.namespace);
                     let maybe_reference = api.get(&key.name).await;
                     if let Ok(reference) = maybe_reference {
-                        let mut update_gateway = false;
-                        {
-                            let resolved_references = &mut myself.resolved_references.lock().await.references;
-                            resolved_references
-                                .entry(key.clone())
-                                .and_modify(|f: &mut R| {
-                                    let mut this = f.clone();
-                                    *this.meta_mut() = ObjectMeta::default();
+                        let update_gateway = {
+                            let mut resolved_references = myself.references.lock().await;
+                            resolved_references.add_resolved_reference(&key, reference)
 
-                                    let mut other = reference.clone();
-                                    *other.meta_mut() = ObjectMeta::default();
+                            // let resolved_references = &mut myself.references.lock().await.resolved_references;
+                            // resolved_references
+                            //     .entry(key.clone())
+                            //     .and_modify(|f: &mut R| {
+                            //         let mut this = f.clone();
+                            //         *this.meta_mut() = ObjectMeta::default();
 
-                                    if this != other {
-                                        *f = reference.clone();
-                                        update_gateway = true;
-                                    }
-                                })
-                                .or_insert_with(|| {
-                                    update_gateway = true;
-                                    reference
-                                });
+                            //         let mut other = reference.clone();
+                            //         *other.meta_mut() = ObjectMeta::default();
+
+                            //         if this != other {
+                            //             *f = reference.clone();
+                            //             update_gateway = true;
+                            //         }
+                            //     })
+                            //     .or_insert_with(|| {
+                            //         update_gateway = true;
+                            //         reference
+                            //     });
                         };
 
                         debug!("Resolved reference {key} {update_gateway}");
@@ -218,8 +250,8 @@ where
                     } else {
                         debug!("Problem with checking reference {key} {:?}", maybe_reference.err());
                         let resolved_references = {
-                            let mut resolved_references = myself.resolved_references.lock().await;
-                            resolved_references.remove(&key).is_some()
+                            let mut resolved_references = myself.references.lock().await;
+                            resolved_references.remove_resolved_reference(&key).is_some()
                         };
 
                         if resolved_references {
@@ -234,17 +266,25 @@ where
     async fn update_gateways(&self, key: &ResourceKey) {
         let gateway_route_reference_mapping = self.gateway_route_reference_mapping.lock().await;
 
-        let gateways = gateway_route_reference_mapping
+        let (gateways, routes): (BTreeSet<_>, BTreeSet<_>) = gateway_route_reference_mapping
             .iter()
             .filter(|&(_gateway, route_reference)| route_reference.iter().any(|(_, references)| references.contains(key)))
-            .map(|(gateway, _route_reference)| gateway)
-            .cloned()
-            .collect();
+            .map(|(gateway, route_reference)| (gateway.clone(), route_reference.keys().collect::<BTreeSet<_>>()))
+            .unzip();
+        let changed_routes = routes.into_iter().flatten().collect::<BTreeSet<_>>();
 
-        debug!("Reference changed... updating gateways {key} {gateways:?}");
+        debug!("Reference changed... updating gateways {key} {gateways:?} changed routes {changed_routes:?}");
         let _res = self
             .reference_validate_channel_sender
             .send(ReferenceValidateRequest::UpdatedGateways { reference: key.clone(), gateways })
+            .await;
+
+        let _res = self
+            .reference_validate_channel_sender
+            .send(ReferenceValidateRequest::UpdatedRoutes {
+                reference: key.clone(),
+                updated_routes: changed_routes.into_iter().cloned().collect(),
+            })
             .await;
     }
 }
@@ -299,13 +339,13 @@ mod tests {
             multi_refernces_resolver.add_references_for_gateway(&g1, g1_mapping_fn).await;
             multi_refernces_resolver.add_references_for_gateway(&g2, g2_mapping_fn).await;
 
-            let refernces = multi_refernces_resolver.resolved_references.lock().await;
+            let refernces = multi_refernces_resolver.references.lock().await;
             let parents = &refernces.parents;
             assert_eq!(*parents.get(&r1).unwrap(), 2_usize);
             assert_eq!(*parents.get(&r2).unwrap(), 2_usize);
             assert_eq!(*parents.get(&r3).unwrap(), 2_usize);
 
-            let referenes = &refernces.references;
+            let referenes = &refernces.resolved_references;
             assert_eq!(referenes.get(&r1), None);
             assert_eq!(referenes.get(&r2), None);
             assert_eq!(referenes.get(&r3), None);
@@ -314,22 +354,22 @@ mod tests {
         }
 
         {
-            let mut resolved_references = multi_refernces_resolver.resolved_references.lock().await;
-            resolved_references.references.insert(r1.clone(), Service::default());
-            resolved_references.references.insert(r2.clone(), Service::default());
-            resolved_references.references.insert(r3.clone(), Service::default());
+            let mut resolved_references = multi_refernces_resolver.references.lock().await;
+            resolved_references.resolved_references.insert(r1.clone(), Service::default());
+            resolved_references.resolved_references.insert(r2.clone(), Service::default());
+            resolved_references.resolved_references.insert(r3.clone(), Service::default());
         }
 
         {
             let g1_mapping_fn = || g1_mapping.clone();
             multi_refernces_resolver.delete_references_for_gateway(&g1, g1_mapping_fn).await;
-            let refernces = multi_refernces_resolver.resolved_references.lock().await;
+            let refernces = multi_refernces_resolver.references.lock().await;
             let parents = &refernces.parents;
             assert_eq!(*parents.get(&r1).unwrap(), 1_usize);
             assert_eq!(*parents.get(&r2).unwrap(), 1_usize);
             assert_eq!(*parents.get(&r3).unwrap(), 1_usize);
 
-            let referenes = &refernces.references;
+            let referenes = &refernces.resolved_references;
             assert!(referenes.get(&r1).is_some());
             assert!(referenes.get(&r2).is_some());
             assert!(referenes.get(&r3).is_some());
@@ -338,12 +378,12 @@ mod tests {
         {
             let g2_mapping_fn = || g2_mapping.clone();
             multi_refernces_resolver.delete_references_for_gateway(&g2, g2_mapping_fn).await;
-            let refernces = multi_refernces_resolver.resolved_references.lock().await;
+            let refernces = multi_refernces_resolver.references.lock().await;
             let parents = &refernces.parents;
             assert_eq!(parents.get(&r1), None);
             assert_eq!(parents.get(&r2), None);
             assert_eq!(parents.get(&r3), None);
-            let referenes = &refernces.references;
+            let referenes = &refernces.resolved_references;
             assert!(referenes.get(&r1).is_none());
             assert!(referenes.get(&r2).is_none());
             assert!(referenes.get(&r3).is_none());

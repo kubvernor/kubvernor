@@ -26,7 +26,7 @@ use envoy_api_rs::{
     },
     google::protobuf::UInt32Value,
 };
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::{
     backends::common::{converters, get_inference_pool_configurations, ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory},
@@ -158,7 +158,6 @@ impl<'a> ResourceGenerator<'a> {
                                 if let Backend::Resolved(BackendType::Service(backend_service_config) | BackendType::Invalid(backend_service_config)) = b {
                                     Some(backend_service_config)
                                 } else {
-                                    warn!("Filtering out backend not resolved {:?}", b);
                                     None
                                 }
                             })
@@ -171,7 +170,6 @@ impl<'a> ResourceGenerator<'a> {
                                 if let Backend::Resolved(BackendType::InferencePool(backend_service_config)) = b {
                                     Some(backend_service_config)
                                 } else {
-                                    warn!("Filtering out backend not resolved {:?}", b);
                                     None
                                 }
                             })
@@ -183,10 +181,9 @@ impl<'a> ResourceGenerator<'a> {
                 })
             })
             .collect();
-        warn!("Clusters produced {:?}", clusters);
+        debug!("Clusters produced {:?}", clusters);
         let ext_service_clusters = self.inference_clusters.iter().filter_map(generate_ext_service_cluster);
-
-        warn!("Ext Service Clusters produced {:?}", ext_service_clusters);
+        debug!("Ext Service Clusters produced {:?}", ext_service_clusters);
         let clusters = clusters.into_iter().chain(ext_service_clusters);
         clusters.map(|c| c.cluster).collect::<Vec<_>>()
     }

@@ -129,6 +129,9 @@ impl ReferenceResolverHandler {
                     }
                 }
             }
+            ReferenceValidateRequest::UpdatedRoutes { reference, updated_routes } => {
+                info!("ReferenceResolverService action = UpdatedRoutes {reference} {updated_routes:?}");
+            }
 
             ReferenceValidateRequest::UpdatedGateways { reference, gateways } => {
                 info!("ReferenceResolverService action = UpdatedGateways {reference} {gateways:?}");
