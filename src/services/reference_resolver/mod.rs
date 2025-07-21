@@ -2,7 +2,7 @@ use gateway_api::gateways::Gateway;
 use gateway_api_inference_extension::inferencepools::InferencePool;
 use kube::Client;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -103,8 +103,6 @@ impl ReferenceResolverHandler {
 
             ReferenceValidateRequest::AddRoute { route_key, references } => {
                 info!("ReferenceResolverService action = AddRouteReferences {route_key} {references:?}");
-                debug!("Adding route references {references:?}");
-                //self.backend_references_resolver.add_route_references(route_key, references).await;
             }
             ReferenceValidateRequest::DeleteRoute { route_key, references } => {
                 info!("ReferenceResolverService action = DeleteRouteAndValidateRequest {references:?}");

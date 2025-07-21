@@ -52,7 +52,6 @@ impl Listener {
             .flat_map(|r| &r.effective_routing_rules)
             .collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
-        //matching_rules.reverse();
         matching_rules
     }
 
@@ -68,7 +67,6 @@ impl Listener {
             .flat_map(|r| &r.effective_routing_rules)
             .collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
-        //matching_rules.reverse();
         matching_rules
     }
 }
@@ -411,7 +409,6 @@ fn generate_ext_service_cluster(config: &InferenceClusterInfo) -> Option<Cluster
         cluster: EnvoyCluster {
             name: cluster_name.clone(),
             cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::LogicalDns.into())),
-            //cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::Static.into())),
             lb_policy: LbPolicy::RoundRobin.into(),
             connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
             load_assignment: Some(ClusterLoadAssignment {
@@ -483,8 +480,6 @@ fn create_inference_cluster(config: &InferencePoolTypeConfig, _route_type: &Rout
         name: config.cluster_name(),
         cluster: EnvoyCluster {
             name: config.cluster_name(),
-            //cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::OriginalDst.into())),
-            //lb_policy: LbPolicy::ClusterProvided.into(),
             connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
             load_balancing_policy: Some(LoadBalancingPolicy {
                 policies: vec![envoy_api_rs::envoy::config::cluster::v3::load_balancing_policy::Policy {

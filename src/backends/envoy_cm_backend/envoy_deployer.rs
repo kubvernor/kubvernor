@@ -259,7 +259,7 @@ impl EnvoyDeployerChannelHandlerService {
         let ports = gateway
             .listeners()
             .map(|l| ContainerPort {
-                name: None, //Some(name(gateway.name(), l.port(), &l.protocol().to_string())),
+                name: None,
                 container_port: l.port(),
                 protocol: Some("TCP".to_owned()),
                 ..Default::default()
@@ -316,7 +316,6 @@ impl EnvoyDeployerChannelHandlerService {
                 template: PodTemplateSpec {
                     metadata: Some(ObjectMeta {
                         labels: Some(labels.clone()),
-                        //annotations: Some(annotations),
                         ..Default::default()
                     }),
                     spec: Some(pod_spec),

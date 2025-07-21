@@ -106,7 +106,6 @@ impl GatewayClassController {
             controller_name: controller_name.clone(),
             resource,
             version,
-            //api: Api::all(client.clone()),
             gateway_class_patcher,
         };
         handler.process(maybe_stored_gateway_class, Self::check_spec, Self::check_status).await

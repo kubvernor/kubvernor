@@ -145,11 +145,9 @@ impl Listener {
 
     pub fn routes(&self) -> (Vec<&Route>, Vec<&Route>) {
         match self {
-            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => (
-                Vec::from_iter(&listener_data.resolved_routes),
-                Vec::from_iter(&listener_data.unresolved_routes),
-                //Vec::from_iter(&listener_data.routes_with_no_listeners),
-            ),
+            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
+                (Vec::from_iter(&listener_data.resolved_routes), Vec::from_iter(&listener_data.unresolved_routes))
+            }
         }
     }
 
@@ -182,14 +180,6 @@ impl Listener {
             }
         }
     }
-
-    // pub fn effective_matching_rules(&self) -> Vec<&EffectiveRoutingRule> {
-    //     let (resolved_routes, unresolved) = self.routes();
-    //     let mut matching_rules: Vec<_> = resolved_routes.iter().chain(unresolved.iter()).flat_map(|r| r.effective_routing_rules()).collect();
-    //     matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
-    //     //matching_rules.reverse();
-    //     matching_rules
-    // }
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -271,7 +261,6 @@ pub struct ListenerData {
     pub conditions: ListenerConditions,
     pub resolved_routes: BTreeSet<Route>,
     pub unresolved_routes: BTreeSet<Route>,
-    //pub routes_with_no_listeners: BTreeSet<Route>,
     pub attached_routes: usize,
 }
 

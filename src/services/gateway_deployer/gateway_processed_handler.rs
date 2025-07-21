@@ -131,10 +131,7 @@ impl GatewayProcessedHandler<'_> {
                 let patched_route = receiver.await;
                 if let Ok(maybe_patched) = patched_route {
                     match maybe_patched {
-                        Ok(_patched_route) => {
-                            //patched_route.metadata.resource_version = None;
-                            //self.state.save_http_route(route_resource_key, &Arc::new(patched_route));
-                        }
+                        Ok(_patched_route) => {}
                         Err(e) => {
                             warn!("Error while patching {e}");
                         }
@@ -161,10 +158,7 @@ impl GatewayProcessedHandler<'_> {
                 let patched_route = receiver.await;
                 if let Ok(maybe_patched) = patched_route {
                     match maybe_patched {
-                        Ok(_patched_route) => {
-                            //patched_route.metadata.resource_version = None;
-                            //self.state.save_http_route(route_resource_key, &Arc::new(patched_route));
-                        }
+                        Ok(_patched_route) => {}
                         Err(e) => {
                             warn!("Error while patching {e}");
                         }
@@ -226,10 +220,7 @@ impl GatewayProcessedHandler<'_> {
                 let patched_route = receiver.await;
                 if let Ok(maybe_patched) = patched_route {
                     match maybe_patched {
-                        Ok(_patched_route) => {
-                            //patched_route.metadata.resource_version = None;
-                            //self.state.save_http_route(route_resource_key, &Arc::new(patched_route));
-                        }
+                        Ok(_patched_route) => {}
                         Err(e) => {
                             warn!("Error while patching {e}");
                         }
@@ -256,10 +247,7 @@ impl GatewayProcessedHandler<'_> {
                 let patched_route = receiver.await;
                 if let Ok(maybe_patched) = patched_route {
                     match maybe_patched {
-                        Ok(_patched_route) => {
-                            //patched_route.metadata.resource_version = None;
-                            //self.state.save_http_route(route_resource_key, &Arc::new(patched_route));
-                        }
+                        Ok(_patched_route) => {}
                         Err(e) => {
                             warn!("Error while patching {e}");
                         }

@@ -171,7 +171,6 @@ impl ResourceHandler<InferencePool> for InferencePoolControllerHandler<Inference
 
 impl InferencePoolControllerHandler<InferencePool> {
     async fn on_new_or_changed(&self, inference_pool_key: ResourceKey, resource: &Arc<InferencePool>, _state: &State) -> Result<Action> {
-        warn!("Inference pool : New");
         let routes: Vec<_> = self
             .state
             .get_http_routes()
@@ -180,7 +179,6 @@ impl InferencePoolControllerHandler<InferencePool> {
             .filter(|route| has_inference_pool(route, &inference_pool_key))
             .collect();
         if routes.is_empty() {
-            warn!("Inference pool : No routes");
             Ok(Action::requeue(Duration::from_secs(20)))
         } else {
             let gateways_ids = self
@@ -225,7 +223,6 @@ impl InferencePoolControllerHandler<InferencePool> {
 }
 
 fn has_inference_pool(route: &HTTPRoute, inference_pool_key: &ResourceKey) -> bool {
-    warn!("Inference Pool checking if route {} has a pool {}", ResourceKey::from(route), inference_pool_key);
     let empty_rules: Vec<HTTPRouteRule> = vec![];
     let routing_rules = route.spec.rules.as_ref().unwrap_or(&empty_rules);
     routing_rules.iter().any(|rr| {

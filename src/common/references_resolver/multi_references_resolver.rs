@@ -200,7 +200,6 @@ where
                                     *other.meta_mut() = ObjectMeta::default();
 
                                     if this != other {
-                                        //    warn!("Comparing references {:#?} {:#?}", this, other);
                                         *f = reference.clone();
                                         update_gateway = true;
                                     }

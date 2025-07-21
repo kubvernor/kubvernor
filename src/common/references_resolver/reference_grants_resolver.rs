@@ -285,12 +285,6 @@ impl ReferenceGrantsResolver {
     }
 }
 
-// fn normalize_from_and_to(mut from: ResourceKey, mut to: ResourceKey) -> (ResourceKey, ResourceKey) {
-//     from.name = String::new();
-//     to.namespace = String::new();
-//     (from, to)
-// }
-
 impl From<&ReferenceGrantFrom> for ResourceKey {
     fn from(value: &ReferenceGrantFrom) -> Self {
         if value.group.is_empty() {

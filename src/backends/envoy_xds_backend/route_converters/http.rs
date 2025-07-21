@@ -42,7 +42,7 @@ impl HTTPEffectiveRoutingRule {
         let per_route_filters = inference_extension_configuration
             .first()
             .and_then(|conf| {
-                warn!("Inference Pool: setting up external service with {conf:?}");
+                debug!("Inference Pool: setting up external service with {conf:?}");
                 conf.inference_config
                     .as_ref()
                     .map(|conf| {
@@ -52,7 +52,6 @@ impl HTTPEffectiveRoutingRule {
                                 processing_mode: Some(ProcessingMode {
                                     request_header_mode: HeaderSendMode::Send.into(),
                                     request_body_mode: BodySendMode::FullDuplexStreamed.into(),
-                                    //                                    request_body_mode: BodySendMode::Buffered.into(),
                                     ..Default::default()
                                 }),
 

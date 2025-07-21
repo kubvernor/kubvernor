@@ -191,10 +191,10 @@ impl RouteResolver<'_> {
     async fn get_inference_extension(client: Client, namespace: &str, inference_pool_spec: &InferencePoolSpec) -> bool {
         let service_api: Api<Service> = Api::namespaced(client, namespace);
         if let Ok(service) = service_api.get(&inference_pool_spec.extension_ref.name).await {
-            warn!("Inference Pool: Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
+            debug!("Inference Pool: Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
             true
         } else {
-            warn!("Inference Pool: Can't get endpoint picker service {:?} ", inference_pool_spec.extension_ref);
+            debug!("Inference Pool: Can't get endpoint picker service {:?} ", inference_pool_spec.extension_ref);
             false
         }
     }
@@ -232,7 +232,7 @@ impl RouteResolver<'_> {
                         let inference_pool_spec = inference_pool.spec();
                         let model_endpoints = Self::get_model_endpoints(self.client.clone(), &route_resource_key.namespace, inference_pool_spec).await;
 
-                        warn!("Inference Pool: got model endpoints {:?}", model_endpoints);
+                        debug!("Inference Pool: got model endpoints {:?}", model_endpoints);
 
                         let resolved_endpoint_picker = match inference_pool_spec.extension_ref.kind.as_ref() {
                             None => Self::get_inference_extension(self.client.clone(), &route_resource_key.namespace, inference_pool_spec).await,
@@ -333,16 +333,20 @@ impl RoutesResolver<'_> {
         debug!("Validating routes");
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
-        let linked_routes = utils::resolve_route_backends(
-            self.controller_name,
-            self.inference_pool_patcher_sender,
-            gateway_resource_key,
-            self.backend_reference_resolver.clone(),
-            self.reference_grants_resolver.clone(),
-            linked_routes,
-            self.client.clone(),
-        )
-        .await;
+        let linked_routes = linked_routes.into_iter().map(|route| {
+            RouteResolver::builder()
+                .gateway_resource_key(gateway_resource_key)
+                .route(route)
+                .backend_reference_resolver(self.backend_reference_resolver.clone())
+                .reference_grants_resolver(self.reference_grants_resolver.clone())
+                .client(self.client.clone())
+                .inference_pool_patcher_sender(self.inference_pool_patcher_sender.clone())
+                .controller_name(self.controller_name.clone())
+                .build()
+                .resolve()
+        });
+        let linked_routes = futures::future::join_all(linked_routes).await;
+
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
 
         info!("Linked routes {:?}", linked_routes.iter().map(Route::resource_key));

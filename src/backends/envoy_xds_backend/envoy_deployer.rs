@@ -294,7 +294,6 @@ impl EnvoyDeployerChannelHandlerService {
 }
 
 async fn deploy_envoy(control_plane_config: &ControlPlaneConfig, client: Client, gateway: &Gateway, secrets: &[ResourceKey]) -> std::result::Result<Service, kube::Error> {
-    //debug!("Deploying Envoy {gateway:#?}");
     let controller_name = &control_plane_config.controller_name;
     let service_api: Api<Service> = Api::namespaced(client.clone(), gateway.namespace());
     let service_account_api: Api<ServiceAccount> = Api::namespaced(client.clone(), gateway.namespace());
@@ -542,7 +541,7 @@ fn create_deployment(gateway: &Gateway) -> Deployment {
     let ports = gateway
         .listeners()
         .map(|l| ContainerPort {
-            name: None, //Some(name(gateway.name(), l.port(), &l.protocol().to_string())),
+            name: None,
             container_port: l.port(),
             protocol: Some("TCP".to_owned()),
             ..Default::default()
@@ -593,7 +592,6 @@ fn create_deployment(gateway: &Gateway) -> Deployment {
             template: PodTemplateSpec {
                 metadata: Some(ObjectMeta {
                     labels: Some(labels.clone()),
-                    //annotations: Some(annotations),
                     ..Default::default()
                 }),
                 spec: Some(pod_spec),

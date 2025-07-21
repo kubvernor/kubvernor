@@ -79,13 +79,6 @@ impl BackendReferenceResolver {
         service_references.into_iter().chain(inference_pool_references.into_iter()).collect()
     }
 
-    // pub async fn add_route_references(&self, route_key: ResourceKey, reference_keys: BTreeSet<ResourceKey>) {
-    //     let service_references = reference_keys.iter().filter(|k| k.kind == "Service").cloned();
-    //     let inference_pool_references = reference_keys.iter().filter(|k| k.kind == "InferencePool").cloned();
-    //     self.reference_resolver.add_route_references(route_key.clone(), service_references).await;
-    //     self.inference_pool_reference_resolver.add_route_references(route_key, inference_pool_references).await;
-    // }
-
     pub async fn delete_references_by_gateway(&self, gateway: &Gateway) {
         let gateway_key = gateway.key();
         let service_references = || {

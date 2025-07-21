@@ -237,10 +237,7 @@ where
                         .await;
                     match receiver.await {
                         Ok(Err(_)) | Err(_) => warn!("Could't patch status"),
-                        _ => (), // self
-                                 // .state
-                                 // .save_inference_pool(inference_pool_resource_key, &Arc::new(inference_pool))
-                                 // .expect("We expect the lock to work"),
+                        _ => (),
                     }
                 } else {
                     warn!("No inference pool - Updating inference pools of route delete {} {gateway_ids:?}", route.name());
