@@ -29,16 +29,25 @@ Kubvernor is a Rust implementation of Kubernetes Gateway APIs. The aim of the pr
 
 
 4. Compile and run Kubvernor
+
     ```bash         
    export CONTROL_PLANE_IP=<IP>
-   ./run_kubvernor.sh 
-   
+   ./run_kubvernor.sh    
    ```
-5. Run conformance suite
+
+5. Run Gateway API Conformance suite
+
     ```bash
     ./run_conformance_tests.sh
     ```
 
+6. Run Gateway API Inference Extension Conformance tests
+
+    ```bash
+    git clone https://github.com/kubernetes-sigs/gateway-api-inference-extension
+	cd gateway-api-inference-extension
+	go test -v -count=1 -timeout=3h ./conformance --debug -run TestConformance --report-output="../kubvernor-inference-conformance-outputyaml" --organization=kubvernor --project=kubvernor --url=https://github.com/kubvernor/kubvernor --version=0.1.0  --allow-crds-mismatch	
+    ```
 
 ## Conformance reports
 [1.2.1](./conformance/kubvernor-conformance-output-1.2.1.yaml)  
