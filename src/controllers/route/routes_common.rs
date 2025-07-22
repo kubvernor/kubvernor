@@ -10,7 +10,6 @@ use k8s_openapi::{
     chrono::Utc,
 };
 use kube::{runtime::controller::Action, Resource};
-use kube_core::ObjectMeta;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 use typed_builder::TypedBuilder;
@@ -18,7 +17,7 @@ use typed_builder::TypedBuilder;
 use crate::{
     common::{self, Backend, BackendType, ReferenceValidateRequest, RequestContext, ResourceKey, Route, RouteRefKey, VerifiyItems},
     controllers::{inference_pool, utils::RouteListenerMatcher, ControllerError},
-    services::patchers::{DeleteContext, FinalizerContext, Operation, PatchContext},
+    services::patchers::{DeleteContext, Operation, PatchContext},
     state::State,
 };
 
@@ -63,23 +62,7 @@ pub fn extract_references(route: &Route) -> BTreeSet<ResourceKey> {
     backend_reference_keys
 }
 
-pub fn needs_finalizer<T: serde::Serialize>(resource_key: &ResourceKey, controller_name: &String, resource_meta: &ObjectMeta) -> Option<Operation<T>> {
-    let has_finalizer = if let Some(finalizers) = resource_meta.finalizers.as_ref() {
-        finalizers.contains(controller_name)
-    } else {
-        false
-    };
 
-    if has_finalizer {
-        None
-    } else {
-        Some(Operation::PatchFinalizer(FinalizerContext {
-            resource_key: resource_key.clone(),
-            controller_name: controller_name.clone(),
-            finalizer_name: controller_name.clone(),
-        }))
-    }
-}
 
 #[derive(TypedBuilder)]
 pub struct CommonRouteHandler<R: serde::Serialize> {
@@ -206,7 +189,7 @@ where
     }
 
     async fn add_finalizer(&self, resource: &Arc<impl Resource>) -> Result<Action, ControllerError> {
-        if let Some(finalizer) = needs_finalizer::<R>(&self.resource_key, &self.controller_name, resource.meta()) {
+        if let Some(finalizer) = crate::controllers::needs_finalizer::<R>(&self.resource_key, &self.controller_name, resource.meta()) {
             let _res = self.route_patcher_sender.send(finalizer).await;
         }
 

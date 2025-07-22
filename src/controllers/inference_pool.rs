@@ -28,7 +28,7 @@ use crate::{
         utils::{ResourceCheckerArgs, ResourceState},
         ControllerError, RECONCILE_LONG_WAIT,
     },
-    services::patchers::{Operation, PatchContext},
+    services::patchers::{DeleteContext, Operation, PatchContext},
     state::State,
 };
 
@@ -205,6 +205,10 @@ impl InferencePoolControllerHandler<InferencePool> {
                 _ => (),
             }
 
+
+            let _ = self.add_finalizer(&self.resource).await?;
+
+            
             let _ = self
                 .validate_references_channel_sender
                 .send(ReferenceValidateRequest::UpdatedGateways {
@@ -216,9 +220,51 @@ impl InferencePoolControllerHandler<InferencePool> {
         }
     }
 
-    async fn on_deleted(&self, _inference_pool: ResourceKey, _resource: &Arc<InferencePool>, _: &State) -> Result<Action> {
-        Err(ControllerError::AlreadyAdded)
+    async fn on_deleted(&self, inference_pool_key: ResourceKey, resource: &Arc<InferencePool>, _: &State) -> Result<Action> {
+        self.state
+                .delete_inference_pool(&inference_pool_key)
+                .expect("We expect the lock to work");
+        
+        let inference_pool = (**resource).clone();
+
+        let routes: Vec<_> = self
+            .state
+            .get_http_routes()
+            .expect("We expect the lock to work")
+            .into_iter()
+            .filter(|route| has_inference_pool(route, &inference_pool_key))
+            .collect();
+        if routes.is_empty() {
+            Ok(Action::requeue(Duration::from_secs(20)))
+        } else {
+            let gateways_ids = self
+                .state
+                .get_gateways_with_http_routes(&routes.iter().map(|r| ResourceKey::from(r.as_ref())).collect())
+                .expect("We expect the lock to work");
+                                                
+
+            let _res = self.inference_pool_patcher_sender.send(Operation::Delete(DeleteContext{ resource_key: inference_pool_key.clone(), resource: inference_pool , controller_name: self.controller_name.clone()})).await;    
+    
+            
+            let _ = self
+                .validate_references_channel_sender
+                .send(ReferenceValidateRequest::UpdatedGateways {
+                    reference: inference_pool_key,
+                    gateways: gateways_ids,
+                })
+                .await;
+            Ok(Action::await_change())
+        }
     }
+
+
+    async fn add_finalizer(&self, resource: &Arc<impl Resource>) -> Result<Action, ControllerError> {
+        if let Some(finalizer) = super::needs_finalizer(&self.resource_key, &self.controller_name, resource.meta()) {
+            let _res = self.inference_pool_patcher_sender.send(finalizer).await;
+        }
+
+        Ok(Action::requeue(RECONCILE_LONG_WAIT))
+    }                
 }
 
 fn has_inference_pool(route: &HTTPRoute, inference_pool_key: &ResourceKey) -> bool {
