@@ -7,13 +7,15 @@ use gateway_api::{
     grpcroutes::{GRPCBackendReference, GRPCRoute},
     httproutes::{HTTPBackendReference, HTTPRoute},
 };
-use gateway_api_inference_extension::inferencepools::InferencePool;
-use k8s_openapi::api::core::v1::{ObjectReference, Service};
+use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolStatusParentParentRef};
+use k8s_openapi::api::core::v1::Service;
 use kube::{Resource, ResourceExt};
 
 use crate::common::create_id;
 
 pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";
+pub const DEFAULT_INFERENCE_GROUP_NAME: &str = "inference.networking.k8s.io/v1";
+
 pub const DEFAULT_NAMESPACE_NAME: &str = "default";
 pub const DEFAULT_KIND_NAME: &str = "Gateway";
 pub const DEFAULT_ROUTE_HOSTNAME: &str = "*";
@@ -221,7 +223,7 @@ impl From<&InferencePool> for ResourceKey {
         let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
 
         Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
+            group: DEFAULT_INFERENCE_GROUP_NAME.to_owned(),
             namespace,
             name: value.name_any(),
             kind: "InferencePool".to_owned(),
@@ -229,12 +231,12 @@ impl From<&InferencePool> for ResourceKey {
     }
 }
 
-impl From<&ObjectReference> for ResourceKey {
-    fn from(value: &ObjectReference) -> Self {
+impl From<&InferencePoolStatusParentParentRef> for ResourceKey {
+    fn from(value: &InferencePoolStatusParentParentRef) -> Self {
         Self {
             group: DEFAULT_GROUP_NAME.to_owned(),
             namespace: value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
-            name: value.name.clone().unwrap_or_default(),
+            name: value.name.clone(),
             kind: value.kind.clone().unwrap_or_default(),
         }
     }

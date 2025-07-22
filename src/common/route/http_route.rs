@@ -13,6 +13,7 @@ use super::{
 };
 use crate::{
     common::{
+        resource_key::DEFAULT_INFERENCE_GROUP_NAME,
         route::{HeaderComparator, QueryComparator},
         BackendType, InferencePoolTypeConfig,
     },
@@ -155,8 +156,10 @@ impl From<(&HTTPBackendReference, &str)> for ServiceTypeConfig {
 
 impl From<(&HTTPBackendReference, &str)> for InferencePoolTypeConfig {
     fn from((br, local_namespace): (&HTTPBackendReference, &str)) -> Self {
+        let mut resource_key = ResourceKey::from((br, local_namespace.to_owned()));
+        DEFAULT_INFERENCE_GROUP_NAME.clone_into(&mut resource_key.group);
         InferencePoolTypeConfig {
-            resource_key: ResourceKey::from((br, local_namespace.to_owned())),
+            resource_key,
             endpoint: if let Some(namespace) = br.namespace.as_ref() {
                 if *namespace == DEFAULT_NAMESPACE_NAME {
                     br.name.clone()

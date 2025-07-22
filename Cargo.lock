@@ -847,7 +847,7 @@ dependencies = [
 [[package]]
 name = "gateway-api-inference-extension"
 version = "0.1.0"
-source = "git+https://github.com/kubvernor/gateway-api-inference-extension-rs.git#294edf42674167801c15e6a426f810c2473221e3"
+source = "git+https://github.com/kubvernor/gateway-api-inference-extension-rs.git#f1282229a7bd791fd2298697ef8c27b1bb2a2fa8"
 dependencies = [
  "delegate",
  "k8s-openapi",
@@ -1337,9 +1337,9 @@ dependencies = [
 
 [[package]]
 name = "io-uring"
-version = "0.7.8"
+version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b86e202f00093dcba4275d4636b93ef9dd75d025ae560d2521b45ea28ab49013"
+checksum = "d93587f37623a1a17d94ef2bc9ada592f5465fe7732084ab7beefabe5c77c0c4"
 dependencies = [
  "bitflags",
  "cfg-if",

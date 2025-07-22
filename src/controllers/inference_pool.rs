@@ -3,9 +3,8 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gateway_api::httproutes::{HTTPRoute, HTTPRouteRule};
-use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolStatus, InferencePoolStatusParent};
+use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolStatus, InferencePoolStatusParent, InferencePoolStatusParentParentRef};
 use k8s_openapi::{
-    api::core::v1::ObjectReference,
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
 };
@@ -17,7 +16,7 @@ use tokio::sync::{
     mpsc::{self},
     oneshot,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -186,9 +185,11 @@ impl InferencePoolControllerHandler<InferencePool> {
                 .expect("We expect the lock to work");
 
             let mut inference_pool = create_accepted_inference_pool_status((**resource).clone(), &gateways_ids);
+
             self.state
                 .save_inference_pool(inference_pool_key.clone(), &Arc::new(inference_pool.clone()))
                 .expect("We expect the lock to work");
+
             inference_pool.metadata.managed_fields = None;
             let (sender, receiver) = oneshot::channel();
             let _ = self
@@ -205,10 +206,8 @@ impl InferencePoolControllerHandler<InferencePool> {
                 _ => (),
             }
 
-
             let _ = self.add_finalizer(&self.resource).await?;
 
-            
             let _ = self
                 .validate_references_channel_sender
                 .send(ReferenceValidateRequest::UpdatedGateways {
@@ -221,11 +220,21 @@ impl InferencePoolControllerHandler<InferencePool> {
     }
 
     async fn on_deleted(&self, inference_pool_key: ResourceKey, resource: &Arc<InferencePool>, _: &State) -> Result<Action> {
-        self.state
-                .delete_inference_pool(&inference_pool_key)
-                .expect("We expect the lock to work");
-        
+        let deleted = self.state.delete_inference_pool(&inference_pool_key).expect("We expect the lock to work");
+        if deleted.is_none() {
+            warn!("Unable to delete {inference_pool_key:?}");
+        }
+
         let inference_pool = (**resource).clone();
+
+        let _res = self
+            .inference_pool_patcher_sender
+            .send(Operation::Delete(DeleteContext {
+                resource_key: inference_pool_key.clone(),
+                resource: inference_pool,
+                controller_name: self.controller_name.clone(),
+            }))
+            .await;
 
         let routes: Vec<_> = self
             .state
@@ -234,18 +243,12 @@ impl InferencePoolControllerHandler<InferencePool> {
             .into_iter()
             .filter(|route| has_inference_pool(route, &inference_pool_key))
             .collect();
-        if routes.is_empty() {
-            Ok(Action::requeue(Duration::from_secs(20)))
-        } else {
+        if !routes.is_empty() {
             let gateways_ids = self
                 .state
                 .get_gateways_with_http_routes(&routes.iter().map(|r| ResourceKey::from(r.as_ref())).collect())
                 .expect("We expect the lock to work");
-                                                
 
-            let _res = self.inference_pool_patcher_sender.send(Operation::Delete(DeleteContext{ resource_key: inference_pool_key.clone(), resource: inference_pool , controller_name: self.controller_name.clone()})).await;    
-    
-            
             let _ = self
                 .validate_references_channel_sender
                 .send(ReferenceValidateRequest::UpdatedGateways {
@@ -253,10 +256,9 @@ impl InferencePoolControllerHandler<InferencePool> {
                     gateways: gateways_ids,
                 })
                 .await;
-            Ok(Action::await_change())
         }
+        Ok(Action::await_change())
     }
-
 
     async fn add_finalizer(&self, resource: &Arc<impl Resource>) -> Result<Action, ControllerError> {
         if let Some(finalizer) = super::needs_finalizer(&self.resource_key, &self.controller_name, resource.meta()) {
@@ -264,7 +266,7 @@ impl InferencePoolControllerHandler<InferencePool> {
         }
 
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
-    }                
+    }
 }
 
 fn has_inference_pool(route: &HTTPRoute, inference_pool_key: &ResourceKey) -> bool {
@@ -285,8 +287,23 @@ fn has_inference_pool(route: &HTTPRoute, inference_pool_key: &ResourceKey) -> bo
     })
 }
 
-fn create_accepted_inference_pool_status(inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
+fn create_accepted_inference_pool_status(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
+    inference_pool.status = None;
     create_inference_pool_status_with_conditions(inference_pool, gateways_ids, &[InferencePoolCondition::Accepted(None).get_condition()])
+}
+
+pub fn clear_all_conditions(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
+    if let Some(status) = inference_pool.status.as_mut() {
+        if let Some(parents) = status.parent.as_ref() {
+            let new_parents = parents.iter().filter(|parent| {
+                let key = ResourceKey::from(&parent.parent_ref);
+                gateways_ids.contains(&key)
+            });
+
+            status.parent = Some(new_parents.cloned().collect());
+        }
+    }
+    inference_pool
 }
 
 fn create_inference_pool_status_with_conditions(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>, conditions: &[Condition]) -> InferencePool {
@@ -296,9 +313,9 @@ fn create_inference_pool_status_with_conditions(mut inference_pool: InferencePoo
             .iter()
             .map(|id| InferencePoolStatusParent {
                 conditions: Some(conditions.to_vec()),
-                parent_ref: ObjectReference {
+                parent_ref: InferencePoolStatusParentParentRef {
                     kind: Some(id.kind.clone()),
-                    name: Some(id.name.clone()),
+                    name: id.name.clone(),
                     namespace: Some(id.namespace.clone()),
                     ..Default::default()
                 },
@@ -330,15 +347,15 @@ pub fn update_inference_pool_parents(gateway: &ResourceKey, mut inference_pool: 
 
     if let Some(parent) = parents
         .iter_mut()
-        .find(|p| p.parent_ref.kind == Some("Gateway".to_owned()) && p.parent_ref.name == Some(gateway_name.clone()) && p.parent_ref.namespace == Some(gateway_namespace.clone()))
+        .find(|p| p.parent_ref.kind == Some("Gateway".to_owned()) && p.parent_ref.name == gateway_name.clone() && p.parent_ref.namespace == Some(gateway_namespace.clone()))
     {
         update_conditions(parent, conditions);
         info!("Updating conditions {gateway} {parent:?}");
     } else {
         let new_parent = InferencePoolStatusParent {
             conditions: Some(conditions),
-            parent_ref: ObjectReference {
-                name: Some(gateway_name.clone()),
+            parent_ref: InferencePoolStatusParentParentRef {
+                name: gateway_name.clone(),
                 namespace: Some(gateway_namespace.clone()),
                 kind: Some("Gateway".to_owned()),
                 ..Default::default()
@@ -346,6 +363,8 @@ pub fn update_inference_pool_parents(gateway: &ResourceKey, mut inference_pool: 
         };
         parents.push(new_parent);
     }
+
+    let parents = parents.into_iter().filter(|p| p.parent_ref.kind == Some("Gateway".to_owned())).collect();
 
     inference_pool.status = Some(InferencePoolStatus { parent: Some(parents) });
     inference_pool

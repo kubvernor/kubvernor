@@ -164,7 +164,7 @@ where
         }
     }
 
-    pub async fn delete_route_references<I>(&self, route_key: RouteKey, reference_keys: I) -> BTreeSet<ResourceKey>
+    pub async fn delete_route_references<I>(&self, route_key: &RouteKey, reference_keys: I) -> BTreeSet<ResourceKey>
     where
         I: Iterator<Item = ResourceKey> + fmt::Debug,
     {
@@ -173,7 +173,7 @@ where
 
         let (affected_gateways, resources_to_delete): (BTreeSet<_>, BTreeSet<_>) = gateway_route_reference_mapping
             .iter_mut()
-            .filter_map(|(gateway, route_mapping)| route_mapping.remove(&route_key).map(|resources_to_delete| (gateway.clone(), resources_to_delete)))
+            .filter_map(|(gateway, route_mapping)| route_mapping.remove(route_key).map(|resources_to_delete| (gateway.clone(), resources_to_delete)))
             .unzip();
 
         let resources_to_delete: BTreeSet<_> = resources_to_delete.iter().flatten().cloned().collect();
@@ -220,26 +220,6 @@ where
                         let update_gateway = {
                             let mut resolved_references = myself.references.lock().await;
                             resolved_references.add_resolved_reference(&key, reference)
-
-                            // let resolved_references = &mut myself.references.lock().await.resolved_references;
-                            // resolved_references
-                            //     .entry(key.clone())
-                            //     .and_modify(|f: &mut R| {
-                            //         let mut this = f.clone();
-                            //         *this.meta_mut() = ObjectMeta::default();
-
-                            //         let mut other = reference.clone();
-                            //         *other.meta_mut() = ObjectMeta::default();
-
-                            //         if this != other {
-                            //             *f = reference.clone();
-                            //             update_gateway = true;
-                            //         }
-                            //     })
-                            //     .or_insert_with(|| {
-                            //         update_gateway = true;
-                            //         reference
-                            //     });
                         };
 
                         debug!("Resolved reference {key} {update_gateway}");

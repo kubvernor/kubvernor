@@ -10,7 +10,10 @@ mod utils;
 use kube_core::ObjectMeta;
 pub use utils::{find_linked_routes, FinalizerPatcher, HostnameMatchFilter, ListenerTlsConfigValidator, ResourceFinalizer, RoutesResolver};
 
-use crate::{common::ResourceKey, services::patchers::{FinalizerContext, Operation}};
+use crate::{
+    common::ResourceKey,
+    services::patchers::{FinalizerContext, Operation},
+};
 
 #[allow(dead_code)]
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]
@@ -35,7 +38,6 @@ impl std::fmt::Display for ControllerError {
         write!(f, "{self:?}")
     }
 }
-
 
 pub fn needs_finalizer<T: serde::Serialize>(resource_key: &ResourceKey, controller_name: &String, resource_meta: &ObjectMeta) -> Option<Operation<T>> {
     let has_finalizer = if let Some(finalizers) = resource_meta.finalizers.as_ref() {

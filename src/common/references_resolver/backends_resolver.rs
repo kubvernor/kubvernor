@@ -73,8 +73,8 @@ impl BackendReferenceResolver {
         self.inference_pool_reference_resolver.add_references_for_gateway(gateway_key, inference_pool_references).await;
     }
 
-    pub async fn delete_route_references(&self, route_key: ResourceKey, reference_keys: BTreeSet<ResourceKey>) -> BTreeSet<ResourceKey> {
-        let service_references = self.reference_resolver.delete_route_references(route_key.clone(), reference_keys.iter().cloned()).await;
+    pub async fn delete_route_references(&self, route_key: &ResourceKey, reference_keys: &BTreeSet<ResourceKey>) -> BTreeSet<ResourceKey> {
+        let service_references = self.reference_resolver.delete_route_references(route_key, reference_keys.iter().cloned()).await;
         let inference_pool_references = self.inference_pool_reference_resolver.delete_route_references(route_key, reference_keys.iter().cloned()).await;
         service_references.into_iter().chain(inference_pool_references.into_iter()).collect()
     }

@@ -243,10 +243,7 @@ impl RouteResolver<'_> {
                         backend_config.effective_port = inference_pool_spec.target_port_number;
                         backend_config.endpoints = Some(model_endpoints);
 
-                        debug!(
-                            "Inference Pool: Setting backend config {}-{} {:?}",
-                            &backend_resource_key.name, &backend_resource_key.namespace, inference_pool_spec
-                        );
+                        debug!("Inference Pool: Setting backend config {backend_resource_key:?} {inference_pool_spec:?}",);
 
                         if inference_pool.metadata.name.is_some() {
                             let mut inference_pool = inference_pool::update_inference_pool_parents(self.gateway_resource_key, inference_pool, resolved_endpoint_picker);
@@ -279,10 +276,7 @@ impl RouteResolver<'_> {
                             )
                         }
                     } else {
-                        info!(
-                            "Inference Pool: Backend can't resolve {}-{} {:?}",
-                            &backend_resource_key.name, &backend_resource_key.namespace, maybe_inference_pool
-                        );
+                        info!("Inference Pool: Backend can't resolve {backend_resource_key:?} {maybe_inference_pool:?}",);
                         (
                             Backend::Unresolved(BackendType::InferencePool(backend_config)),
                             ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound),

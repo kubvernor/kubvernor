@@ -62,8 +62,6 @@ pub fn extract_references(route: &Route) -> BTreeSet<ResourceKey> {
     backend_reference_keys
 }
 
-
-
 #[derive(TypedBuilder)]
 pub struct CommonRouteHandler<R: serde::Serialize> {
     pub state: State,
