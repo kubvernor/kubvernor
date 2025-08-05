@@ -22,11 +22,12 @@ Kubvernor is a Rust implementation of Kubernetes Gateway APIs. The aim of the pr
 
    ```
 
-3. Install required CRDs
+
+3. Install required CRDs for Gateway API
     ```bash
-    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
-	kubectl apply -f https://github.com/kubernetes-sigs/gateway-api-inference-extension/releases/download/v0.5.1/manifests.yaml
+    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml	
     ```
+
 
 
 4. Compile and run Kubvernor
@@ -42,15 +43,22 @@ Kubvernor is a Rust implementation of Kubernetes Gateway APIs. The aim of the pr
     ./run_conformance_tests.sh
     ```
 
-6. Run Gateway API Inference Extension Conformance tests
+> [!NOTE]
+> Experimenting with Gateway API Inference Extension
+> 
+> 6. **(Optionally)** install CRDs for Gateway API Inference Extension    
+>    ```bash
+>    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api-inference-extension/releases/download/v0.5.1/manifests.yaml
+>    ```    
+> 7. Run Gateway API Inference Extension Conformance tests
+>
+>    ```bash
+>    git clone --depth 1 --branch v0.5.1 https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
+>    cd gateway-api-inference-extension
+>    go test -v -count=1 -timeout=3h ./conformance --debug -run TestConformance --report-output="../kubvernor-inference-conformance-output.yaml" --organization=kubvernor --project=kubvernor --url=https://github.com/kubvernor/kubvernor --version=0.1.0  --allow-crds-mismatch	
+>    ```
 
-    ```bash
-    git clone --depth 1 --branch v0.5.1 https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
-	cd gateway-api-inference-extension
-	go test -v -count=1 -timeout=3h ./conformance --debug -run TestConformance --report-output="../kubvernor-inference-conformance-output.yaml" --organization=kubvernor --project=kubvernor --url=https://github.com/kubvernor/kubvernor --version=0.1.0  --allow-crds-mismatch	
-    ```
-
-## Conformance reports
+## Gateway API Conformance reports
 [1.2.1](./conformance/kubvernor-conformance-output-1.2.1.yaml)  
 [1.2.0](./conformance/kubvernor-conformance-output-1.2.0.yaml)
 
