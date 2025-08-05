@@ -1,6 +1,6 @@
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:
-  name: kubvernor-inference-gateway
+  name: gateway-conformance
 spec:
   controllerName: kubvernor.com/proxy-controller
