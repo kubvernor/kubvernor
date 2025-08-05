@@ -4,7 +4,7 @@ use k8s_openapi::api::core::v1::Secret;
 use kube::Client;
 use typed_builder::TypedBuilder;
 
-use super::ReferencesResolver;
+use super::reference_resolver::ReferencesResolver;
 use crate::common::{Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey, TlsType};
 
 #[derive(Clone, TypedBuilder)]

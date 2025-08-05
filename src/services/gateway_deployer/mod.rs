@@ -7,7 +7,7 @@ use gateway_api::{gatewayclasses::GatewayClass, grpcroutes::GRPCRoute, httproute
 use gateway_deployer_internal::{GatewayDeployer, GatewayDeployerServiceInternal};
 pub(crate) use gateway_processed_handler::GatewayProcessedHandler;
 use tokio::sync::oneshot;
-use tracing::{span, warn, Instrument, Level, Span};
+use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -37,25 +37,21 @@ impl GatewayDeployerService {
         let controller_name = self.controller_name.clone();
         loop {
             tokio::select! {
-                Some(GatewayDeployRequest::Deploy(RequestContext{ gateway, kube_gateway, gateway_class_name, span })) = resolve_receiver.recv() => {
-                    let span = span!(parent: &span, Level::INFO, "GatewayDeployerService", id = %gateway.key());
-                    let _entered = span.enter();
+                Some(GatewayDeployRequest::Deploy(RequestContext{ gateway, kube_gateway, gateway_class_name, })) = resolve_receiver.recv() => {
+                    info!("GatewayDeployerService Deploy {}" ,gateway.key());
                     let deployer = GatewayDeployer::builder()
                         .sender(self.backend_deployer_channel_sender.clone())
                         .gateway(gateway.clone())
                         .kube_gateway(kube_gateway)
                         .gateway_class_name(gateway_class_name)
                         .build();
-                    let _ = deployer.deploy_gateway().instrument(span.clone()).await;
-
-
+                    let _ = deployer.deploy_gateway().await;
                 },
                 Some(event) = backend_response_channel_receiver.recv() =>{
                     match event{
                         BackendGatewayResponse::Processed(_effective_gateway)=>{}
-                        BackendGatewayResponse::ProcessedWithContext{gateway, kube_gateway, span, gateway_class_name}=>{
-                            let span = span!(parent: &span, Level::INFO, "GatewayDeployerService", id = %gateway.key());
-                            let _entered = span.enter();
+                        BackendGatewayResponse::ProcessedWithContext{gateway, kube_gateway, gateway_class_name}=>{
+                            info!("GatewayDeployerService Processed {}", gateway.key());
                             let gateway_id = gateway.key().clone();
                             let gateway_event_handler = GatewayProcessedHandler {
                                 effective_gateway: *gateway,
@@ -66,7 +62,7 @@ impl GatewayDeployerService {
                                 controller_name: self.controller_name.clone(),
                             };
 
-                            if let Ok(updated_gateway) = gateway_event_handler.deploy_gateway().instrument(Span::current().clone()).await{
+                            if let Ok(updated_gateway) = gateway_event_handler.deploy_gateway().await{
                                 self.state.save_gateway(gateway_id.clone(), &Arc::new(*kube_gateway)).expect("We expect the lock to work");
                                 let (sender, receiver) = oneshot::channel();
                                 let _res = self
@@ -76,7 +72,6 @@ impl GatewayDeployerService {
                                         resource: updated_gateway,
                                         controller_name: controller_name.clone(),
                                         response_sender: sender,
-                                        span: Span::current().clone(),
                                     }))
                                     .await;
 
@@ -91,7 +86,7 @@ impl GatewayDeployerService {
                                                 .gateway_patcher_channel_sender(self.gateway_patcher_channel_sender.clone())
                                                 .gateway_class_patcher_channel_sender(self.gateway_class_patcher_channel_sender.clone())
                                                 .controller_name(controller_name.clone()).build();
-                                            svc.on_version_not_changed(&gateway_id, &gateway_class_name, &patched_gateway).instrument(span.clone()).await;
+                                            svc.on_version_not_changed(&gateway_id, &gateway_class_name, &patched_gateway).await;
                                         }
                                         Err(e) => warn!("GatewayDeployerService Error while patching {e}"),
                                     }

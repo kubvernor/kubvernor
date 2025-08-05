@@ -36,4 +36,8 @@ kubectl --namespace kubvernor create configmap envoy-xds --from-file ./resources
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
 
 
+resources/
 
+
+
+docker run --rm -p 8080:8080 -p 9901:9901 -it -v ./resources/envoy-inference.yaml:/envoy-config.yaml envoyproxy/envoy:dev -c envoy-config.yaml -l debug --service-node sjksjdksj  --service-cluster djfkdjfkj

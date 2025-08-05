@@ -1,13 +1,19 @@
 use std::time::Duration;
 pub mod gateway;
 pub mod gateway_class;
-pub mod grpc_route;
 mod handlers;
-pub mod http_route;
+pub mod inference_pool;
+pub mod route;
 
 mod utils;
 
+use kube_core::ObjectMeta;
 pub use utils::{find_linked_routes, FinalizerPatcher, HostnameMatchFilter, ListenerTlsConfigValidator, ResourceFinalizer, RoutesResolver};
+
+use crate::{
+    common::ResourceKey,
+    services::patchers::{FinalizerContext, Operation},
+};
 
 #[allow(dead_code)]
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]
@@ -30,5 +36,23 @@ const RECONCILE_ERROR_WAIT: Duration = Duration::from_secs(100);
 impl std::fmt::Display for ControllerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
+    }
+}
+
+pub fn needs_finalizer<T: serde::Serialize>(resource_key: &ResourceKey, controller_name: &String, resource_meta: &ObjectMeta) -> Option<Operation<T>> {
+    let has_finalizer = if let Some(finalizers) = resource_meta.finalizers.as_ref() {
+        finalizers.contains(controller_name)
+    } else {
+        false
+    };
+
+    if has_finalizer {
+        None
+    } else {
+        Some(Operation::PatchFinalizer(FinalizerContext {
+            resource_key: resource_key.clone(),
+            controller_name: controller_name.clone(),
+            finalizer_name: controller_name.clone(),
+        }))
     }
 }

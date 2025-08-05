@@ -1,18 +1,21 @@
 use std::fmt::Display;
 
 use gateway_api::{
+    common::ParentReference,
     gatewayclasses::GatewayClass,
     gateways,
-    grpcroutes::{GRPCRoute, GRPCRouteParentRefs, GRPCRouteRulesBackendRefs},
-    httproutes::{HTTPRoute, HTTPRouteParentRefs, HTTPRouteRulesBackendRefs},
+    grpcroutes::{GRPCBackendReference, GRPCRoute},
+    httproutes::{HTTPBackendReference, HTTPRoute},
 };
+use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolStatusParentParentRef};
 use k8s_openapi::api::core::v1::Service;
 use kube::{Resource, ResourceExt};
 
-use super::RouteParentRefs;
 use crate::common::create_id;
 
 pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";
+pub const DEFAULT_INFERENCE_GROUP_NAME: &str = "inference.networking.k8s.io/v1";
+
 pub const DEFAULT_NAMESPACE_NAME: &str = "default";
 pub const DEFAULT_KIND_NAME: &str = "Gateway";
 pub const DEFAULT_ROUTE_HOSTNAME: &str = "*";
@@ -98,38 +101,8 @@ impl From<(Option<String>, Option<String>, String, Option<String>)> for Resource
     }
 }
 
-impl From<(&HTTPRouteParentRefs, String)> for RouteRefKey {
-    fn from((route_parent, route_namespace): (&HTTPRouteParentRefs, String)) -> Self {
-        Self {
-            resource_key: ResourceKey {
-                group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
-                namespace: route_parent.namespace.clone().unwrap_or(route_namespace),
-                name: route_parent.name.clone(),
-                kind: route_parent.kind.clone().unwrap_or(DEFAULT_KIND_NAME.to_owned()),
-            },
-            section_name: route_parent.section_name.clone(),
-            port: route_parent.port,
-        }
-    }
-}
-
-impl From<(&GRPCRouteParentRefs, String)> for RouteRefKey {
-    fn from((route_parent, route_namespace): (&GRPCRouteParentRefs, String)) -> Self {
-        Self {
-            resource_key: ResourceKey {
-                group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
-                namespace: route_parent.namespace.clone().unwrap_or(route_namespace),
-                name: route_parent.name.clone(),
-                kind: route_parent.kind.clone().unwrap_or(DEFAULT_KIND_NAME.to_owned()),
-            },
-            section_name: route_parent.section_name.clone(),
-            port: route_parent.port,
-        }
-    }
-}
-
-impl From<(&RouteParentRefs, String)> for RouteRefKey {
-    fn from((route_parent, route_namespace): (&RouteParentRefs, String)) -> Self {
+impl From<(&ParentReference, String)> for RouteRefKey {
+    fn from((route_parent, route_namespace): (&ParentReference, String)) -> Self {
         Self {
             resource_key: ResourceKey {
                 group: route_parent.group.clone().unwrap_or(DEFAULT_GROUP_NAME.to_owned()),
@@ -193,8 +166,8 @@ impl From<&GRPCRoute> for ResourceKey {
     }
 }
 
-impl From<(&HTTPRouteRulesBackendRefs, String)> for ResourceKey {
-    fn from((value, gateway_namespace): (&HTTPRouteRulesBackendRefs, String)) -> Self {
+impl From<(&HTTPBackendReference, String)> for ResourceKey {
+    fn from((value, gateway_namespace): (&HTTPBackendReference, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
 
         Self {
@@ -206,8 +179,8 @@ impl From<(&HTTPRouteRulesBackendRefs, String)> for ResourceKey {
     }
 }
 
-impl From<(&GRPCRouteRulesBackendRefs, String)> for ResourceKey {
-    fn from((value, gateway_namespace): (&GRPCRouteRulesBackendRefs, String)) -> Self {
+impl From<(&GRPCBackendReference, String)> for ResourceKey {
+    fn from((value, gateway_namespace): (&GRPCBackendReference, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
 
         Self {
@@ -219,8 +192,8 @@ impl From<(&GRPCRouteRulesBackendRefs, String)> for ResourceKey {
     }
 }
 
-impl From<&HTTPRouteRulesBackendRefs> for BackendResourceKey {
-    fn from(value: &HTTPRouteRulesBackendRefs) -> Self {
+impl From<&HTTPBackendReference> for BackendResourceKey {
+    fn from(value: &HTTPBackendReference) -> Self {
         let namespace = value.namespace.clone();
 
         Self {
@@ -232,13 +205,37 @@ impl From<&HTTPRouteRulesBackendRefs> for BackendResourceKey {
     }
 }
 
-impl From<&GRPCRouteRulesBackendRefs> for BackendResourceKey {
-    fn from(value: &GRPCRouteRulesBackendRefs) -> Self {
+impl From<&GRPCBackendReference> for BackendResourceKey {
+    fn from(value: &GRPCBackendReference) -> Self {
         let namespace = value.namespace.clone();
 
         Self {
             group: DEFAULT_GROUP_NAME.to_owned(),
             namespace,
+            name: value.name.clone(),
+            kind: value.kind.clone().unwrap_or_default(),
+        }
+    }
+}
+
+impl From<&InferencePool> for ResourceKey {
+    fn from(value: &InferencePool) -> Self {
+        let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+
+        Self {
+            group: DEFAULT_INFERENCE_GROUP_NAME.to_owned(),
+            namespace,
+            name: value.name_any(),
+            kind: "InferencePool".to_owned(),
+        }
+    }
+}
+
+impl From<&InferencePoolStatusParentParentRef> for ResourceKey {
+    fn from(value: &InferencePoolStatusParentParentRef) -> Self {
+        Self {
+            group: DEFAULT_GROUP_NAME.to_owned(),
+            namespace: value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),
             name: value.name.clone(),
             kind: value.kind.clone().unwrap_or_default(),
         }

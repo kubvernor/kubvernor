@@ -1,15 +1,14 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use gateway_api::{
+    common::ParentReference,
     gateways::{self, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom},
-    grpcroutes::GRPCRouteParentRefs,
-    httproutes::HTTPRouteParentRefs,
 };
 use tracing::debug;
 
 use super::HostnameMatchFilter;
 use crate::{
-    common::{NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteParentRefs, RouteRefKey, RouteToListenersMapping},
+    common::{NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteRefKey, RouteToListenersMapping},
     state::State,
 };
 
@@ -48,7 +47,7 @@ impl<'a> RouteListenerMatcher<'a> {
         )
     }
 
-    fn filter_matching_route(&'a self, route_parents: Option<&Vec<RouteParentRefs>>, route: &'a Route) -> (Vec<GatewayListeners>, Option<ResolutionStatus>) {
+    fn filter_matching_route(&'a self, route_parents: Option<&Vec<ParentReference>>, route: &'a Route) -> (Vec<GatewayListeners>, Option<ResolutionStatus>) {
         let route_key = route.resource_key();
         let mut route_resolution_status = None;
         let mut routes_and_listeners: Vec<GatewayListeners> = vec![];
@@ -101,27 +100,7 @@ impl<'a> RouteListenerMatcher<'a> {
         (routes_and_listeners, route_resolution_status)
     }
 
-    pub fn filter_http_matching_gateways(state: &State, resolved_gateways: &[(&HTTPRouteParentRefs, Option<Arc<gateways::Gateway>>)]) -> Vec<Arc<gateways::Gateway>> {
-        resolved_gateways
-            .iter()
-            .filter_map(|(parent_ref, maybe_gateway)| {
-                if let Some(gateway) = maybe_gateway {
-                    let gateway_key = ResourceKey::from(&**gateway);
-                    let parent_ref_key = RouteRefKey::from((&**parent_ref, gateway_key.namespace.clone()));
-
-                    if *parent_ref_key.as_ref() == gateway_key {
-                        state.get_gateway(&gateway_key).expect("We expect the lock to work")
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    pub fn filter_grpc_matching_gateways(state: &State, resolved_gateways: &[(&GRPCRouteParentRefs, Option<Arc<gateways::Gateway>>)]) -> Vec<Arc<gateways::Gateway>> {
+    pub fn filter_matching_gateways(state: &State, resolved_gateways: &[(&ParentReference, Option<Arc<gateways::Gateway>>)]) -> Vec<Arc<gateways::Gateway>> {
         resolved_gateways
             .iter()
             .filter_map(|(parent_ref, maybe_gateway)| {

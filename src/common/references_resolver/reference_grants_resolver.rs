@@ -5,7 +5,7 @@ use gateway_api::referencegrants::{ReferenceGrant, ReferenceGrantFrom, Reference
 use kube::{api::ListParams, Api, Client, ResourceExt};
 use kube_core::ObjectList;
 use tokio::time;
-use tracing::{info, span, warn, Level};
+use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -115,10 +115,9 @@ impl ReferenceGrantsResolver {
 
         for route in linked_routes {
             let from = route.resource_key();
-
             for backend in &route.backends() {
-                if let Backend::Maybe(backend_service_config) = backend {
-                    let to = &backend_service_config.resource_key;
+                if let Backend::Maybe(crate::common::BackendType::Service(config) | crate::common::BackendType::Invalid(config)) = backend {
+                    let to = &config.resource_key;
                     backend_reference_keys.insert(
                         ReferenceGrantRef::builder()
                             .namespace(to.namespace.clone())
@@ -190,8 +189,6 @@ impl ReferenceGrantsResolver {
         U: Fn(String) -> BoxFuture<'static, Result<ObjectList<ReferenceGrant>, kube::Error>> + Clone,
     {
         let mut interval = time::interval(time::Duration::from_secs(10));
-        let span = span!(Level::INFO, "ReferenceGrantsResolver");
-        let _entered = span.enter();
 
         loop {
             let this = self.clone();
@@ -287,12 +284,6 @@ impl ReferenceGrantsResolver {
         )
     }
 }
-
-// fn normalize_from_and_to(mut from: ResourceKey, mut to: ResourceKey) -> (ResourceKey, ResourceKey) {
-//     from.name = String::new();
-//     to.namespace = String::new();
-//     (from, to)
-// }
 
 impl From<&ReferenceGrantFrom> for ResourceKey {
     fn from(value: &ReferenceGrantFrom) -> Self {

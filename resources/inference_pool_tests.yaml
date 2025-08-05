@@ -1,0 +1,28 @@
+# --- Primary InferencePool Definition ---
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferencePool
+metadata:
+  name: primary-inference-pool
+  namespace: gateway-conformance-app-backend
+spec:
+  selector:
+    app: primary-inference-model-server
+  targetPortNumber: 3000
+  extensionRef:
+    name: primary-endpoint-picker-svc
+---
+
+
+# --- Secondary InferencePool Definition ---
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferencePool
+metadata:
+  name: secondary-inference-pool
+  namespace: gateway-conformance-app-backend
+spec:
+  selector:
+    app: secondary-inference-model-server
+  targetPortNumber: 3000
+  extensionRef:
+    name: secondary-endpoint-picker-svc
+    failureMode: FailOpen

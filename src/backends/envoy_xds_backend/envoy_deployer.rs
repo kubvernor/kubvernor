@@ -1,33 +1,24 @@
 use std::{
-    collections::{btree_map::Values, BTreeMap, BTreeSet, HashMap},
+    collections::{btree_map::Values, BTreeMap, BTreeSet},
     sync::LazyLock,
 };
 
 use envoy_api_rs::{
     envoy::{
         config::{
-            cluster::v3::{
-                cluster::{ClusterDiscoveryType, DiscoveryType, LbPolicy},
-                Cluster as EnvoyCluster,
-            },
             core::v3::{
-                address, header_value_option::HeaderAppendAction, socket_address::PortSpecifier, Address, HeaderValue, HeaderValueOption, Http2ProtocolOptions, SocketAddress, TransportSocket,
+                grpc_service::{GoogleGrpc, TargetSpecifier},
+                GrpcService, TransportSocket,
             },
-            endpoint::v3::{lb_endpoint::HostIdentifier, ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints},
             listener::v3::{Filter, FilterChain, Listener as EnvoyListener, ListenerFilter},
-            route::v3::{
-                header_matcher::HeaderMatchSpecifier,
-                redirect_action,
-                route::Action,
-                route_action::{self, ClusterSpecifier},
-                route_match::PathSpecifier,
-                weighted_cluster::ClusterWeight,
-                HeaderMatcher, RedirectAction, Route as EnvoyRoute, RouteAction, RouteConfiguration, RouteMatch, VirtualHost, WeightedCluster,
-            },
+            route::v3::{RouteConfiguration, VirtualHost},
         },
         extensions::{
             filters::{
-                http::router::v3::Router,
+                http::{
+                    ext_proc::v3::{processing_mode::HeaderSendMode, ExternalProcessor, ProcessingMode},
+                    router::v3::Router,
+                },
                 listener::tls_inspector::v3::TlsInspector,
                 network::http_connection_manager::v3::{
                     http_connection_manager::{CodecType, RouteSpecifier},
@@ -35,15 +26,12 @@ use envoy_api_rs::{
                 },
             },
             transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig},
-            upstreams::http::v3::http_protocol_options::{explicit_http_config::ProtocolConfig, ExplicitHttpConfig, UpstreamProtocolOptions},
         },
-        r#type::matcher::v3::{string_matcher::MatchPattern, RegexMatcher, StringMatcher},
         service::discovery::v3::Resource as EnvoyDiscoveryResource,
     },
-    google::protobuf::{BoolValue, Duration, UInt32Value},
+    google::protobuf::BoolValue,
 };
 use futures::FutureExt;
-use gateway_api::{grpcroutes, httproutes};
 use itertools::Itertools;
 use k8s_openapi::{
     api::{
@@ -65,20 +53,18 @@ use tokio::{
     sync::mpsc::{self, Receiver, Sender},
     time,
 };
-use tracing::{debug, info, span, warn, Instrument, Level, Span};
+use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-use super::{
-    converters,
-    server::{start_aggregate_server, AckVersions, ServerAction},
-};
+use super::server::{start_aggregate_server, AckVersions, ServerAction};
 use crate::{
-    backends::{self, common::ResourceGenerator, envoy_xds_backend::resources},
-    common::{
-        self, Backend, BackendGatewayEvent, BackendGatewayResponse, BackendServiceConfig, Certificate, ChangedContext, ControlPlaneConfig, EffectiveRoutingRule, GRPCEffectiveRoutingRule, Gateway,
-        GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType,
+    backends::{
+        self,
+        common::{converters, DurationConverter, ResourceGenerator, SocketAddressFactory, INFERENCE_EXT_PROC_FILTER_NAME},
+        envoy_xds_backend::resources,
     },
+    common::{self, BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType},
     Error,
 };
 
@@ -115,21 +101,19 @@ impl EnvoyDeployerChannelHandlerService {
                             match event{
                                 BackendGatewayEvent::Changed(ctx) => {
                                     let gateway = &ctx.gateway;
-                                    let span = span!(parent: &ctx.span, Level::INFO, "EnvoyDeployerService", event="GatewayChanged", id = %gateway.key());
-                                    let _entered = span.enter();
-
+                                    info!("EnvoyDeployerChannelHandlerService GatewayChanged {}",gateway.key());
 
                                     let Resources{listeners, clusters, secrets} = create_resources(gateway);
 
                                     let ack_version = ack_versions.entry(gateway.key().clone()).and_modify(super::server::AckVersions::inc).or_default();
 
-                                    let maybe_service = deploy_envoy(&control_plane_config, client.clone(), gateway, &secrets).instrument(span.clone()).await;
+                                    let maybe_service = deploy_envoy(&control_plane_config, client.clone(), gateway, &secrets).await;
                                     if let Ok(service) = maybe_service{
                                         info!("Service deployed {:?} listeners {} clusters {}", service.metadata.name, listeners.len(), clusters.len());                                        
                                         let _ = stream_resource_sender.send(ServerAction::UpdateClusters{gateway_id: gateway.key().clone(), resources: clusters, ack_version: ack_version.cluster()}).await;
                                         let _ = stream_resource_sender.send(ServerAction::UpdateListeners{gateway_id: gateway.key().clone(), resources: listeners, ack_version: ack_version.listener()}).await;
 
-                                        self.update_address_with_polling(&service, *ctx, &span).await;
+                                        self.update_address_with_polling(&service, *ctx).await;
                                     }else{
                                         warn!("Problem {maybe_service:?}");
                                         let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
@@ -137,13 +121,11 @@ impl EnvoyDeployerChannelHandlerService {
                                 }
 
                                 BackendGatewayEvent::Deleted(boxed) => {
-                                    let span = boxed.span;
                                     let response_sender = boxed.response_sender;
                                     let gateway  = boxed.gateway;
                                     let _ = ack_versions.remove(gateway.key());
-                                    let span = span!(parent: &span, Level::INFO, "EnvoyDeployerService", event="GatewayDeleted", id = %gateway.key());
-                                    let _entered = span.enter();
-                                    self.delete_envoy(&gateway).instrument(span.clone()).await;
+                                    info!("EnvoyDeployerChannelHandlerService GatewayDeleted {}",gateway.key());
+                                    self.delete_envoy(&gateway).await;
                                     let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Deleted(vec![]));
                                     let _res = response_sender.send(BackendGatewayResponse::Deleted(vec![]));
                                 }
@@ -164,6 +146,18 @@ impl EnvoyDeployerChannelHandlerService {
         Ok(())
     }
 
+    fn print_delete_error<S>(f: Result<itertools::Either<S, kube_core::Status>, kube::Error>, gateway: &Gateway) {
+        match f {
+            Ok(_) => (),
+            Err(kube::Error::Api(e)) if e.code != 404 => {
+                debug!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
+            }
+            Err(e) => {
+                warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
+            }
+        }
+    }
+
     async fn delete_envoy(&self, gateway: &Gateway) {
         debug!("Deleting Envoy {gateway:?}");
         let service_api: Api<Service> = Api::namespaced(self.client.clone(), gateway.namespace());
@@ -173,55 +167,19 @@ impl EnvoyDeployerChannelHandlerService {
         let dp = DeleteParams { ..Default::default() };
         let (xds_cm, bootstrap_cm) = config_map_names(gateway);
         let futures = [
-            service_account_api
-                .delete(gateway.name(), &dp)
-                .map(|f| {
-                    if f.is_err() {
-                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
-                    }
-                })
-                .boxed(),
-            service_api
-                .delete(gateway.name(), &dp)
-                .map(|f| {
-                    if f.is_err() {
-                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
-                    }
-                })
-                .boxed(),
-            deployment_api
-                .delete(gateway.name(), &dp)
-                .map(|f| {
-                    if f.is_err() {
-                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
-                    }
-                })
-                .boxed(),
-            config_map_api
-                .delete(&xds_cm, &dp)
-                .map(|f| {
-                    if f.is_err() {
-                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
-                    }
-                })
-                .boxed(),
-            config_map_api
-                .delete(&bootstrap_cm, &dp)
-                .map(|f| {
-                    if f.is_err() {
-                        warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), f.err());
-                    }
-                })
-                .boxed(),
+            service_account_api.delete(gateway.name(), &dp).map(|e| Self::print_delete_error(e, gateway)).boxed(),
+            service_api.delete(gateway.name(), &dp).map(|e| Self::print_delete_error(e, gateway)).boxed(),
+            deployment_api.delete(gateway.name(), &dp).map(|e| Self::print_delete_error(e, gateway)).boxed(),
+            config_map_api.delete(&xds_cm, &dp).map(|e| Self::print_delete_error(e, gateway)).boxed(),
+            config_map_api.delete(&bootstrap_cm, &dp).map(|e| Self::print_delete_error(e, gateway)).boxed(),
         ];
         let _res = futures::future::join_all(futures).await;
     }
 
-    async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext, parent_span: &Span) {
+    async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext) {
         if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
             debug!("Got address address {attached_addresses:?}");
             let ChangedContext {
-                span,
                 mut gateway,
                 kube_gateway,
                 gateway_class_name,
@@ -237,7 +195,6 @@ impl EnvoyDeployerChannelHandlerService {
                 .send(BackendGatewayResponse::ProcessedWithContext {
                     gateway: Box::new(gateway.clone()),
                     kube_gateway: Box::new(kube_gateway),
-                    span,
                     gateway_class_name,
                 })
                 .await;
@@ -246,42 +203,36 @@ impl EnvoyDeployerChannelHandlerService {
             let resource_key = ResourceKey::from(service);
 
             let backend_response_channel_sender = self.backend_response_channel_sender.clone();
-            let span = span!(parent: parent_span, Level::INFO, "ServiceResolverTask");
-            let _handle = tokio::spawn(
-                async move {
-                    let api: Api<Service> = Api::namespaced(client, &resource_key.namespace);
-                    let ChangedContext {
-                        span,
-                        mut gateway,
-                        kube_gateway,
-                        gateway_class_name,
-                    } = ctx;
-                    let mut interval = time::interval(time::Duration::from_secs(1));
-                    loop {
-                        interval.tick().await;
-                        debug!("Resolving address for Service {}", resource_key);
-                        let maybe_service = api.get(&resource_key.name).await;
-                        if let Ok(service) = maybe_service {
-                            if Self::update_addresses(&mut gateway, &service) {
-                                let _res = backend_response_channel_sender
-                                    .send(BackendGatewayResponse::ProcessedWithContext {
-                                        gateway: Box::new(gateway.clone()),
-                                        kube_gateway: Box::new(kube_gateway.clone()),
-                                        span: span.clone(),
-                                        gateway_class_name: gateway_class_name.clone(),
-                                    })
-                                    .await;
-                                break;
-                            }
-                        } else {
-                            warn!("Problem {maybe_service:?}");
-                            let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
+            let _handle = tokio::spawn(async move {
+                let api: Api<Service> = Api::namespaced(client, &resource_key.namespace);
+                let ChangedContext {
+                    mut gateway,
+                    kube_gateway,
+                    gateway_class_name,
+                } = ctx;
+                let mut interval = time::interval(time::Duration::from_secs(1));
+                loop {
+                    interval.tick().await;
+                    debug!("Resolving address for Service {}", resource_key);
+                    let maybe_service = api.get(&resource_key.name).await;
+                    if let Ok(service) = maybe_service {
+                        if Self::update_addresses(&mut gateway, &service) {
+                            let _res = backend_response_channel_sender
+                                .send(BackendGatewayResponse::ProcessedWithContext {
+                                    gateway: Box::new(gateway.clone()),
+                                    kube_gateway: Box::new(kube_gateway.clone()),
+                                    gateway_class_name: gateway_class_name.clone(),
+                                })
+                                .await;
+                            break;
                         }
+                    } else {
+                        warn!("Problem {maybe_service:?}");
+                        let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                     }
-                    debug!("Task completed for gateway {} service {}", gateway.key(), resource_key);
                 }
-                .instrument(span),
-            );
+                debug!("Task completed for gateway {} service {}", gateway.key(), resource_key);
+            });
         }
     }
 
@@ -320,7 +271,6 @@ impl EnvoyDeployerChannelHandlerService {
 }
 
 async fn deploy_envoy(control_plane_config: &ControlPlaneConfig, client: Client, gateway: &Gateway, secrets: &[ResourceKey]) -> std::result::Result<Service, kube::Error> {
-    //debug!("Deploying Envoy {gateway:#?}");
     let controller_name = &control_plane_config.controller_name;
     let service_api: Api<Service> = Api::namespaced(client.clone(), gateway.namespace());
     let service_account_api: Api<ServiceAccount> = Api::namespaced(client.clone(), gateway.namespace());
@@ -372,14 +322,36 @@ struct Resources {
 fn create_resources(gateway: &Gateway) -> Resources {
     let mut listener_resources = vec![];
     let mut secret_resources = vec![];
+    let mut resource_generator = ResourceGenerator::new(gateway);
 
-    let resources = ResourceGenerator::new(gateway).generate_resources();
-    let listeners = resources.values();
+    let listeners = resource_generator.generate_envoy_listeners().values();
 
     for listener in listeners {
         let router = Router { ..Default::default() };
+        let ext_processor = ExternalProcessor {
+            processing_mode: Some(ProcessingMode {
+                request_header_mode: HeaderSendMode::Skip.into(),
+                response_header_mode: HeaderSendMode::Skip.into(),
+                ..Default::default()
+            }),
+
+            grpc_service: Some(GrpcService {
+                target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
+                    target_uri: "127.0.0.1:1000".to_owned(),
+                    stat_prefix: listener.name.clone() + "ext_filter_stats",
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }),
+            message_timeout: Some(DurationConverter::from(std::time::Duration::from_secs(2))),
+            failure_mode_allow: true,
+            allow_mode_override: true,
+            ..Default::default()
+        };
         let listener_name = listener.name.clone();
         let http_connection_manager_router_filter_any = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.router.v3.Router".to_owned(), &router));
+        let http_connection_manager_ext_processor_any =
+            converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor".to_owned(), &ext_processor));
 
         let router_filter = HttpFilter {
             name: format!("{listener_name}-http-connection-manager-route-filter"),
@@ -390,11 +362,20 @@ fn create_resources(gateway: &Gateway) -> Resources {
             )),
         };
 
+        let external_processor_filter = HttpFilter {
+            name: INFERENCE_EXT_PROC_FILTER_NAME.to_owned(),
+            is_optional: false,
+            disabled: false,
+            config_type: Some(envoy_api_rs::envoy::extensions::filters::network::http_connection_manager::v3::http_filter::ConfigType::TypedConfig(
+                http_connection_manager_ext_processor_any,
+            )),
+        };
+
         let virtual_hosts = generate_virtual_hosts_from_xds(&listener.http_listener_map);
         let http_connection_manager = HttpConnectionManager {
             stat_prefix: listener_name.clone(),
             codec_type: CodecType::Auto.into(),
-            http_filters: vec![router_filter],
+            http_filters: vec![external_processor_filter, router_filter],
             route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
                 name: format!("{listener_name}-route"),
                 virtual_hosts,
@@ -479,8 +460,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
         secret_resources.append(&mut secrets);
     }
 
-    let cluster_resources = generate_clusters(resources.values()).iter().map(resources::create_cluster_resource).collect();
-
+    let cluster_resources = resource_generator.generate_envoy_clusters().iter().map(resources::create_cluster_resource).collect();
     secret_resources.dedup_by_key(|k| k.name.clone());
     Resources {
         listeners: listener_resources,
@@ -489,45 +469,9 @@ fn create_resources(gateway: &Gateway) -> Resources {
     }
 }
 
-enum SocketAddressFactory {}
-impl SocketAddressFactory {
-    fn from(listener: &backends::common::EnvoyListener) -> envoy_api_rs::envoy::config::core::v3::Address {
-        Address {
-            address: Some(address::Address::SocketAddress(SocketAddress {
-                address: "0.0.0.0".to_owned(),
-                port_specifier: Some(PortSpecifier::PortValue(listener.port.try_into().expect("For time being we expect this to work"))),
-                resolver_name: String::new(),
-                ipv4_compat: false,
-                ..Default::default()
-            })),
-        }
-    }
-
-    fn from_backend(backend: &BackendServiceConfig) -> envoy_api_rs::envoy::config::core::v3::Address {
-        Address {
-            address: Some(address::Address::SocketAddress(SocketAddress {
-                address: backend.endpoint.clone(),
-                port_specifier: Some(PortSpecifier::PortValue(backend.effective_port.try_into().expect("For time being we expect this to work"))),
-                ..Default::default()
-            })),
-        }
-    }
-}
-
 impl From<ProtocolType> for i32 {
     fn from(val: ProtocolType) -> Self {
         i32::from(val == ProtocolType::Udp)
-    }
-}
-
-enum DurationConverter {}
-
-impl DurationConverter {
-    fn from(val: std::time::Duration) -> Duration {
-        Duration {
-            nanos: val.subsec_nanos().try_into().expect("At the moment we expect this to work"),
-            seconds: val.as_secs().try_into().expect("At the moment we expect this to work"),
-        }
     }
 }
 
@@ -574,7 +518,7 @@ fn create_deployment(gateway: &Gateway) -> Deployment {
     let ports = gateway
         .listeners()
         .map(|l| ContainerPort {
-            name: None, //Some(name(gateway.name(), l.port(), &l.protocol().to_string())),
+            name: None,
             container_port: l.port(),
             protocol: Some("TCP".to_owned()),
             ..Default::default()
@@ -625,7 +569,6 @@ fn create_deployment(gateway: &Gateway) -> Deployment {
             template: PodTemplateSpec {
                 metadata: Some(ObjectMeta {
                     labels: Some(labels.clone()),
-                    //annotations: Some(annotations),
                     ..Default::default()
                 }),
                 spec: Some(pod_spec),
@@ -723,331 +666,6 @@ fn generate_virtual_hosts_from_xds(virtual_hosts: &BTreeSet<backends::common::En
         .collect()
 }
 
-#[derive(Debug)]
-struct ClusterHolder {
-    name: String,
-    cluster: EnvoyCluster,
-}
-impl Eq for ClusterHolder {}
-
-impl PartialEq for ClusterHolder {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-    }
-}
-
-impl PartialOrd for ClusterHolder {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.name.cmp(&other.name))
-    }
-}
-impl Ord for ClusterHolder {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.name.cmp(&other.name)
-    }
-}
-
-fn generate_clusters(listeners: Values<i32, backends::common::EnvoyListener>) -> Vec<EnvoyCluster> {
-    let grpc_protocol_options = envoy_api_rs::envoy::extensions::upstreams::http::v3::HttpProtocolOptions {
-        upstream_protocol_options: Some(UpstreamProtocolOptions::ExplicitHttpConfig(ExplicitHttpConfig {
-            protocol_config: Some(ProtocolConfig::Http2ProtocolOptions(Http2ProtocolOptions {
-                max_concurrent_streams: Some(UInt32Value { value: 10 }),
-                ..Default::default()
-            })),
-        })),
-        ..Default::default()
-    };
-
-    let grpc_http_configuration = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), &grpc_protocol_options));
-
-    let clusters: BTreeSet<ClusterHolder> = listeners
-        .flat_map(|listener| {
-            listener.http_listener_map.iter().flat_map(|evc| {
-                evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
-                    let route_type = r.route_type();
-
-                    r.backends()
-                        .iter()
-                        .filter(|b| b.weight() > 0)
-                        .filter_map(|b| {
-                            if let Backend::Resolved(backend_service_config) = b {
-                                Some(backend_service_config)
-                            } else {
-                                warn!("Filtering out backend not resolved {:?}", b);
-                                None
-                            }
-                        })
-                        .map(|r| ClusterHolder {
-                            name: r.cluster_name(),
-                            cluster: EnvoyCluster {
-                                name: r.cluster_name(),
-                                cluster_discovery_type: Some(ClusterDiscoveryType::Type(DiscoveryType::StrictDns.into())),
-                                lb_policy: LbPolicy::RoundRobin.into(),
-                                connect_timeout: Some(DurationConverter::from(std::time::Duration::from_millis(250))),
-                                load_assignment: Some(ClusterLoadAssignment {
-                                    cluster_name: r.cluster_name(),
-                                    endpoints: vec![LocalityLbEndpoints {
-                                        lb_endpoints: vec![LbEndpoint {
-                                            host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
-                                                address: Some(SocketAddressFactory::from_backend(r)),
-                                                ..Default::default()
-                                            })),
-                                            load_balancing_weight: Some(UInt32Value {
-                                                value: r.weight.try_into().expect("For time being we expect this to work"),
-                                            }),
-
-                                            ..Default::default()
-                                        }],
-                                        ..Default::default()
-                                    }],
-                                    ..Default::default()
-                                }),
-                                typed_extension_protocol_options: match route_type {
-                                    common::RouteType::Http(_) => HashMap::new(),
-                                    common::RouteType::Grpc(_) => vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
-                                        .into_iter()
-                                        .collect(),
-                                },
-
-                                ..Default::default()
-                            },
-                        })
-                        .collect::<Vec<_>>()
-                })
-            })
-        })
-        .collect();
-    warn!("Clusters produced {:?}", clusters);
-    clusters.into_iter().map(|c| c.cluster).collect::<Vec<_>>()
-}
-
-impl From<EffectiveRoutingRule> for EnvoyRoute {
-    fn from(effective_routing_rule: EffectiveRoutingRule) -> Self {
-        let path_specifier = effective_routing_rule.route_matcher.path.clone().and_then(|matcher| {
-            let value = matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
-            matcher.r#type.map(|t| match t {
-                httproutes::HTTPRouteRulesMatchesPathType::Exact => PathSpecifier::Path(value),
-                httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
-                    if let Some(val) = matcher.value {
-                        if val == "/" {
-                            PathSpecifier::Prefix(value)
-                        } else {
-                            PathSpecifier::PathSeparatedPrefix(value)
-                        }
-                    } else {
-                        PathSpecifier::Prefix(value)
-                    }
-                }
-                httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: value, ..Default::default() }),
-            })
-        });
-
-        let path_specifier = if path_specifier.is_none() { Some(PathSpecifier::Path("/".to_owned())) } else { path_specifier };
-
-        warn!("Headers to match {:?}", effective_routing_rule.route_matcher.headers);
-        let headers = effective_routing_rule.route_matcher.headers.map_or(vec![], |headers| {
-            headers
-                .iter()
-                .map(|header| HeaderMatcher {
-                    name: header.name.clone(),
-                    header_match_specifier: Some(HeaderMatchSpecifier::StringMatch(StringMatcher {
-                        match_pattern: Some(MatchPattern::Exact(header.value.clone())),
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                })
-                .collect()
-        });
-
-        let route_match = RouteMatch {
-            path_specifier,
-            grpc: None,
-            headers,
-            ..Default::default()
-        };
-
-        let request_filter_headers = effective_routing_rule.request_headers;
-
-        let request_headers_to_add = request_filter_headers
-            .add
-            .clone()
-            .into_iter()
-            .map(|h| HeaderValueOption {
-                header: Some(HeaderValue {
-                    key: h.name,
-                    value: h.value,
-                    ..Default::default()
-                }),
-                append_action: HeaderAppendAction::AppendIfExistsOrAdd.into(),
-                ..Default::default()
-            })
-            .chain(request_filter_headers.set.clone().into_iter().map(|h| HeaderValueOption {
-                header: Some(HeaderValue {
-                    key: h.name,
-                    value: h.value,
-                    ..Default::default()
-                }),
-                append_action: HeaderAppendAction::OverwriteIfExistsOrAdd.into(),
-                ..Default::default()
-            }))
-            .collect();
-
-        let request_headers_to_remove = request_filter_headers.remove;
-
-        let cluster_names: Vec<_> = effective_routing_rule
-            .backends
-            .iter()
-            .filter(|b| b.weight() > 0)
-            .map(|b| ClusterWeight {
-                name: b.cluster_name(),
-                weight: Some(UInt32Value {
-                    value: b.weight().try_into().expect("We do expect this to work for time being"),
-                }),
-                ..Default::default()
-            })
-            .collect();
-        let cluster_action = RouteAction {
-            cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
-            cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
-                clusters: cluster_names,
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
-        let action: Action = if let Some(redirect_action) = effective_routing_rule.redirect_filter.clone().map(|f| RedirectAction {
-            host_redirect: f.hostname.unwrap_or_default(),
-
-            response_code: match f.status_code {
-                Some(302) => redirect_action::RedirectResponseCode::Found.into(),
-                Some(303) => redirect_action::RedirectResponseCode::SeeOther.into(),
-                Some(307) => redirect_action::RedirectResponseCode::TemporaryRedirect.into(),
-                Some(308) => redirect_action::RedirectResponseCode::PermanentRedirect.into(),
-                Some(301 | _) | None => redirect_action::RedirectResponseCode::MovedPermanently.into(),
-            },
-            ..Default::default()
-        }) {
-            Action::Redirect(redirect_action)
-        } else {
-            Action::Route(cluster_action)
-        };
-
-        EnvoyRoute {
-            name: format!("{}-route", effective_routing_rule.name),
-            r#match: Some(route_match),
-            request_headers_to_add,
-            request_headers_to_remove,
-            action: Some(action),
-            ..Default::default()
-        }
-    }
-}
-
-impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
-    fn from(effective_routing_rule: GRPCEffectiveRoutingRule) -> Self {
-        warn!("Headers to match {:?}", effective_routing_rule.route_matcher.headers);
-
-        let headers = effective_routing_rule.route_matcher.headers.map_or(vec![], |headers| {
-            headers
-                .iter()
-                .map(|header| HeaderMatcher {
-                    name: header.name.clone(),
-                    header_match_specifier: Some(HeaderMatchSpecifier::StringMatch(StringMatcher {
-                        match_pattern: Some(MatchPattern::Exact(header.value.clone())),
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                })
-                .collect()
-        });
-
-        let path_specifier = effective_routing_rule.route_matcher.method.clone().and_then(|matcher| {
-            let service = matcher.service.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
-
-            let path = if let Some(method) = matcher.method {
-                "/".to_owned() + &service + "/" + &method
-            } else {
-                "/".to_owned() + &service
-            };
-
-            matcher.r#type.map(|t| match t {
-                grpcroutes::GRPCRouteRulesMatchesMethodType::Exact => PathSpecifier::Path(path),
-                grpcroutes::GRPCRouteRulesMatchesMethodType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: path, ..Default::default() }),
-            })
-        });
-
-        let path_specifier = if path_specifier.is_none() { Some(PathSpecifier::Prefix("/".to_owned())) } else { path_specifier };
-
-        //let route_match = RouteMatch { headers, path_specifier, grpc: Some(GrpcRouteMatchOptions::default()), ..Default::default() };
-        let route_match = RouteMatch {
-            headers,
-            path_specifier,
-            grpc: None,
-            ..Default::default()
-        };
-
-        let request_filter_headers = effective_routing_rule.request_headers;
-
-        let request_headers_to_add = request_filter_headers
-            .add
-            .clone()
-            .into_iter()
-            .map(|h| HeaderValueOption {
-                header: Some(HeaderValue {
-                    key: h.name,
-                    value: h.value,
-                    ..Default::default()
-                }),
-                append_action: HeaderAppendAction::AppendIfExistsOrAdd.into(),
-                ..Default::default()
-            })
-            .chain(request_filter_headers.set.clone().into_iter().map(|h| HeaderValueOption {
-                header: Some(HeaderValue {
-                    key: h.name,
-                    value: h.value,
-                    ..Default::default()
-                }),
-                append_action: HeaderAppendAction::OverwriteIfExistsOrAdd.into(),
-                ..Default::default()
-            }))
-            .collect();
-
-        let request_headers_to_remove = request_filter_headers.remove;
-
-        let cluster_names: Vec<_> = effective_routing_rule
-            .backends
-            .iter()
-            .filter(|b| b.weight() > 0)
-            .map(|b| ClusterWeight {
-                name: b.cluster_name(),
-                weight: Some(UInt32Value {
-                    value: b.weight().try_into().expect("We do expect this to work for time being"),
-                }),
-                ..Default::default()
-            })
-            .collect();
-        let cluster_action = RouteAction {
-            cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::NotFound.into(),
-            cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
-                clusters: cluster_names,
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
-        let action: Action = Action::Route(cluster_action);
-
-        EnvoyRoute {
-            name: format!("{}-grpc-route", effective_routing_rule.name),
-            r#match: Some(route_match),
-            request_headers_to_add,
-            request_headers_to_remove,
-            action: Some(action),
-            ..Default::default()
-        }
-    }
-}
-
 const ENVOY_POD_SPEC: &str = r#"
 {
     "volumes": [
@@ -1071,15 +689,19 @@ const ENVOY_POD_SPEC: &str = r#"
                 "/envoy-config/envoy-bootstrap.yaml",
                 "--service-cluster $(GATEWAY_NAMESPACE)",
                 "--service-node $(ENVOY_POD_NAME)",
-                "--log-level info"
+                "--log-level trace"
             ],
             "command": [
                 "envoy"
             ],
-            "image": "docker.io/envoyproxy/envoy:v1.31.0",
+            "image": "docker.io/envoyproxy/envoy:dev",
             "imagePullPolicy": "IfNotPresent",
             "name": "envoy",
             "env": [
+                {
+                    "name": "GRPC_TRACE",
+                    "value": "tcp,http,api"
+                },
                 {
                     "name": "GATEWAY_NAMESPACE",
                     "valueFrom": {
@@ -1108,7 +730,7 @@ const ENVOY_POD_SPEC: &str = r#"
                     "port": 9901
                 },
                 "initialDelaySeconds": 3,
-                "periodSeconds": 4
+                "periodSeconds": 20
             },
             "volumeMounts": [
                 {

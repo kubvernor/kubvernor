@@ -1,16 +1,12 @@
 use std::sync::Arc;
 
-use gateway_api::{
-    constants,
-    gatewayclasses::GatewayClass,
-    gateways::{GatewayStatusListeners, GatewayStatusListenersSupportedKinds},
-};
+use gateway_api::{common::Kind, constants, gatewayclasses::GatewayClass, gateways::GatewayStatusListeners};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
 };
 use tokio::sync::mpsc::{self, Sender};
-use tracing::{debug, error, info, Instrument, Span};
+use tracing::{debug, error, info};
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -35,9 +31,7 @@ impl GatewayDeployerServiceInternal<'_> {
             if let Some(conditions) = &status.conditions {
                 if conditions.iter().any(|c| c.type_ == constants::GatewayConditionType::Ready.to_string()) {
                     self.state.save_gateway(gateway_id.clone(), resource).expect("We expect the lock to work");
-                    common::add_finalizer_to_gateway_class(&self.gateway_class_patcher_channel_sender, gateway_class_name, controller_name)
-                        .instrument(Span::current().clone())
-                        .await;
+                    common::add_finalizer_to_gateway_class(&self.gateway_class_patcher_channel_sender, gateway_class_name, controller_name).await;
                     let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
                         finalizers.iter().any(|f| f == controller_name)
                     } else {
@@ -45,9 +39,7 @@ impl GatewayDeployerServiceInternal<'_> {
                     };
 
                     if !has_finalizer {
-                        let () = common::add_finalizer(&self.gateway_patcher_channel_sender, gateway_id, controller_name)
-                            .instrument(Span::current().clone())
-                            .await;
+                        let () = common::add_finalizer(&self.gateway_patcher_channel_sender, gateway_id, controller_name).await;
                     }
                 }
             }
@@ -80,7 +72,6 @@ impl GatewayDeployer {
                 .kube_gateway(updated_kube_gateway.clone())
                 .gateway(backend_gateway)
                 .gateway_class_name(self.gateway_class_name)
-                .span(Span::current().clone())
                 .build(),
         ));
         let _ = self.sender.send(listener_event).await;
@@ -99,7 +90,7 @@ impl GatewayDeployer {
             }
             let conditions = l.conditions_mut();
 
-            debug!("Adjusting conditions {} conditions {:#?}", name, conditions);
+            debug!("Adjusting conditions {} conditions {:?}", name, conditions);
             if let Some(ListenerCondition::ResolvedRefs(resolved_refs)) = conditions.get(&ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes)) {
                 match resolved_refs {
                     ResolvedRefs::Resolved(_) | ResolvedRefs::ResolvedWithNotAllowedRoutes(_) | ResolvedRefs::InvalidBackend(_) => {
@@ -127,7 +118,7 @@ impl GatewayDeployer {
                 conditions.remove(&ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes));
             }
 
-            debug!("Adjusted  conditions {conditions:#?}");
+            debug!("Adjusted conditions {conditions:?}");
         });
     }
 
@@ -138,7 +129,7 @@ impl GatewayDeployer {
 
         gateway.listeners().for_each(|l| {
             let name = l.name().to_owned();
-            debug!("Processing listener {name} {} {:#?}", l.attached_routes(), l.conditions().collect::<Vec<_>>());
+            debug!("Processing listener {name} {} {:?}", l.attached_routes(), l.conditions().collect::<Vec<_>>());
 
             let mut listener_status = GatewayStatusListeners { name, ..Default::default() };
 
@@ -167,11 +158,7 @@ impl GatewayDeployer {
                             status,
                             type_,
                         });
-                        listener_status.supported_kinds = condition
-                            .supported_routes()
-                            .iter()
-                            .map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() })
-                            .collect();
+                        listener_status.supported_kinds = condition.supported_routes().iter().map(|r| Kind { group: None, kind: r.clone() }).collect();
                     }
                     ListenerCondition::UnresolvedRouteRefs => {
                         listener_conditions.push(Condition {
@@ -182,11 +169,7 @@ impl GatewayDeployer {
                             status,
                             type_,
                         });
-                        listener_status.supported_kinds = condition
-                            .supported_routes()
-                            .iter()
-                            .map(|r| GatewayStatusListenersSupportedKinds { group: None, kind: r.clone() })
-                            .collect();
+                        listener_status.supported_kinds = condition.supported_routes().iter().map(|r| Kind { group: None, kind: r.clone() }).collect();
                     }
                     _ => {
                         listener_conditions.push(Condition {

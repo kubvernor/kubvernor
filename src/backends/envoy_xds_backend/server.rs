@@ -122,7 +122,6 @@ impl AdsClient {
 struct ResourcesMapping {
     cluster: BTreeMap<String, Vec<Resource>>,
     listener: BTreeMap<String, Vec<Resource>>,
-    // route: MultiMap<String, Resource>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -362,7 +361,6 @@ impl AggregatedDiscoveryService for AggregateServer {
 
                                 if let Some(resources) = resources {
                                     if !resources.is_empty() {
-                                        //ads_client.versions_mut().cluster += 1;
                                         ads_clients.update_client(&ads_client);
                                     }
                                     let ack_version = ads_client.ack_versions.cluster;
@@ -401,7 +399,6 @@ impl AggregatedDiscoveryService for AggregateServer {
 
                                 if let Some(resources) = resources {
                                     if !resources.is_empty() {
-                                        //ads_client.versions_mut().listener += 1;
                                         ads_clients.update_client(&ads_client);
                                     }
                                     let ack_version = ads_client.ack_versions.listener;
@@ -470,7 +467,6 @@ pub async fn start_aggregate_server(kube_client: kube::Client, server_address: S
         let _ = server.await;
     }
     .boxed();
-    //info!("Server exited {server:?}");
     futures::future::join_all(vec![server, service]).await;
     Ok(())
 }

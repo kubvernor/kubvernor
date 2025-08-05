@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use gateway_api::httproutes;
+use gateway_api::{common::HTTPHeader, httproutes};
 use serde::Serialize;
 use tracing::{debug, info, warn};
 
 use super::envoy_deployer::{create_certificate_name, create_key_name, create_secret_name, TEMPLATES};
 use crate::{
     backends::common::calculate_hostnames_common,
-    common::{self, Backend, EffectiveRoutingRule, HttpHeader, Listener, ProtocolType, Route, RouteType, TlsType},
+    common::{self, Backend, BackendTypeConfig, HTTPEffectiveRoutingRule, Listener, ProtocolType, Route, RouteType, TlsType},
     controllers::HostnameMatchFilter,
 };
 #[derive(Debug)]
@@ -50,7 +50,7 @@ struct EnvoyVirutalHost {
     effective_hostnames: Vec<String>,
     resolved_routes: Vec<Route>,
     unresolved_routes: Vec<Route>,
-    effective_matching_rules: Vec<EffectiveRoutingRule>,
+    effective_matching_rules: Vec<HTTPEffectiveRoutingRule>,
 }
 
 impl Ord for EnvoyVirutalHost {
@@ -259,8 +259,8 @@ impl<'a> EnvoyXDSGenerator<'a> {
             value: String,
             action: FilterHeaderAction,
         }
-        impl From<HttpHeader> for TeraFilterHeader {
-            fn from(header: HttpHeader) -> Self {
+        impl From<HTTPHeader> for TeraFilterHeader {
+            fn from(header: HTTPHeader) -> Self {
                 Self {
                     name: header.name,
                     value: header.value,
@@ -342,6 +342,10 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         cluster_names: er
                             .backends
                             .iter()
+                            .filter_map(|b| match b.backend_type() {
+                                common::BackendType::Service(service_type_config) => Some(service_type_config),
+                                _ => None,
+                            })
                             .filter(|b| b.weight() > 0)
                             .map(|b| TeraClusterName {
                                 name: b.cluster_name(),
@@ -415,11 +419,11 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
                         r.backends()
                             .iter()
-                            .filter(|b| b.weight() > 0)
                             .filter_map(|b| match b {
-                                Backend::Resolved(backend_service_config) => Some(backend_service_config),
+                                Backend::Resolved(common::BackendType::Service(config)) => Some(config),
                                 _ => None,
                             })
+                            .filter(|b| b.weight() > 0)
                             .map(|r| TeraCluster {
                                 name: r.cluster_name(),
                                 endpoints: vec![TeraEndpoint {
