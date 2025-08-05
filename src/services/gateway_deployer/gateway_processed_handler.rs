@@ -112,7 +112,7 @@ impl GatewayProcessedHandler<'_> {
                 }
             }
         }
-        debug!("HTTP Updating unresolved routes  {unresolved_routes:?}");
+        debug!("HTTP Updating unresolved routes {unresolved_routes:?}");
         for unresolve_route in unresolved_routes {
             let updated_route = self.update_http_unresolved_route_parents(unresolve_route, gateway_id);
             if let Some(route) = updated_route {
