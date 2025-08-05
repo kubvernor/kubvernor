@@ -25,6 +25,7 @@ Kubvernor is a Rust implementation of Kubernetes Gateway APIs. The aim of the pr
 3. Install required CRDs
     ```bash
     kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+	kubectl apply -f https://github.com/kubernetes-sigs/gateway-api-inference-extension/releases/download/v0.5.1/manifests.yaml
     ```
 
 
@@ -44,9 +45,9 @@ Kubvernor is a Rust implementation of Kubernetes Gateway APIs. The aim of the pr
 6. Run Gateway API Inference Extension Conformance tests
 
     ```bash
-    git clone https://github.com/kubernetes-sigs/gateway-api-inference-extension
+    git clone --depth 1 --branch v0.5.1 https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
 	cd gateway-api-inference-extension
-	go test -v -count=1 -timeout=3h ./conformance --debug -run TestConformance --report-output="../kubvernor-inference-conformance-outputyaml" --organization=kubvernor --project=kubvernor --url=https://github.com/kubvernor/kubvernor --version=0.1.0  --allow-crds-mismatch	
+	go test -v -count=1 -timeout=3h ./conformance --debug -run TestConformance --report-output="../kubvernor-inference-conformance-output.yaml" --organization=kubvernor --project=kubvernor --url=https://github.com/kubvernor/kubvernor --version=0.1.0  --allow-crds-mismatch	
     ```
 
 ## Conformance reports

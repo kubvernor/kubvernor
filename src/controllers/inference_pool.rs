@@ -16,7 +16,7 @@ use tokio::sync::{
     mpsc::{self},
     oneshot,
 };
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
