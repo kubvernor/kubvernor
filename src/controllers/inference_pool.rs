@@ -48,7 +48,7 @@ pub struct InferencePoolController {
 }
 
 impl InferencePoolController {
-    pub fn get_controller(&self) -> BoxFuture<()> {
+    pub fn get_controller(&'_ self) -> BoxFuture<'_, ()> {
         let client = self.ctx.client.clone();
         let context = &self.ctx;
 

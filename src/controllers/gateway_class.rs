@@ -50,7 +50,7 @@ impl GatewayClassController {
             gateway_class_patcher,
         }
     }
-    pub fn get_controller(&self) -> BoxFuture<()> {
+    pub fn get_controller(&'_ self) -> BoxFuture<'_, ()> {
         let context = Arc::new(Context {
             controller_name: self.controller_name.clone(),
             state: self.state.clone(),

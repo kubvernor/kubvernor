@@ -26,45 +26,114 @@ use envoy_api_rs::{
     },
     google::protobuf::UInt32Value,
 };
+use gateway_api::{
+    common::HTTPFilterType,
+    grpcroutes::GRPCRouteMatch,
+    httproutes::{HTTPRouteRulesMatchesPathType, PathMatch, RouteMatch},
+};
 use tracing::debug;
 
 use crate::{
     backends::common::{converters, get_inference_pool_configurations, ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory},
     common::{
-        self, Backend, BackendType, BackendTypeConfig, GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule, InferencePoolTypeConfig, Listener, ProtocolType, Route, RouteType, ServiceTypeConfig,
-        TlsType, DEFAULT_ROUTE_HOSTNAME,
+        self, Backend, BackendType, BackendTypeConfig, FilterHeaders, GRPCEffectiveRoutingRule, GRPCRoutingConfiguration, GRPCRoutingRule, HTTPEffectiveRoutingRule, HTTPRoutingConfiguration,
+        HTTPRoutingRule, InferencePoolTypeConfig, Listener, ProtocolType, Route, RouteType, ServiceTypeConfig, TlsType, DEFAULT_ROUTE_HOSTNAME,
     },
     controllers::HostnameMatchFilter,
 };
 
 type ListenerNameToHostname = (String, Option<String>);
 
+fn get_http_default_rules_matches() -> RouteMatch {
+    RouteMatch {
+        headers: Some(vec![]),
+        method: None,
+        path: Some(PathMatch {
+            r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
+            value: Some("/".to_owned()),
+        }),
+        query_params: None,
+    }
+}
+
+fn get_grpc_default_rules_matches() -> GRPCRouteMatch {
+    GRPCRouteMatch { headers: Some(vec![]), method: None }
+}
+
 impl Listener {
-    pub fn http_matching_rules(&self) -> Vec<&HTTPEffectiveRoutingRule> {
+    fn create_http_effective_route(hostnames: &[String], routing_configuration: &HTTPRoutingConfiguration) -> Vec<HTTPEffectiveRoutingRule> {
+        routing_configuration
+            .routing_rules
+            .iter()
+            .flat_map(|rr: &HTTPRoutingRule| {
+                let mut matching_rules = rr.matching_rules.clone();
+                if matching_rules.is_empty() {
+                    matching_rules.push(get_http_default_rules_matches());
+                }
+
+                rr.matching_rules.iter().map(|matcher| HTTPEffectiveRoutingRule {
+                    route_matcher: matcher.clone(),
+                    backends: rr.backends.clone(),
+                    name: rr.name.clone(),
+                    hostnames: hostnames.to_vec(),
+                    request_headers: rr.filter_headers(),
+                    response_headers: FilterHeaders::default(),
+                    redirect_filter: rr
+                        .filters
+                        .iter()
+                        .find_map(|f| if f.r#type == HTTPFilterType::RequestRedirect { f.request_redirect.clone() } else { None }),
+                })
+            })
+            .collect()
+    }
+
+    fn create_grpc_effective_route(hostnames: &[String], routing_configuration: &GRPCRoutingConfiguration) -> Vec<GRPCEffectiveRoutingRule> {
+        routing_configuration
+            .routing_rules
+            .iter()
+            .flat_map(|rr: &GRPCRoutingRule| {
+                let mut matching_rules = rr.matching_rules.clone();
+                if matching_rules.is_empty() {
+                    matching_rules.push(get_grpc_default_rules_matches());
+                }
+
+                rr.matching_rules.iter().map(|matcher| GRPCEffectiveRoutingRule {
+                    backends: rr.backends.clone(),
+                    name: rr.name.clone(),
+                    hostnames: hostnames.to_vec(),
+                    request_headers: rr.filter_headers(),
+                    response_headers: FilterHeaders::default(),
+                    route_matcher: matcher.clone(),
+                })
+            })
+            .collect()
+    }
+
+    pub fn http_matching_rules(&self) -> Vec<HTTPEffectiveRoutingRule> {
         let (resolved_routes, unresolved) = self.routes();
         let mut matching_rules: Vec<_> = resolved_routes
             .iter()
             .chain(unresolved.iter())
             .filter_map(|r| match &r.config.route_type {
-                RouteType::Http(configuration) => Some(configuration),
+                RouteType::Http(configuration) => Some((&r.config.hostnames, configuration)),
                 RouteType::Grpc(_) => None,
             })
-            .flat_map(|r| &r.effective_routing_rules)
+            .flat_map(|(hostnames, config)| Self::create_http_effective_route(hostnames, config))
             .collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
         matching_rules
     }
 
-    pub fn grpc_matching_rules(&self) -> Vec<&GRPCEffectiveRoutingRule> {
+    pub fn grpc_matching_rules(&self) -> Vec<GRPCEffectiveRoutingRule> {
         let (resolved_routes, unresolved) = self.routes();
         let mut matching_rules: Vec<_> = resolved_routes
             .iter()
             .chain(unresolved.iter())
             .filter_map(|r| match &r.config.route_type {
                 RouteType::Http(_) => None,
-                RouteType::Grpc(configuration) => Some(configuration),
+                RouteType::Grpc(configuration) => Some((&r.config.hostnames, configuration)),
             })
-            .flat_map(|r| &r.effective_routing_rules)
+            .flat_map(|(hostnames, config)| Self::create_grpc_effective_route(hostnames, config))
             .collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
         matching_rules
@@ -249,23 +318,21 @@ impl<'a> ResourceGenerator<'a> {
             let http_matching_rules = listener
                 .http_matching_rules()
                 .into_iter()
-                .filter(|&em| {
+                .filter(|em| {
                     let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
                     debug!("generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
                     filtered
                 })
-                .cloned()
                 .collect::<Vec<_>>();
 
             let grpc_matching_rules = listener
                 .grpc_matching_rules()
                 .into_iter()
-                .filter(|&em| {
+                .filter(|em| {
                     let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
                     debug!("generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
                     filtered
                 })
-                .cloned()
                 .collect::<Vec<_>>();
 
             self.inference_clusters = self

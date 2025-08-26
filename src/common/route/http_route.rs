@@ -2,7 +2,7 @@ use std::{cmp, net::IpAddr};
 
 use gateway_api::{
     common::{HTTPFilterType, HTTPHeader, HeaderModifier, RequestRedirect},
-    httproutes::{HTTPBackendReference, HTTPRoute, HTTPRouteFilter, HTTPRouteRule, HTTPRouteRulesMatchesPathType, PathMatch, RouteMatch},
+    httproutes::{HTTPBackendReference, HTTPRoute, HTTPRouteFilter, HTTPRouteRule, RouteMatch},
 };
 use kube::ResourceExt;
 use tracing::debug;
@@ -19,18 +19,6 @@ use crate::{
     },
     controllers::ControllerError,
 };
-
-fn get_http_default_rules_matches() -> RouteMatch {
-    RouteMatch {
-        headers: Some(vec![]),
-        method: None,
-        path: Some(PathMatch {
-            r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix),
-            value: Some("/".to_owned()),
-        }),
-        query_params: None,
-    }
-}
 
 impl TryFrom<HTTPRoute> for Route {
     type Error = ControllerError;
@@ -84,28 +72,28 @@ impl TryFrom<&HTTPRoute> for Route {
             })
             .unwrap_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()]);
 
-        let effective_routing_rules: Vec<_> = routing_rules
-            .iter()
-            .flat_map(|rr: &HTTPRoutingRule| {
-                let mut matching_rules = rr.matching_rules.clone();
-                if matching_rules.is_empty() {
-                    matching_rules.push(get_http_default_rules_matches());
-                }
+        // let effective_routing_rules: Vec<_> = routing_rules
+        //     .iter()
+        //     .flat_map(|rr: &HTTPRoutingRule| {
+        //         let mut matching_rules = rr.matching_rules.clone();
+        //         if matching_rules.is_empty() {
+        //             matching_rules.push(get_http_default_rules_matches());
+        //         }
 
-                rr.matching_rules.iter().map(|matcher| HTTPEffectiveRoutingRule {
-                    route_matcher: matcher.clone(),
-                    backends: rr.backends.clone(),
-                    name: rr.name.clone(),
-                    hostnames: hostnames.clone(),
-                    request_headers: rr.filter_headers(),
-                    response_headers: FilterHeaders::default(),
-                    redirect_filter: rr
-                        .filters
-                        .iter()
-                        .find_map(|f| if f.r#type == HTTPFilterType::RequestRedirect { f.request_redirect.clone() } else { None }),
-                })
-            })
-            .collect();
+        //         rr.matching_rules.iter().map(|matcher| HTTPEffectiveRoutingRule {
+        //             route_matcher: matcher.clone(),
+        //             backends: rr.backends.clone(),
+        //             name: rr.name.clone(),
+        //             hostnames: hostnames.clone(),
+        //             request_headers: rr.filter_headers(),
+        //             response_headers: FilterHeaders::default(),
+        //             redirect_filter: rr
+        //                 .filters
+        //                 .iter()
+        //                 .find_map(|f| if f.r#type == HTTPFilterType::RequestRedirect { f.request_redirect.clone() } else { None }),
+        //         })
+        //     })
+        //     .collect();
 
         let config = RouteConfig {
             resource_key: key,
@@ -116,10 +104,7 @@ impl TryFrom<&HTTPRoute> for Route {
             } else {
                 ResolutionStatus::NotResolved(NotResolvedReason::Unknown)
             },
-            route_type: RouteType::Http(HTTPRoutingConfiguration {
-                routing_rules,
-                effective_routing_rules,
-            }),
+            route_type: RouteType::Http(HTTPRoutingConfiguration { routing_rules }),
         };
 
         Ok(Route { config })
@@ -129,7 +114,6 @@ impl TryFrom<&HTTPRoute> for Route {
 #[derive(Clone, Debug)]
 pub struct HTTPRoutingConfiguration {
     pub routing_rules: Vec<HTTPRoutingRule>,
-    pub effective_routing_rules: Vec<HTTPEffectiveRoutingRule>,
 }
 
 impl From<(&HTTPBackendReference, &str)> for ServiceTypeConfig {
@@ -189,7 +173,7 @@ pub struct HTTPRoutingRule {
 }
 
 impl HTTPRoutingRule {
-    fn filter_headers(&self) -> FilterHeaders {
+    pub fn filter_headers(&self) -> FilterHeaders {
         fn iter<T: Clone, X>(routing_rule: &HTTPRoutingRule, x: X) -> Vec<T>
         where
             X: Fn(Option<&HeaderModifier>) -> Option<&Vec<T>>,

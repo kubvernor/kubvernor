@@ -16,10 +16,6 @@ use crate::{
     controllers::ControllerError,
 };
 
-fn get_grpc_default_rules_matches() -> GRPCRouteMatch {
-    GRPCRouteMatch { headers: Some(vec![]), method: None }
-}
-
 impl TryFrom<GRPCRoute> for Route {
     type Error = ControllerError;
 
@@ -89,24 +85,24 @@ impl TryFrom<&GRPCRoute> for Route {
             })
             .unwrap_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()]);
 
-        let effective_routing_rules: Vec<_> = routing_rules
-            .iter()
-            .flat_map(|rr| {
-                let mut matching_rules = rr.matching_rules.clone();
-                if matching_rules.is_empty() {
-                    matching_rules.push(get_grpc_default_rules_matches());
-                }
+        // let effective_routing_rules: Vec<_> = routing_rules
+        //     .iter()
+        //     .flat_map(|rr| {
+        //         let mut matching_rules = rr.matching_rules.clone();
+        //         if matching_rules.is_empty() {
+        //             matching_rules.push(get_grpc_default_rules_matches());
+        //         }
 
-                matching_rules.into_iter().map(|matcher| GRPCEffectiveRoutingRule {
-                    route_matcher: matcher.clone(),
-                    backends: rr.backends.clone(),
-                    name: rr.name.clone(),
-                    hostnames: hostnames.clone(),
-                    request_headers: rr.filter_headers(),
-                    response_headers: FilterHeaders::default(),
-                })
-            })
-            .collect();
+        //         matching_rules.into_iter().map(|matcher| GRPCEffectiveRoutingRule {
+        //             route_matcher: matcher.clone(),
+        //             backends: rr.backends.clone(),
+        //             name: rr.name.clone(),
+        //             hostnames: hostnames.clone(),
+        //             request_headers: rr.filter_headers(),
+        //             response_headers: FilterHeaders::default(),
+        //         })
+        //     })
+        //     .collect();
 
         let config = RouteConfig {
             resource_key: key,
@@ -119,7 +115,7 @@ impl TryFrom<&GRPCRoute> for Route {
             },
             route_type: RouteType::Grpc(GRPCRoutingConfiguration {
                 routing_rules,
-                effective_routing_rules,
+                //effective_routing_rules,
             }),
         };
 
@@ -130,7 +126,7 @@ impl TryFrom<&GRPCRoute> for Route {
 #[derive(Clone, Debug)]
 pub struct GRPCRoutingConfiguration {
     pub routing_rules: Vec<GRPCRoutingRule>,
-    pub effective_routing_rules: Vec<GRPCEffectiveRoutingRule>,
+    //pub effective_routing_rules: Vec<GRPCEffectiveRoutingRule>,
 }
 
 #[derive(Clone, Debug)]
@@ -142,7 +138,7 @@ pub struct GRPCRoutingRule {
 }
 
 impl GRPCRoutingRule {
-    fn filter_headers(&self) -> FilterHeaders {
+    pub fn filter_headers(&self) -> FilterHeaders {
         fn iter<T: Clone, X>(routing_rule: &GRPCRoutingRule, x: X) -> Vec<T>
         where
             X: Fn(Option<&HeaderModifier>) -> Option<&Vec<T>>,

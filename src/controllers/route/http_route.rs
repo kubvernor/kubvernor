@@ -45,7 +45,7 @@ pub struct HttpRouteController {
 }
 
 impl HttpRouteController {
-    pub fn get_controller(&self) -> BoxFuture<()> {
+    pub fn get_controller(&'_ self) -> BoxFuture<'_, ()> {
         let client = self.ctx.client.clone();
         let context = &self.ctx;
 

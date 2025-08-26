@@ -20,7 +20,11 @@ use gateway_api_inference_extension::inferencepools::{InferencePoolExtensionRef,
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};
 pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE};
-pub use route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule, NotResolvedReason, ResolutionStatus, Route, RouteStatus, RouteType};
+pub use route::{
+    grpc_route::{GRPCRoutingConfiguration, GRPCRoutingRule},
+    http_route::{HTTPRoutingConfiguration, HTTPRoutingRule},
+    FilterHeaders, GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule, NotResolvedReason, ResolutionStatus, Route, RouteStatus, RouteType,
+};
 use tokio::sync::{mpsc, oneshot};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;

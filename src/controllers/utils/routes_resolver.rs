@@ -55,11 +55,11 @@ impl RouteResolver<'_> {
                         route_resolution_status = resolution_status;
                     }
                     rule.backends.clone_from(&new_backends);
-                    httprouting_configuration
-                        .effective_routing_rules
-                        .iter_mut()
-                        .filter(|r| r.name == rule.name)
-                        .for_each(|r| r.backends.clone_from(&new_backends));
+                    // httprouting_configuration
+                    //     .effective_routing_rules
+                    //     .iter_mut()
+                    //     .filter(|r| r.name == rule.name)
+                    //     .for_each(|r| r.backends.clone_from(&new_backends));
                 }
             }
             common::RouteType::Grpc(grpcrouting_configuration) => {
@@ -68,7 +68,7 @@ impl RouteResolver<'_> {
                     if resolution_status != ResolutionStatus::Resolved {
                         route_resolution_status = resolution_status;
                     }
-                    rule.backends = new_backends;
+                    rule.backends.clone_from(&new_backends);
                 }
             }
         }

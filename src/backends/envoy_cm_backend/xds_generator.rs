@@ -183,12 +183,11 @@ impl<'a> EnvoyXDSGenerator<'a> {
             let effective_matching_rules = listener
                 .http_matching_rules()
                 .into_iter()
-                .filter(|&em| {
+                .filter(|em| {
                     let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
                     debug!("generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
                     filtered
                 })
-                .cloned()
                 .collect::<Vec<_>>();
 
             listener_map.insert(EnvoyVirutalHost {

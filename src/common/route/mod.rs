@@ -1,8 +1,6 @@
 pub mod grpc_route;
 pub mod http_route;
 
-use std::cmp;
-
 use gateway_api::common::{HTTPHeader, HeaderMatch, HeaderModifier, ParentReference};
 pub use grpc_route::GRPCEffectiveRoutingRule;
 pub use http_route::HTTPEffectiveRoutingRule;
@@ -84,7 +82,7 @@ pub enum RouteType {
 pub struct RouteConfig {
     pub resource_key: ResourceKey,
     parents: Option<Vec<ParentReference>>,
-    hostnames: Vec<String>,
+    pub hostnames: Vec<String>,
     pub resolution_status: ResolutionStatus,
     pub route_type: RouteType,
 }
@@ -98,20 +96,20 @@ impl RouteConfig {
     }
 }
 
-impl RouteConfig {
-    pub fn reorder_routes(&mut self) {
-        match &mut self.route_type {
-            RouteType::Http(HTTPRoutingConfiguration {
-                routing_rules: _,
-                effective_routing_rules,
-            }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
-            RouteType::Grpc(GRPCRoutingConfiguration {
-                routing_rules: _,
-                effective_routing_rules,
-            }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
-        }
-    }
-}
+// impl RouteConfig {
+//     pub fn reorder_routes(&mut self) {
+//         match &mut self.route_type {
+//             RouteType::Http(HTTPRoutingConfiguration {
+//                 routing_rules: _,
+//                 effective_routing_rules,
+//             }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
+//             RouteType::Grpc(GRPCRoutingConfiguration {
+//                 routing_rules: _,
+//                 effective_routing_rules,
+//             }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
+//         }
+//     }
+// }
 
 impl PartialEq for RouteConfig {
     fn eq(&self, other: &Self) -> bool {
