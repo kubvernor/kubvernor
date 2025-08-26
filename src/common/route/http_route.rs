@@ -104,7 +104,10 @@ impl TryFrom<&HTTPRoute> for Route {
             } else {
                 ResolutionStatus::NotResolved(NotResolvedReason::Unknown)
             },
-            route_type: RouteType::Http(HTTPRoutingConfiguration { routing_rules }),
+            route_type: RouteType::Http(HTTPRoutingConfiguration {
+                routing_rules,
+                //effective_routing_rules,
+            }),
         };
 
         Ok(Route { config })
@@ -114,6 +117,7 @@ impl TryFrom<&HTTPRoute> for Route {
 #[derive(Clone, Debug)]
 pub struct HTTPRoutingConfiguration {
     pub routing_rules: Vec<HTTPRoutingRule>,
+    //pub effective_routing_rules: Vec<HTTPEffectiveRoutingRule>,
 }
 
 impl From<(&HTTPBackendReference, &str)> for ServiceTypeConfig {

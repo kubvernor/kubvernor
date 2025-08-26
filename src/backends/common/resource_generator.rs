@@ -71,7 +71,7 @@ impl Listener {
                     matching_rules.push(get_http_default_rules_matches());
                 }
 
-                rr.matching_rules.iter().map(|matcher| HTTPEffectiveRoutingRule {
+                matching_rules.into_iter().map(|matcher| HTTPEffectiveRoutingRule {
                     route_matcher: matcher.clone(),
                     backends: rr.backends.clone(),
                     name: rr.name.clone(),
@@ -97,13 +97,13 @@ impl Listener {
                     matching_rules.push(get_grpc_default_rules_matches());
                 }
 
-                rr.matching_rules.iter().map(|matcher| GRPCEffectiveRoutingRule {
+                matching_rules.into_iter().map(|matcher| GRPCEffectiveRoutingRule {
+                    route_matcher: matcher.clone(),
                     backends: rr.backends.clone(),
                     name: rr.name.clone(),
                     hostnames: hostnames.to_vec(),
                     request_headers: rr.filter_headers(),
                     response_headers: FilterHeaders::default(),
-                    route_matcher: matcher.clone(),
                 })
             })
             .collect()
