@@ -1,22 +1,17 @@
-use std::{cmp, net::IpAddr};
+use std::net::IpAddr;
 
 use gateway_api::{
-    common::{HTTPFilterType, HTTPHeader, HeaderModifier, RequestRedirect},
+    common::{HTTPFilterType, HTTPHeader, HeaderModifier},
     httproutes::{HTTPBackendReference, HTTPRoute, HTTPRouteFilter, HTTPRouteRule, RouteMatch},
 };
 use kube::ResourceExt;
-use tracing::debug;
 
 use super::{
     get_add_headers, get_remove_headers, get_set_headers, Backend, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType, ServiceTypeConfig,
     DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME,
 };
 use crate::{
-    common::{
-        resource_key::DEFAULT_INFERENCE_GROUP_NAME,
-        route::{HeaderComparator, QueryComparator},
-        BackendType, InferencePoolTypeConfig,
-    },
+    common::{resource_key::DEFAULT_INFERENCE_GROUP_NAME, BackendType, InferencePoolTypeConfig},
     controllers::ControllerError,
 };
 
@@ -71,29 +66,6 @@ impl TryFrom<&HTTPRoute> for Route {
                 hostnames
             })
             .unwrap_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()]);
-
-        // let effective_routing_rules: Vec<_> = routing_rules
-        //     .iter()
-        //     .flat_map(|rr: &HTTPRoutingRule| {
-        //         let mut matching_rules = rr.matching_rules.clone();
-        //         if matching_rules.is_empty() {
-        //             matching_rules.push(get_http_default_rules_matches());
-        //         }
-
-        //         rr.matching_rules.iter().map(|matcher| HTTPEffectiveRoutingRule {
-        //             route_matcher: matcher.clone(),
-        //             backends: rr.backends.clone(),
-        //             name: rr.name.clone(),
-        //             hostnames: hostnames.clone(),
-        //             request_headers: rr.filter_headers(),
-        //             response_headers: FilterHeaders::default(),
-        //             redirect_filter: rr
-        //                 .filters
-        //                 .iter()
-        //                 .find_map(|f| if f.r#type == HTTPFilterType::RequestRedirect { f.request_redirect.clone() } else { None }),
-        //         })
-        //     })
-        //     .collect();
 
         let config = RouteConfig {
             resource_key: key,
@@ -198,98 +170,5 @@ impl HTTPRoutingRule {
             remove: iter::<String, _>(self, get_remove_headers),
             set: iter::<HTTPHeader, _>(self, get_set_headers),
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct HTTPEffectiveRoutingRule {
-    pub route_matcher: RouteMatch,
-    pub backends: Vec<Backend>,
-    pub name: String,
-    pub hostnames: Vec<String>,
-
-    pub request_headers: FilterHeaders,
-    pub response_headers: FilterHeaders,
-
-    pub redirect_filter: Option<RequestRedirect>,
-}
-
-impl PartialOrd for HTTPEffectiveRoutingRule {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(Self::compare_matching(&self.route_matcher, &other.route_matcher))
-    }
-}
-
-impl HTTPEffectiveRoutingRule {
-    fn header_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
-        let matcher = HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
-        matcher.compare_headers()
-    }
-
-    fn query_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
-        let matcher = QueryComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
-        matcher.compare_queries()
-    }
-
-    fn method_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
-        match (this.method.as_ref(), other.method.as_ref()) {
-            (None, None) => std::cmp::Ordering::Equal,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (Some(this_method), Some(other_method)) => {
-                let this_desc = this_method.clone() as isize;
-                let other_desc = other_method.clone() as isize;
-                this_desc.cmp(&other_desc)
-            }
-        }
-    }
-    fn path_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
-        match (this.path.as_ref(), other.path.as_ref()) {
-            (None, None) => std::cmp::Ordering::Equal,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (Some(this_path), Some(other_path)) => match (this_path.r#type.as_ref(), other_path.r#type.as_ref()) {
-                (None, None) => this_path.value.cmp(&other_path.value),
-                (None, Some(_)) => std::cmp::Ordering::Less,
-                (Some(_), None) => std::cmp::Ordering::Greater,
-                (Some(this_prefix_match_type), Some(other_prefix_match_type)) => {
-                    let this_desc = this_prefix_match_type.clone() as isize;
-                    let other_desc = other_prefix_match_type.clone() as isize;
-                    let maybe_equal = this_desc.cmp(&other_desc);
-                    if maybe_equal == cmp::Ordering::Equal {
-                        match (&this_path.value, &other_path.value) {
-                            (None, None) => std::cmp::Ordering::Equal,
-                            (None, Some(_)) => std::cmp::Ordering::Greater,
-                            (Some(_), None) => std::cmp::Ordering::Less,
-                            (Some(this_path), Some(other_path)) => other_path.len().cmp(&this_path.len()),
-                        }
-                    } else {
-                        maybe_equal
-                    }
-                }
-            },
-        }
-    }
-
-    fn compare_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
-        let path_match = Self::path_matching(this, other);
-        let method_match = Self::method_matching(this, other);
-        let header_match = Self::header_matching(this, other);
-        let query_match = Self::query_matching(this, other);
-        let result = if query_match == std::cmp::Ordering::Equal {
-            if header_match == std::cmp::Ordering::Equal {
-                if path_match == std::cmp::Ordering::Equal {
-                    method_match
-                } else {
-                    path_match
-                }
-            } else {
-                header_match
-            }
-        } else {
-            query_match
-        };
-        debug!("Comparing {this:#?} {other:#?} {result:?} {path_match:?} {header_match:?} {query_match:?} {method_match:?}");
-        result
     }
 }

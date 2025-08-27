@@ -1,20 +1,16 @@
-use std::{cmp, net::IpAddr};
+use std::net::IpAddr;
 
 use gateway_api::{
     common::{GRPCFilterType, GRPCRouteFilter, HTTPHeader, HeaderModifier},
     grpcroutes::{GRPCRoute, GRPCRouteMatch, GRPCRouteRule},
 };
 use kube::ResourceExt;
-use tracing::debug;
 
 use super::{
     get_add_headers, get_remove_headers, get_set_headers, Backend, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType, ServiceTypeConfig,
     DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME,
 };
-use crate::{
-    common::{route::HeaderComparator, BackendType},
-    controllers::ControllerError,
-};
+use crate::{common::BackendType, controllers::ControllerError};
 
 impl TryFrom<GRPCRoute> for Route {
     type Error = ControllerError;
@@ -85,25 +81,6 @@ impl TryFrom<&GRPCRoute> for Route {
             })
             .unwrap_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()]);
 
-        // let effective_routing_rules: Vec<_> = routing_rules
-        //     .iter()
-        //     .flat_map(|rr| {
-        //         let mut matching_rules = rr.matching_rules.clone();
-        //         if matching_rules.is_empty() {
-        //             matching_rules.push(get_grpc_default_rules_matches());
-        //         }
-
-        //         matching_rules.into_iter().map(|matcher| GRPCEffectiveRoutingRule {
-        //             route_matcher: matcher.clone(),
-        //             backends: rr.backends.clone(),
-        //             name: rr.name.clone(),
-        //             hostnames: hostnames.clone(),
-        //             request_headers: rr.filter_headers(),
-        //             response_headers: FilterHeaders::default(),
-        //         })
-        //     })
-        //     .collect();
-
         let config = RouteConfig {
             resource_key: key,
             parents,
@@ -159,56 +136,5 @@ impl GRPCRoutingRule {
             remove: iter::<String, _>(self, get_remove_headers),
             set: iter::<HTTPHeader, _>(self, get_set_headers),
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct GRPCEffectiveRoutingRule {
-    pub route_matcher: GRPCRouteMatch,
-    pub backends: Vec<Backend>,
-    pub name: String,
-    pub hostnames: Vec<String>,
-
-    pub request_headers: FilterHeaders,
-    pub response_headers: FilterHeaders,
-}
-
-impl PartialOrd for GRPCEffectiveRoutingRule {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(Self::compare_matching(&self.route_matcher, &other.route_matcher))
-    }
-}
-
-impl GRPCEffectiveRoutingRule {
-    fn header_matching(this: &GRPCRouteMatch, other: &GRPCRouteMatch) -> std::cmp::Ordering {
-        let matcher = HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
-        matcher.compare_headers()
-    }
-
-    fn method_matching(this: &GRPCRouteMatch, other: &GRPCRouteMatch) -> std::cmp::Ordering {
-        match (this.method.as_ref(), other.method.as_ref()) {
-            (None, None) => std::cmp::Ordering::Equal,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (Some(this_method), Some(other_method)) => {
-                let cmp_method = this_method.method.cmp(&other_method.method);
-                let cmp_service = this_method.service.cmp(&other_method.service);
-
-                match (cmp_method, cmp_service) {
-                    (cmp::Ordering::Equal, _) => cmp_service,
-                    _ => cmp_method,
-                }
-            }
-        }
-    }
-
-    fn compare_matching(this: &GRPCRouteMatch, other: &GRPCRouteMatch) -> std::cmp::Ordering {
-        let method_match = Self::method_matching(this, other);
-        let header_match = Self::header_matching(this, other);
-
-        let result = if header_match == std::cmp::Ordering::Equal { method_match } else { header_match };
-
-        debug!("Comparing {this:#?} {other:#?} {result:?} {header_match:?} {method_match:?}");
-        result
     }
 }

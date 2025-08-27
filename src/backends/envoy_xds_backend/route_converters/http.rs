@@ -27,10 +27,7 @@ use envoy_api_rs::{
 use gateway_api::httproutes;
 use tracing::{debug, warn};
 
-use crate::{
-    backends::common::{converters, envoy_route_name, get_inference_extension_configurations, inference_cluster_name, INFERENCE_EXT_PROC_FILTER_NAME},
-    common::HTTPEffectiveRoutingRule,
-};
+use crate::backends::common::{converters, envoy_route_name, get_inference_extension_configurations, inference_cluster_name, HTTPEffectiveRoutingRule, INFERENCE_EXT_PROC_FILTER_NAME};
 
 impl HTTPEffectiveRoutingRule {
     pub fn add_inference_filters(self, mut envoy_route: EnvoyRoute) -> EnvoyRoute {

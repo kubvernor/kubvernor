@@ -23,7 +23,7 @@ pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT
 pub use route::{
     grpc_route::{GRPCRoutingConfiguration, GRPCRoutingRule},
     http_route::{HTTPRoutingConfiguration, HTTPRoutingRule},
-    FilterHeaders, GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule, NotResolvedReason, ResolutionStatus, Route, RouteStatus, RouteType,
+    FilterHeaders, NotResolvedReason, ResolutionStatus, Route, RouteStatus, RouteType,
 };
 use tokio::sync::{mpsc, oneshot};
 use typed_builder::TypedBuilder;

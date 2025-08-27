@@ -1,5 +1,6 @@
 pub mod converters;
 mod resource_generator;
+mod route;
 use envoy_api_rs::{
     envoy::config::{
         cluster::v3::Cluster as EnvoyCluster,
@@ -9,10 +10,11 @@ use envoy_api_rs::{
     google::protobuf::Duration,
 };
 pub use resource_generator::{calculate_hostnames_common, EnvoyListener, EnvoyVirtualHost, ResourceGenerator};
+pub use route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule};
 
 use crate::{
-    backends,
-    common::{Backend, HTTPEffectiveRoutingRule, InferencePoolTypeConfig, ServiceTypeConfig},
+    backends::{self},
+    common::{Backend, InferencePoolTypeConfig, ServiceTypeConfig},
 };
 
 pub const INFERENCE_EXT_PROC_FILTER_NAME: &str = "inference.filters.http.ext_proc";

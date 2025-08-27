@@ -34,10 +34,14 @@ use gateway_api::{
 use tracing::debug;
 
 use crate::{
-    backends::common::{converters, get_inference_pool_configurations, ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory},
+    backends::common::{
+        converters, get_inference_pool_configurations,
+        route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule},
+        ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory,
+    },
     common::{
-        self, Backend, BackendType, BackendTypeConfig, FilterHeaders, GRPCEffectiveRoutingRule, GRPCRoutingConfiguration, GRPCRoutingRule, HTTPEffectiveRoutingRule, HTTPRoutingConfiguration,
-        HTTPRoutingRule, InferencePoolTypeConfig, Listener, ProtocolType, Route, RouteType, ServiceTypeConfig, TlsType, DEFAULT_ROUTE_HOSTNAME,
+        self, Backend, BackendType, BackendTypeConfig, FilterHeaders, GRPCRoutingConfiguration, GRPCRoutingRule, HTTPRoutingConfiguration, HTTPRoutingRule, InferencePoolTypeConfig, Listener,
+        ProtocolType, Route, RouteType, ServiceTypeConfig, TlsType, DEFAULT_ROUTE_HOSTNAME,
     },
     controllers::HostnameMatchFilter,
 };
