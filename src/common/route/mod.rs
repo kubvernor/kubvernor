@@ -3,7 +3,7 @@ pub mod http_route;
 use gateway_api::common::{HTTPHeader, HeaderModifier, ParentReference};
 use thiserror::Error;
 
-use super::{Backend, ResourceKey, ServiceTypeConfig, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME};
+use super::{Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, ResourceKey, ServiceTypeConfig};
 use crate::common::route::{grpc_route::GRPCRoutingConfiguration, http_route::HTTPRoutingConfiguration};
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
@@ -86,8 +86,12 @@ pub struct RouteConfig {
 impl RouteConfig {
     pub fn backends(&self) -> Vec<&Backend> {
         match &self.route_type {
-            RouteType::Http(routing_rules_configuration) => routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect(),
-            RouteType::Grpc(routing_rules_configuration) => routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect(),
+            RouteType::Http(routing_rules_configuration) => {
+                routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect()
+            },
+            RouteType::Grpc(routing_rules_configuration) => {
+                routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect()
+            },
         }
     }
 }
@@ -130,27 +134,15 @@ pub enum ResolutionStatus {
 }
 
 fn get_add_headers(modifier: Option<&HeaderModifier>) -> Option<&Vec<HTTPHeader>> {
-    if let Some(modifier) = modifier {
-        modifier.add.as_ref()
-    } else {
-        None
-    }
+    if let Some(modifier) = modifier { modifier.add.as_ref() } else { None }
 }
 
 fn get_set_headers(modifier: Option<&HeaderModifier>) -> Option<&Vec<HTTPHeader>> {
-    if let Some(modifier) = modifier {
-        modifier.set.as_ref()
-    } else {
-        None
-    }
+    if let Some(modifier) = modifier { modifier.set.as_ref() } else { None }
 }
 
 fn get_remove_headers(modifier: Option<&HeaderModifier>) -> Option<&Vec<String>> {
-    if let Some(modifier) = modifier {
-        modifier.remove.as_ref()
-    } else {
-        None
-    }
+    if let Some(modifier) = modifier { modifier.remove.as_ref() } else { None }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

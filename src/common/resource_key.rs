@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use gateway_api::{
     common::ParentReference,
-    gatewayclasses::GatewayClass,
+    gatewayclasses::{GatewayClass, GatewayClassParametersRef},
     gateways,
     grpcroutes::{GRPCBackendReference, GRPCRoute},
     httproutes::{HTTPBackendReference, HTTPRoute},
@@ -40,18 +40,11 @@ pub struct BackendResourceKey {
 #[allow(dead_code)]
 impl ResourceKey {
     pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_owned(),
-            ..Default::default()
-        }
+        Self { name: name.to_owned(), ..Default::default() }
     }
 
     pub fn namespaced(name: &str, namespace: &str) -> Self {
-        Self {
-            name: name.to_owned(),
-            namespace: namespace.to_owned(),
-            ..Default::default()
-        }
+        Self { name: name.to_owned(), namespace: namespace.to_owned(), ..Default::default() }
     }
 }
 
@@ -131,12 +124,7 @@ impl From<&gateways::Gateway> for ResourceKey {
     fn from(value: &gateways::Gateway) -> Self {
         let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
 
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace,
-            name: value.name_any(),
-            kind: "Gateway".to_owned(),
-        }
+        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name_any(), kind: "Gateway".to_owned() }
     }
 }
 
@@ -144,12 +132,7 @@ impl From<&HTTPRoute> for ResourceKey {
     fn from(value: &HTTPRoute) -> Self {
         let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
 
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace,
-            name: value.name_any(),
-            kind: "HTTPRoute".to_owned(),
-        }
+        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name_any(), kind: "HTTPRoute".to_owned() }
     }
 }
 
@@ -157,12 +140,7 @@ impl From<&GRPCRoute> for ResourceKey {
     fn from(value: &GRPCRoute) -> Self {
         let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
 
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace,
-            name: value.name_any(),
-            kind: "GRPCRoute".to_owned(),
-        }
+        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name_any(), kind: "GRPCRoute".to_owned() }
     }
 }
 
@@ -231,6 +209,14 @@ impl From<&InferencePool> for ResourceKey {
     }
 }
 
+impl From<&GatewayClassParametersRef> for ResourceKey {
+    fn from(value: &GatewayClassParametersRef) -> Self {
+        let namespace = value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+
+        Self { group: value.group.clone(), namespace, name: value.name.clone(), kind: value.kind.clone() }
+    }
+}
+
 impl From<&InferencePoolStatusParentParentRef> for ResourceKey {
     fn from(value: &InferencePoolStatusParentParentRef) -> Self {
         Self {
@@ -252,17 +238,11 @@ pub struct RouteRefKey {
 #[allow(dead_code)]
 impl RouteRefKey {
     pub fn new(name: &str) -> Self {
-        Self {
-            resource_key: ResourceKey::new(name),
-            ..Default::default()
-        }
+        Self { resource_key: ResourceKey::new(name), ..Default::default() }
     }
 
     pub fn namespaced(name: &str, namespace: &str) -> Self {
-        Self {
-            resource_key: ResourceKey::namespaced(name, namespace),
-            ..Default::default()
-        }
+        Self { resource_key: ResourceKey::namespaced(name, namespace), ..Default::default() }
     }
 }
 

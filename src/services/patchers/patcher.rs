@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kube::{
-    api::{Patch, PatchParams},
     Api, Resource, ResourceExt,
+    api::{Patch, PatchParams},
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -76,34 +76,30 @@ where
                         Err(e) => error!("patch status failed {e:?}"),
                     }
                     let _ = response_sender.send(res);
-                }
-                Operation::PatchFinalizer(FinalizerContext {
-                    resource_key,
-                    controller_name,
-                    finalizer_name,
-                }) => {
+                },
+                Operation::PatchFinalizer(FinalizerContext { resource_key, controller_name, finalizer_name }) => {
                     info!("PatcherService PatchFinalizer {}", resource_key);
                     let api = self.api(&resource_key.namespace);
-                    let res = FinalizerPatcher::patch_finalizer(&api, &resource_key.name, &controller_name, &finalizer_name).await;
+                    let res =
+                        FinalizerPatcher::patch_finalizer(&api, &resource_key.name, &controller_name, &finalizer_name)
+                            .await;
                     match &res {
                         Ok(_new_gateway) => debug!("finalizer ok"),
                         Err(e) => error!("finalizer failed {resource_key} {controller_name} {finalizer_name} {e:?}"),
                     }
-                }
-                Operation::Delete(DeleteContext {
-                    resource_key,
-                    resource,
-                    controller_name,
-                }) => {
+                },
+                Operation::Delete(DeleteContext { resource_key, resource, controller_name }) => {
                     info!("PatcherService {} PatchDelete {}", std::any::type_name_of_val(&resource), resource_key);
                     let api = self.api(&resource_key.namespace);
-                    let res: Result<kube::runtime::controller::Action, kube::runtime::finalizer::Error<ControllerError>> =
-                        ResourceFinalizer::delete_resource(&api, &controller_name, &Arc::new(resource)).await;
+                    let res: Result<
+                        kube::runtime::controller::Action,
+                        kube::runtime::finalizer::Error<ControllerError>,
+                    > = ResourceFinalizer::delete_resource(&api, &controller_name, &Arc::new(resource)).await;
                     match res {
                         Ok(_new_gateway) => debug!("delete result ok"),
                         Err(e) => error!("delete failed {e:?}"),
                     }
-                }
+                },
             }
         }
         crate::Result::<()>::Ok(())

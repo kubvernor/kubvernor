@@ -1,15 +1,18 @@
 use std::{collections::BTreeSet, sync::Arc};
 
-use futures::{future::BoxFuture, FutureExt};
+use futures::{FutureExt, future::BoxFuture};
 use gateway_api::referencegrants::{ReferenceGrant, ReferenceGrantFrom, ReferenceGrantTo};
-use kube::{api::ListParams, Api, Client, ResourceExt};
+use kube::{Api, Client, ResourceExt, api::ListParams};
 use kube_core::ObjectList;
 use tokio::time;
 use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{resource_key::DEFAULT_GROUP_NAME, Backend, Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey, TlsType},
+    common::{
+        Backend, Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey, TlsType,
+        resource_key::DEFAULT_GROUP_NAME,
+    },
     controllers::find_linked_routes,
     state::State,
 };
@@ -31,11 +34,7 @@ pub struct FromResourceKey {
 
 impl From<ResourceKey> for FromResourceKey {
     fn from(rk: ResourceKey) -> Self {
-        Self {
-            group: rk.group,
-            namespace: rk.namespace,
-            kind: rk.kind,
-        }
+        Self { group: rk.group, namespace: rk.namespace, kind: rk.kind }
     }
 }
 
@@ -47,11 +46,7 @@ impl From<&ResourceKey> for FromResourceKey {
 
 impl From<&ReferenceGrantFrom> for FromResourceKey {
     fn from(rk: &ReferenceGrantFrom) -> Self {
-        Self {
-            group: rk.group.clone(),
-            namespace: rk.namespace.clone(),
-            kind: rk.kind.clone(),
-        }
+        Self { group: rk.group.clone(), namespace: rk.namespace.clone(), kind: rk.kind.clone() }
     }
 }
 
@@ -116,7 +111,10 @@ impl ReferenceGrantsResolver {
         for route in linked_routes {
             let from = route.resource_key();
             for backend in &route.backends() {
-                if let Backend::Maybe(crate::common::BackendType::Service(config) | crate::common::BackendType::Invalid(config)) = backend {
+                if let Backend::Maybe(
+                    crate::common::BackendType::Service(config) | crate::common::BackendType::Invalid(config),
+                ) = backend
+                {
                     let to = &config.resource_key;
                     backend_reference_keys.insert(
                         ReferenceGrantRef::builder()
@@ -131,7 +129,9 @@ impl ReferenceGrantsResolver {
         }
 
         let mut secrets_references = BTreeSet::new();
-        for listener in gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
+        for listener in
+            gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls)
+        {
             let listener_data = listener.data();
             if let Some(TlsType::Terminate(certificates)) = &listener_data.config.tls_type {
                 for certificate in certificates {
@@ -329,7 +329,7 @@ mod tests {
     use gateway_api::referencegrants;
     use kube_core::{ApiResource, ListMeta, ObjectMeta, TypeMeta};
     use referencegrants::ReferenceGrantSpec;
-    use tokio::sync::{mpsc, Mutex};
+    use tokio::sync::{Mutex, mpsc};
 
     use super::*;
 
@@ -359,10 +359,7 @@ mod tests {
                 }];
                 let ar = ApiResource::erase::<ReferenceGrant>(&());
                 let reference_grant_list: ObjectList<ReferenceGrant> = ObjectList {
-                    types: TypeMeta {
-                        api_version: ar.api_version,
-                        kind: ar.kind + "List",
-                    },
+                    types: TypeMeta { api_version: ar.api_version, kind: ar.kind + "List" },
                     metadata: ListMeta { ..Default::default() },
                     items: vec![ReferenceGrant {
                         metadata: ObjectMeta {
@@ -450,11 +447,11 @@ mod tests {
             match event {
                 Some(ReferenceValidateRequest::UpdatedGateways { reference: _, gateways }) => {
                     assert_eq!(gateways.len(), 1);
-                }
+                },
 
                 _ => {
                     panic!("Invalid event");
-                }
+                },
             }
         });
     }
@@ -499,10 +496,7 @@ mod tests {
                 ];
                 let ar = ApiResource::erase::<ReferenceGrant>(&());
                 let reference_grant_list: ObjectList<ReferenceGrant> = ObjectList {
-                    types: TypeMeta {
-                        api_version: ar.api_version,
-                        kind: ar.kind + "List",
-                    },
+                    types: TypeMeta { api_version: ar.api_version, kind: ar.kind + "List" },
                     metadata: ListMeta { ..Default::default() },
                     items: vec![ReferenceGrant {
                         metadata: ObjectMeta {
@@ -590,11 +584,11 @@ mod tests {
             match event {
                 Some(ReferenceValidateRequest::UpdatedGateways { reference: _, gateways }) => {
                     assert_eq!(gateways.len(), 2);
-                }
+                },
 
                 _ => {
                     panic!("Invalid event");
-                }
+                },
             }
         });
     }

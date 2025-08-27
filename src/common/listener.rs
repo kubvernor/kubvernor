@@ -51,11 +51,11 @@ pub struct ListenerConfig {
 impl PartialOrd for ListenerConfig {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         match self.name.partial_cmp(&other.name) {
-            Some(core::cmp::Ordering::Equal) => {}
+            Some(core::cmp::Ordering::Equal) => {},
             ord => return ord,
         }
         match self.port.partial_cmp(&other.port) {
-            Some(core::cmp::Ordering::Equal) => {}
+            Some(core::cmp::Ordering::Equal) => {},
             ord => return ord,
         }
         self.hostname.partial_cmp(&other.hostname)
@@ -80,15 +80,21 @@ pub enum Listener {
 impl Listener {
     pub fn name(&self) -> &str {
         match self {
-            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
-                listener_data.config.name.as_str()
-            }
+            Listener::Http(listener_data)
+            | Listener::Https(listener_data)
+            | Listener::Tcp(listener_data)
+            | Listener::Tls(listener_data)
+            | Listener::Udp(listener_data) => listener_data.config.name.as_str(),
         }
     }
 
     pub fn port(&self) -> i32 {
         match self {
-            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => listener_data.config.port,
+            Listener::Http(listener_data)
+            | Listener::Https(listener_data)
+            | Listener::Tcp(listener_data)
+            | Listener::Tls(listener_data)
+            | Listener::Udp(listener_data) => listener_data.config.port,
         }
     }
 
@@ -103,63 +109,91 @@ impl Listener {
     }
     pub fn hostname(&self) -> Option<&String> {
         match self {
-            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
-                listener_data.config.hostname.as_ref()
-            }
+            Listener::Http(listener_data)
+            | Listener::Https(listener_data)
+            | Listener::Tcp(listener_data)
+            | Listener::Tls(listener_data)
+            | Listener::Udp(listener_data) => listener_data.config.hostname.as_ref(),
         }
     }
 
     pub fn config(&self) -> &ListenerConfig {
         match self {
-            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => &listener_data.config,
+            Listener::Http(listener_data)
+            | Listener::Https(listener_data)
+            | Listener::Tcp(listener_data)
+            | Listener::Tls(listener_data)
+            | Listener::Udp(listener_data) => &listener_data.config,
         }
     }
 
     pub fn conditions(&self) -> impl Iterator<Item = &ListenerCondition> {
         match self {
-            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
-                listener_data.conditions.iter()
-            }
+            Listener::Http(listener_data)
+            | Listener::Https(listener_data)
+            | Listener::Tcp(listener_data)
+            | Listener::Tls(listener_data)
+            | Listener::Udp(listener_data) => listener_data.conditions.iter(),
         }
     }
 
     pub fn conditions_mut(&mut self) -> &mut ListenerConditions {
         match self {
-            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
-                &mut listener_data.conditions
-            }
+            Listener::Http(listener_data)
+            | Listener::Https(listener_data)
+            | Listener::Tcp(listener_data)
+            | Listener::Tls(listener_data)
+            | Listener::Udp(listener_data) => &mut listener_data.conditions,
         }
     }
 
     pub fn data_mut(&mut self) -> &mut ListenerData {
         match self {
-            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => listener_data,
+            Listener::Http(listener_data)
+            | Listener::Https(listener_data)
+            | Listener::Tcp(listener_data)
+            | Listener::Tls(listener_data)
+            | Listener::Udp(listener_data) => listener_data,
         }
     }
 
     pub fn data(&self) -> &ListenerData {
         match self {
-            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => listener_data,
+            Listener::Http(listener_data)
+            | Listener::Https(listener_data)
+            | Listener::Tcp(listener_data)
+            | Listener::Tls(listener_data)
+            | Listener::Udp(listener_data) => listener_data,
         }
     }
 
     pub fn routes(&self) -> (Vec<&Route>, Vec<&Route>) {
         match self {
-            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
+            Listener::Http(listener_data)
+            | Listener::Https(listener_data)
+            | Listener::Tcp(listener_data)
+            | Listener::Tls(listener_data)
+            | Listener::Udp(listener_data) => {
                 (Vec::from_iter(&listener_data.resolved_routes), Vec::from_iter(&listener_data.unresolved_routes))
-            }
+            },
         }
     }
 
     pub fn update_routes(&mut self, resolved_routes: BTreeSet<Route>, unresolved_routes: BTreeSet<Route>) {
         match self {
-            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
+            Listener::Http(listener_data)
+            | Listener::Https(listener_data)
+            | Listener::Tcp(listener_data)
+            | Listener::Tls(listener_data)
+            | Listener::Udp(listener_data) => {
                 if !unresolved_routes.is_empty() {
                     if let Some(route) = unresolved_routes.first() {
-                        if *route.resolution_status() == ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted) {
-                            listener_data
-                                .conditions
-                                .replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidBackend(APPROVED_ROUTES.iter().map(|s| (*s).to_owned()).collect())));
+                        if *route.resolution_status()
+                            == ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted)
+                        {
+                            listener_data.conditions.replace(ListenerCondition::ResolvedRefs(
+                                ResolvedRefs::InvalidBackend(APPROVED_ROUTES.iter().map(|s| (*s).to_owned()).collect()),
+                            ));
                         }
                     } else {
                         listener_data.conditions.replace(ListenerCondition::UnresolvedRouteRefs);
@@ -169,15 +203,17 @@ impl Listener {
                 listener_data.attached_routes = unresolved_routes.len() + resolved_routes.len();
                 listener_data.resolved_routes = resolved_routes;
                 listener_data.unresolved_routes = unresolved_routes;
-            }
+            },
         }
     }
 
     pub fn attached_routes(&self) -> usize {
         match self {
-            Listener::Http(listener_data) | Listener::Https(listener_data) | Listener::Tcp(listener_data) | Listener::Tls(listener_data) | Listener::Udp(listener_data) => {
-                listener_data.attached_routes
-            }
+            Listener::Http(listener_data)
+            | Listener::Https(listener_data)
+            | Listener::Tcp(listener_data)
+            | Listener::Tls(listener_data)
+            | Listener::Udp(listener_data) => listener_data.attached_routes,
         }
     }
 }
@@ -192,7 +228,11 @@ impl TryFrom<&GatewayListeners> for Listener {
     type Error = ListenerError;
 
     fn try_from(gateway_listener: &GatewayListeners) -> std::result::Result<Self, Self::Error> {
-        let mut config = ListenerConfig::new(gateway_listener.name.clone(), gateway_listener.port, gateway_listener.hostname.clone());
+        let mut config = ListenerConfig::new(
+            gateway_listener.name.clone(),
+            gateway_listener.port,
+            gateway_listener.hostname.clone(),
+        );
 
         let condition = validate_allowed_routes(gateway_listener);
 
@@ -210,12 +250,19 @@ impl TryFrom<&GatewayListeners> for Listener {
                         .as_ref()
                         .map(|refs| {
                             refs.iter()
-                                .map(|r| Certificate::NotResolved(ResourceKey::from((r.group.clone(), r.namespace.clone(), r.name.clone(), r.kind.clone()))))
+                                .map(|r| {
+                                    Certificate::NotResolved(ResourceKey::from((
+                                        r.group.clone(),
+                                        r.namespace.clone(),
+                                        r.name.clone(),
+                                        r.kind.clone(),
+                                    )))
+                                })
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default();
                     Ok(TlsType::Terminate(secrets))
-                }
+                },
                 None => Err(ListenerError::UnknownTlsMode),
             })
             .transpose();
@@ -308,35 +355,69 @@ impl PartialEq for ListenerCondition {
 }
 
 impl ListenerCondition {
-    pub fn resolved_type(&self) -> (&'static str, constants::ListenerConditionType, constants::ListenerConditionReason) {
+    pub fn resolved_type(
+        &self,
+    ) -> (&'static str, constants::ListenerConditionType, constants::ListenerConditionReason) {
         match self {
-            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes | ResolvedRefs::ResolvedWithNotAllowedRoutes(_)) => {
-                ("False", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::InvalidRouteKinds)
-            }
+            ListenerCondition::ResolvedRefs(
+                ResolvedRefs::InvalidAllowedRoutes | ResolvedRefs::ResolvedWithNotAllowedRoutes(_),
+            ) => (
+                "False",
+                constants::ListenerConditionType::ResolvedRefs,
+                constants::ListenerConditionReason::InvalidRouteKinds,
+            ),
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidBackend(_)) => ("True", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::InvalidRouteKinds),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidBackend(_)) => (
+                "True",
+                constants::ListenerConditionType::ResolvedRefs,
+                constants::ListenerConditionReason::InvalidRouteKinds,
+            ),
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(_)) => ("True", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::ResolvedRefs),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(_)) => (
+                "True",
+                constants::ListenerConditionType::ResolvedRefs,
+                constants::ListenerConditionReason::ResolvedRefs,
+            ),
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(_)) => {
-                ("False", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::InvalidCertificateRef)
-            }
+            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(_)) => (
+                "False",
+                constants::ListenerConditionType::ResolvedRefs,
+                constants::ListenerConditionReason::InvalidCertificateRef,
+            ),
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::RefNotPermitted(_)) => ("False", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::RefNotPermitted),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::RefNotPermitted(_)) => (
+                "False",
+                constants::ListenerConditionType::ResolvedRefs,
+                constants::ListenerConditionReason::RefNotPermitted,
+            ),
 
-            ListenerCondition::UnresolvedRouteRefs => ("False", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::ResolvedRefs),
+            ListenerCondition::UnresolvedRouteRefs => (
+                "False",
+                constants::ListenerConditionType::ResolvedRefs,
+                constants::ListenerConditionReason::ResolvedRefs,
+            ),
 
-            ListenerCondition::Accepted => ("True", constants::ListenerConditionType::Accepted, constants::ListenerConditionReason::Accepted),
-            ListenerCondition::NotAccepted => ("False", constants::ListenerConditionType::Accepted, constants::ListenerConditionReason::Accepted),
-            ListenerCondition::Programmed => ("True", constants::ListenerConditionType::Programmed, constants::ListenerConditionReason::Programmed),
+            ListenerCondition::Accepted => {
+                ("True", constants::ListenerConditionType::Accepted, constants::ListenerConditionReason::Accepted)
+            },
+            ListenerCondition::NotAccepted => {
+                ("False", constants::ListenerConditionType::Accepted, constants::ListenerConditionReason::Accepted)
+            },
+            ListenerCondition::Programmed => {
+                ("True", constants::ListenerConditionType::Programmed, constants::ListenerConditionReason::Programmed)
+            },
 
-            ListenerCondition::NotProgrammed => ("False", constants::ListenerConditionType::Programmed, constants::ListenerConditionReason::Programmed),
+            ListenerCondition::NotProgrammed => {
+                ("False", constants::ListenerConditionType::Programmed, constants::ListenerConditionReason::Programmed)
+            },
         }
     }
     pub fn supported_routes(&self) -> Vec<String> {
         match self {
             ListenerCondition::ResolvedRefs(
-                ResolvedRefs::Resolved(supported_routes) | ResolvedRefs::ResolvedWithNotAllowedRoutes(supported_routes) | ResolvedRefs::InvalidCertificates(supported_routes),
+                ResolvedRefs::Resolved(supported_routes)
+                | ResolvedRefs::ResolvedWithNotAllowedRoutes(supported_routes)
+                | ResolvedRefs::InvalidCertificates(supported_routes),
             ) => supported_routes.clone(),
             _ => APPROVED_ROUTES.iter().map(|r| (*r).to_owned()).collect(),
         }
@@ -349,15 +430,21 @@ fn validate_allowed_routes(gateway_listeners: &GatewayListeners) -> ListenerCond
     if let Some(ar) = gateway_listeners.allowed_routes.as_ref() {
         if let Some(kinds) = ar.kinds.as_ref() {
             let cloned_kinds = kinds.clone().into_iter().map(|k| k.kind);
-            let (supported, invalid): (Vec<_>, Vec<_>) = cloned_kinds.partition(|f| APPROVED_ROUTES.contains(&f.as_str()));
+            let (supported, invalid): (Vec<_>, Vec<_>) =
+                cloned_kinds.partition(|f| APPROVED_ROUTES.contains(&f.as_str()));
 
             match (supported.is_empty(), invalid.is_empty()) {
                 (_, true) => ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(supported)),
                 (true, false) => ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes),
-                (false, false) => ListenerCondition::ResolvedRefs(ResolvedRefs::ResolvedWithNotAllowedRoutes(supported)),
+                (false, false) => {
+                    ListenerCondition::ResolvedRefs(ResolvedRefs::ResolvedWithNotAllowedRoutes(supported))
+                },
             }
         } else if gateway_listeners.protocol == "HTTP" || gateway_listeners.protocol == "HTTPS" {
-            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec!["HTTPRoute".to_owned(), "GRPCRoute".to_owned()]))
+            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec![
+                "HTTPRoute".to_owned(),
+                "GRPCRoute".to_owned(),
+            ]))
         } else {
             ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec![]))
         }

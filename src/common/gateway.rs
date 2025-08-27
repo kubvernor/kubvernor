@@ -1,5 +1,5 @@
 use std::{
-    collections::{btree_map, BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, btree_map},
     fmt::Display,
 };
 
@@ -17,6 +17,25 @@ pub struct Gateway {
     addresses: BTreeSet<GatewayAddress>,
     listeners: BTreeMap<String, Listener>,
     orphaned_routes: BTreeSet<Route>,
+    backend_type: GatewayImplementationType,
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
+pub enum GatewayImplementationType {
+    Envoy,
+    Agentgateway,
+}
+
+impl TryFrom<Option<&String>> for GatewayImplementationType {
+    type Error = crate::Error;
+
+    fn try_from(value: Option<&String>) -> Result<Self, Self::Error> {
+        match value.map(std::string::String::as_str) {
+            Some("agentgateway") => Ok(GatewayImplementationType::Agentgateway),
+            Some("envoy") | None => Ok(GatewayImplementationType::Envoy),
+            Some(_) => Err("Invalid backend type ".into()),
+        }
+    }
 }
 
 impl PartialEq for Gateway {
@@ -88,16 +107,22 @@ impl Gateway {
     pub fn orphaned_routes(&self) -> &BTreeSet<Route> {
         &self.orphaned_routes
     }
+
+    pub fn backend_type(&self) -> &GatewayImplementationType {
+        &self.backend_type
+    }
 }
 
 impl TryFrom<&KubeGateway> for Gateway {
     type Error = GatewayError;
 
     fn try_from(gateway: &KubeGateway) -> std::result::Result<Self, Self::Error> {
-        let id = Uuid::parse_str(&gateway.metadata.uid.clone().unwrap_or_default()).map_err(|_| GatewayError::ConversionProblem("Can't parse uuid".to_owned()))?;
+        let id = Uuid::parse_str(&gateway.metadata.uid.clone().unwrap_or_default())
+            .map_err(|_| GatewayError::ConversionProblem("Can't parse uuid".to_owned()))?;
         let resource_key = ResourceKey::from(gateway);
 
-        let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) = VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
+        let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) =
+            VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
         if !listener_validation_errrors.is_empty() {
             return Err(GatewayError::ConversionProblem("Misconfigured listeners".to_owned()));
         }
@@ -108,6 +133,34 @@ impl TryFrom<&KubeGateway> for Gateway {
             addresses: BTreeSet::new(),
             listeners: listeners.into_iter().map(|l| (l.name().to_owned(), l)).collect::<BTreeMap<String, Listener>>(),
             orphaned_routes: BTreeSet::new(),
+            backend_type: GatewayImplementationType::Envoy,
+        })
+    }
+}
+
+impl TryFrom<(&KubeGateway, GatewayImplementationType)> for Gateway {
+    type Error = GatewayError;
+
+    fn try_from(
+        (gateway, backend_type): (&KubeGateway, GatewayImplementationType),
+    ) -> std::result::Result<Self, Self::Error> {
+        let id = Uuid::parse_str(&gateway.metadata.uid.clone().unwrap_or_default())
+            .map_err(|_| GatewayError::ConversionProblem("Can't parse uuid".to_owned()))?;
+        let resource_key = ResourceKey::from(gateway);
+
+        let (listeners, listener_validation_errrors): (Vec<_>, Vec<_>) =
+            VerifiyItems::verify(gateway.spec.listeners.iter().map(Listener::try_from));
+        if !listener_validation_errrors.is_empty() {
+            return Err(GatewayError::ConversionProblem("Misconfigured listeners".to_owned()));
+        }
+
+        Ok(Self {
+            id,
+            resource_key,
+            addresses: BTreeSet::new(),
+            listeners: listeners.into_iter().map(|l| (l.name().to_owned(), l)).collect::<BTreeMap<String, Listener>>(),
+            orphaned_routes: BTreeSet::new(),
+            backend_type,
         })
     }
 }
@@ -127,6 +180,12 @@ pub struct ChangedContext {
 
 impl Display for ChangedContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Gateway {}.{} listeners = {} ", self.gateway.name(), self.gateway.namespace(), self.gateway.listeners.len(),)
+        write!(
+            f,
+            "Gateway {}.{} listeners = {} ",
+            self.gateway.name(),
+            self.gateway.namespace(),
+            self.gateway.listeners.len(),
+        )
     }
 }

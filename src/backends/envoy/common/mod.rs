@@ -4,7 +4,7 @@ mod route;
 use envoy_api_rs::{
     envoy::config::{
         cluster::v3::Cluster as EnvoyCluster,
-        core::v3::{address, socket_address::PortSpecifier, Address, SocketAddress},
+        core::v3::{Address, SocketAddress, address, socket_address::PortSpecifier},
         route::v3::Route as EnvoyRoute,
     },
     google::protobuf::Duration,
@@ -59,7 +59,9 @@ impl SocketAddressFactory {
         Address {
             address: Some(address::Address::SocketAddress(SocketAddress {
                 address: "0.0.0.0".to_owned(),
-                port_specifier: Some(PortSpecifier::PortValue(listener.port.try_into().expect("For time being we expect this to work"))),
+                port_specifier: Some(PortSpecifier::PortValue(
+                    listener.port.try_into().expect("For time being we expect this to work"),
+                )),
                 resolver_name: String::new(),
                 ipv4_compat: false,
                 ..Default::default()
@@ -71,7 +73,9 @@ impl SocketAddressFactory {
         Address {
             address: Some(address::Address::SocketAddress(SocketAddress {
                 address: backend.endpoint.clone(),
-                port_specifier: Some(PortSpecifier::PortValue(backend.effective_port.try_into().expect("For time being we expect this to work"))),
+                port_specifier: Some(PortSpecifier::PortValue(
+                    backend.effective_port.try_into().expect("For time being we expect this to work"),
+                )),
                 ..Default::default()
             })),
         }
@@ -81,7 +85,9 @@ impl SocketAddressFactory {
         Address {
             address: Some(address::Address::SocketAddress(SocketAddress {
                 address,
-                port_specifier: Some(PortSpecifier::PortValue(port.try_into().expect("For time being we expect this to work"))),
+                port_specifier: Some(PortSpecifier::PortValue(
+                    port.try_into().expect("For time being we expect this to work"),
+                )),
                 ..Default::default()
             })),
         }

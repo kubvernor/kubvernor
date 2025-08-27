@@ -5,8 +5,8 @@ use serde::Serialize;
 use tracing::{debug, info, warn};
 
 use super::{
-    super::common::{resource_generator::calculate_hostnames_common, HTTPEffectiveRoutingRule},
-    envoy_deployer::{create_certificate_name, create_key_name, create_secret_name, TEMPLATES},
+    super::common::{HTTPEffectiveRoutingRule, resource_generator::calculate_hostnames_common},
+    envoy_deployer::{TEMPLATES, create_certificate_name, create_key_name, create_secret_name},
 };
 use crate::{
     common::{self, Backend, BackendTypeConfig, Listener, ProtocolType, Route, RouteType, TlsType},
@@ -34,12 +34,7 @@ pub struct XdsData {
 
 impl XdsData {
     pub fn new(bootstrap_content: String, lds_content: String, rds_content: Vec<RdsData>, cds_content: String) -> Self {
-        Self {
-            bootstrap_content,
-            lds_content,
-            rds_content,
-            cds_content,
-        }
+        Self { bootstrap_content, lds_content, rds_content, cds_content }
     }
 }
 
@@ -133,10 +128,10 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     ProtocolType::Http | ProtocolType::Https => {
                         let mut new_listener = Self::generate_virtual_hosts(gateway_name, listener);
                         envoy_listener.http_listener_map.append(&mut new_listener.http_listener_map);
-                    }
+                    },
                     ProtocolType::Tcp => {
                         envoy_listener.tcp_listener_map.insert((listener_name, listener_hostname));
-                    }
+                    },
                     _ => (),
                 }
             } else {
@@ -144,7 +139,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     ProtocolType::Http | ProtocolType::Https => {
                         let envoy_listener = Self::generate_virtual_hosts(gateway_name, listener);
                         acc.insert(port, envoy_listener);
-                    }
+                    },
                     ProtocolType::Tcp => {
                         let mut listener_map = BTreeSet::new();
                         listener_map.insert((listener_name, listener_hostname));
@@ -158,7 +153,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                 tls_type: None,
                             },
                         );
-                    }
+                    },
                     _ => (),
                 }
             }
@@ -262,11 +257,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
         }
         impl From<HTTPHeader> for TeraFilterHeader {
             fn from(header: HTTPHeader) -> Self {
-                Self {
-                    name: header.name,
-                    value: header.value,
-                    action: FilterHeaderAction::AppendIfExistsOrAdd,
-                }
+                Self { name: header.name, value: header.value, action: FilterHeaderAction::AppendIfExistsOrAdd }
             }
         }
 
@@ -296,13 +287,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
         }
 
         let mut tera_context = tera::Context::new();
-        let EnvoyListener {
-            name,
-            port,
-            http_listener_map,
-            tcp_listener_map: _,
-            tls_type: _,
-        } = listener;
+        let EnvoyListener { name, port, http_listener_map, tcp_listener_map: _, tls_type: _ } = listener;
 
         let tvh: Vec<TeraVirtualHost> = http_listener_map
             .iter()
@@ -312,7 +297,9 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     .iter()
                     .map(|er| VeraRouteConfigs {
                         path: er.route_matcher.path.clone().map(|matcher| TeraPath {
-                            path: matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v }),
+                            path: matcher.value.clone().map_or("/".to_owned(), |v| {
+                                if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v }
+                            }),
                             match_type: matcher.r#type.map_or(String::new(), |f| match f {
                                 httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
                                 httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
@@ -325,7 +312,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                     } else {
                                         "prefix".to_owned()
                                     }
-                                }
+                                },
                                 httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
                             }),
                         }),
@@ -348,10 +335,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                 _ => None,
                             })
                             .filter(|b| b.weight() > 0)
-                            .map(|b| TeraClusterName {
-                                name: b.cluster_name(),
-                                weight: b.weight(),
-                            })
+                            .map(|b| TeraClusterName { name: b.cluster_name(), weight: b.weight() })
                             .collect(),
                         request_headers_to_add_or_set: er
                             .request_headers
@@ -359,10 +343,12 @@ impl<'a> EnvoyXDSGenerator<'a> {
                             .clone()
                             .into_iter()
                             .map(TeraFilterHeader::from)
-                            .chain(er.request_headers.set.clone().into_iter().map(TeraFilterHeader::from).map(|mut th| {
-                                th.action = FilterHeaderAction::OverwriteIfExistsOrAdd;
-                                th
-                            }))
+                            .chain(er.request_headers.set.clone().into_iter().map(TeraFilterHeader::from).map(
+                                |mut th| {
+                                    th.action = FilterHeaderAction::OverwriteIfExistsOrAdd;
+                                    th
+                                },
+                            ))
                             .collect(),
                         request_headers_to_remove: er.request_headers.remove.clone(),
                         response_headers_to_add_or_set: vec![],
@@ -389,10 +375,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
             })
             .collect();
         let route_name = format!("{}-{}-route", name.clone(), port);
-        let tr = TeraRoute {
-            name: route_name.clone(),
-            virtual_hosts: tvh,
-        };
+        let tr = TeraRoute { name: route_name.clone(), virtual_hosts: tvh };
         tera_context.insert("route", &tr);
         let rds_content = TEMPLATES.render("rds.yaml.tera", &tera_context)?;
         Ok(RdsData::new(route_name, rds_content))
@@ -460,7 +443,9 @@ impl<'a> EnvoyXDSGenerator<'a> {
                             .iter()
                             .filter_map(|cert| match cert {
                                 common::Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
-                                common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) | common::Certificate::ResolvedCrossSpace(_) => None,
+                                common::Certificate::NotResolved(_)
+                                | common::Certificate::Invalid(_)
+                                | common::Certificate::ResolvedCrossSpace(_) => None,
                             })
                             .map(|certificate_key| TeraSecret {
                                 name: create_secret_name(certificate_key),
@@ -508,11 +493,11 @@ impl<'a> EnvoyXDSGenerator<'a> {
                             .iter()
                             .filter_map(|cert| match cert {
                                 common::Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
-                                common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) | common::Certificate::ResolvedCrossSpace(_) => None,
+                                common::Certificate::NotResolved(_)
+                                | common::Certificate::Invalid(_)
+                                | common::Certificate::ResolvedCrossSpace(_) => None,
                             })
-                            .map(|certificate_key| TeraSecret {
-                                name: create_secret_name(certificate_key),
-                            })
+                            .map(|certificate_key| TeraSecret { name: create_secret_name(certificate_key) })
                             .collect(),
                     )
                 } else {

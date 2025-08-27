@@ -22,10 +22,7 @@ pub fn create_listener_resource(listener: &Listener) -> Resource {
     let mut buf: Vec<u8> = vec![];
     listener.encode(&mut buf).expect("We expect this to work");
     let any = prost::bytes::Bytes::from(buf);
-    let any = envoy_api_rs::google::protobuf::Any {
-        type_url: TypeUrl::Listener.to_string(),
-        value: any.to_vec(),
-    };
+    let any = envoy_api_rs::google::protobuf::Any { type_url: TypeUrl::Listener.to_string(), value: any.to_vec() };
 
     let mut listener_resource = Resource { ..Default::default() };
     listener_resource.name.clone_from(&listener.name);

@@ -26,12 +26,14 @@ impl PartialOrd for HTTPEffectiveRoutingRule {
 
 impl HTTPEffectiveRoutingRule {
     fn header_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
-        let matcher = super::HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
+        let matcher =
+            super::HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
         matcher.compare_headers()
     }
 
     fn query_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
-        let matcher = super::QueryComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
+        let matcher =
+            super::QueryComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
         matcher.compare_queries()
     }
 
@@ -44,7 +46,7 @@ impl HTTPEffectiveRoutingRule {
                 let this_desc = this_method.clone() as isize;
                 let other_desc = other_method.clone() as isize;
                 this_desc.cmp(&other_desc)
-            }
+            },
         }
     }
     fn path_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
@@ -70,7 +72,7 @@ impl HTTPEffectiveRoutingRule {
                     } else {
                         maybe_equal
                     }
-                }
+                },
             },
         }
     }
@@ -82,18 +84,16 @@ impl HTTPEffectiveRoutingRule {
         let query_match = Self::query_matching(this, other);
         let result = if query_match == std::cmp::Ordering::Equal {
             if header_match == std::cmp::Ordering::Equal {
-                if path_match == std::cmp::Ordering::Equal {
-                    method_match
-                } else {
-                    path_match
-                }
+                if path_match == std::cmp::Ordering::Equal { method_match } else { path_match }
             } else {
                 header_match
             }
         } else {
             query_match
         };
-        debug!("Comparing {this:#?} {other:#?} {result:?} {path_match:?} {header_match:?} {query_match:?} {method_match:?}");
+        debug!(
+            "Comparing {this:#?} {other:#?} {result:?} {path_match:?} {header_match:?} {query_match:?} {method_match:?}"
+        );
         result
     }
 }

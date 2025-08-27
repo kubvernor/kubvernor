@@ -35,16 +35,8 @@ pub fn test_headers_sorting_rules() {
         HTTPEffectiveRoutingRule {
             route_matcher: RouteMatch {
                 headers: Some(vec![
-                    HeaderMatch {
-                        name: "version".to_owned(),
-                        value: "two".to_owned(),
-                        ..Default::default()
-                    },
-                    HeaderMatch {
-                        name: "color".to_owned(),
-                        value: "orange".to_owned(),
-                        ..Default::default()
-                    },
+                    HeaderMatch { name: "version".to_owned(), value: "two".to_owned(), ..Default::default() },
+                    HeaderMatch { name: "color".to_owned(), value: "orange".to_owned(), ..Default::default() },
                 ]),
                 ..Default::default()
             },

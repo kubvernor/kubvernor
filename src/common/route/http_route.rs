@@ -7,11 +7,12 @@ use gateway_api::{
 use kube::ResourceExt;
 
 use super::{
-    get_add_headers, get_remove_headers, get_set_headers, Backend, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType, ServiceTypeConfig,
-    DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME,
+    Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, FilterHeaders, NotResolvedReason, ResolutionStatus,
+    ResourceKey, Route, RouteConfig, RouteType, ServiceTypeConfig, get_add_headers, get_remove_headers,
+    get_set_headers,
 };
 use crate::{
-    common::{resource_key::DEFAULT_INFERENCE_GROUP_NAME, BackendType, InferencePoolTypeConfig},
+    common::{BackendType, InferencePoolTypeConfig, resource_key::DEFAULT_INFERENCE_GROUP_NAME},
     controllers::ControllerError,
 };
 
@@ -47,12 +48,16 @@ impl TryFrom<&HTTPRoute> for Route {
                     .iter()
                     .map(|br| match br.kind.as_ref() {
                         None => Backend::Maybe(BackendType::Service(ServiceTypeConfig::from((br, local_namespace)))),
-                        Some(kind) if kind == "Service" => Backend::Maybe(BackendType::Service(ServiceTypeConfig::from((br, local_namespace)))),
-                        Some(kind) if kind == "InferencePool" => Backend::Maybe(BackendType::InferencePool(InferencePoolTypeConfig::from((br, local_namespace)))),
+                        Some(kind) if kind == "Service" => {
+                            Backend::Maybe(BackendType::Service(ServiceTypeConfig::from((br, local_namespace))))
+                        },
+                        Some(kind) if kind == "InferencePool" => Backend::Maybe(BackendType::InferencePool(
+                            InferencePoolTypeConfig::from((br, local_namespace)),
+                        )),
                         _ => {
                             has_invalid_backends = true;
                             Backend::Invalid(BackendType::Invalid(ServiceTypeConfig::from((br, local_namespace))))
-                        }
+                        },
                     })
                     .collect(),
             })
@@ -62,7 +67,11 @@ impl TryFrom<&HTTPRoute> for Route {
             .hostnames
             .as_ref()
             .map(|hostnames| {
-                let hostnames = hostnames.iter().filter(|hostname| hostname.parse::<IpAddr>().is_err()).cloned().collect::<Vec<_>>();
+                let hostnames = hostnames
+                    .iter()
+                    .filter(|hostname| hostname.parse::<IpAddr>().is_err())
+                    .cloned()
+                    .collect::<Vec<_>>();
                 hostnames
             })
             .unwrap_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()]);
@@ -97,11 +106,7 @@ impl From<(&HTTPBackendReference, &str)> for ServiceTypeConfig {
         ServiceTypeConfig {
             resource_key: ResourceKey::from((br, local_namespace.to_owned())),
             endpoint: if let Some(namespace) = br.namespace.as_ref() {
-                if *namespace == DEFAULT_NAMESPACE_NAME {
-                    br.name.clone()
-                } else {
-                    format!("{}.{namespace}", br.name)
-                }
+                if *namespace == DEFAULT_NAMESPACE_NAME { br.name.clone() } else { format!("{}.{namespace}", br.name) }
             } else if local_namespace == DEFAULT_NAMESPACE_NAME {
                 br.name.clone()
             } else {
@@ -121,11 +126,7 @@ impl From<(&HTTPBackendReference, &str)> for InferencePoolTypeConfig {
         InferencePoolTypeConfig {
             resource_key,
             endpoint: if let Some(namespace) = br.namespace.as_ref() {
-                if *namespace == DEFAULT_NAMESPACE_NAME {
-                    br.name.clone()
-                } else {
-                    format!("{}.{namespace}", br.name)
-                }
+                if *namespace == DEFAULT_NAMESPACE_NAME { br.name.clone() } else { format!("{}.{namespace}", br.name) }
             } else if local_namespace == DEFAULT_NAMESPACE_NAME {
                 br.name.clone()
             } else {

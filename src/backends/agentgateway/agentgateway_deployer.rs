@@ -1,7 +1,6 @@
 use std::sync::LazyLock;
 
 use futures::FutureExt;
-
 use kube::Client;
 use tera::Tera;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -15,7 +14,7 @@ pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templat
     Err(e) => {
         warn!("Parsing error(s): {}", e);
         ::std::process::exit(1);
-    }
+    },
 });
 
 #[derive(TypedBuilder)]
