@@ -8,8 +8,11 @@ use tracing::{error, info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{self, BackendReferenceResolver, GatewayDeployRequest, ReferenceGrantsResolver, ReferenceValidateRequest, RequestContext, SecretsResolver},
-    controllers::{inference_pool::clear_all_conditions, ListenerTlsConfigValidator, RoutesResolver},
+    common::{
+        self, BackendReferenceResolver, GatewayDeployRequest, ReferenceGrantsResolver, ReferenceValidateRequest,
+        RequestContext, SecretsResolver,
+    },
+    controllers::{ListenerTlsConfigValidator, RoutesResolver, inference_pool::clear_all_conditions},
     services::patchers::{Operation, PatchContext},
     state::State,
 };
@@ -71,11 +74,7 @@ impl ReferenceResolverHandler {
     async fn handle(&self, resolve_event: ReferenceValidateRequest) {
         match resolve_event {
             ReferenceValidateRequest::AddGateway(boxed) => {
-                let RequestContext {
-                    gateway,
-                    kube_gateway,
-                    gateway_class_name,
-                } = *boxed;
+                let RequestContext { gateway, kube_gateway, gateway_class_name } = *boxed;
                 info!("ReferenceResolverService action = AddGateway {}", gateway.key());
                 let key = gateway.key().clone();
                 self.secrets_resolver.add_secretes_by_gateway(&gateway).await;
@@ -94,28 +93,31 @@ impl ReferenceResolverHandler {
                             .build(),
                     ))
                     .await;
-            }
+            },
 
             ReferenceValidateRequest::DeleteGateway { gateway } => {
                 info!("ReferenceResolverService action = DeleteGateway {}", gateway.key());
                 self.secrets_resolver.delete_secrets_by_gateway(&gateway).await;
                 self.backend_references_resolver.delete_references_by_gateway(&gateway).await;
                 self.reference_grants_resolver.delete_references_by_gateway(&gateway).await;
-            }
+            },
 
             ReferenceValidateRequest::AddRoute { route_key, references } => {
                 info!("ReferenceResolverService action = AddRouteReferences {route_key} {references:?}");
-            }
+            },
             ReferenceValidateRequest::DeleteRoute { route_key, references } => {
                 info!("ReferenceResolverService action = DeleteRouteAndValidateRequest {route_key:?} {references:?}");
-                let affected_gateways = self.backend_references_resolver.delete_route_references(&route_key, &references).await;
+                let affected_gateways =
+                    self.backend_references_resolver.delete_route_references(&route_key, &references).await;
 
                 self.update_inference_pools(route_key, references, &affected_gateways).await;
 
                 info!("Update gateways affected gateways  {affected_gateways:?}");
                 for gateway_id in affected_gateways {
-                    if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
-                        let gateway = common::Gateway::try_from(&*kube_gateway).expect("We expect this to work since KubeGateway was validated");
+                    if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work")
+                    {
+                        let gateway = common::Gateway::try_from(&*kube_gateway)
+                            .expect("We expect this to work since KubeGateway was validated");
                         let gateway_class_name = kube_gateway.spec.gateway_class_name.clone();
                         let backend_gateway = self.process(gateway, &kube_gateway).await;
 
@@ -132,16 +134,18 @@ impl ReferenceResolverHandler {
                             .await;
                     }
                 }
-            }
+            },
             ReferenceValidateRequest::UpdatedRoutes { reference, updated_routes } => {
                 info!("ReferenceResolverService action = UpdatedRoutes {reference} {updated_routes:?}");
-            }
+            },
 
             ReferenceValidateRequest::UpdatedGateways { reference, gateways } => {
                 info!("ReferenceResolverService action = UpdatedGateways {reference} {gateways:?}");
                 for gateway_id in gateways {
-                    if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
-                        let gateway = common::Gateway::try_from(&*kube_gateway).expect("We expect this to work since KubeGateway was validated");
+                    if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work")
+                    {
+                        let gateway = common::Gateway::try_from(&*kube_gateway)
+                            .expect("We expect this to work since KubeGateway was validated");
                         let key = gateway.key().clone();
                         let gateway_class_name = kube_gateway.spec.gateway_class_name.clone();
                         let backend_gateway = self.process(gateway, &kube_gateway).await;
@@ -159,11 +163,14 @@ impl ReferenceResolverHandler {
                             .await;
                     }
                 }
-            }
+            },
         }
     }
     async fn process(&self, gateway: common::Gateway, kube_gateway: &Gateway) -> common::Gateway {
-        let backend_gateway = ListenerTlsConfigValidator::new(gateway, &self.secrets_resolver, &self.reference_grants_resolver).validate().await;
+        let backend_gateway =
+            ListenerTlsConfigValidator::new(gateway, &self.secrets_resolver, &self.reference_grants_resolver)
+                .validate()
+                .await;
         let resolver = RoutesResolver::builder()
             .gateway(backend_gateway)
             .kube_gateway(kube_gateway)
@@ -178,7 +185,12 @@ impl ReferenceResolverHandler {
         resolver.validate().await
     }
 
-    async fn update_inference_pools(&self, route_key: common::ResourceKey, references: BTreeSet<common::ResourceKey>, affected_gateways: &BTreeSet<common::ResourceKey>) {
+    async fn update_inference_pools(
+        &self,
+        route_key: common::ResourceKey,
+        references: BTreeSet<common::ResourceKey>,
+        affected_gateways: &BTreeSet<common::ResourceKey>,
+    ) {
         info!("Updating inference pools for deleted route {route_key} {references:?} {affected_gateways:?}");
         for pool_reference in references.iter().filter(|r| r.kind == "InferencePool") {
             if let Some(pool) = self.state.get_inference_pool(pool_reference).expect("We expect this to work") {

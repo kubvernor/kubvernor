@@ -19,7 +19,9 @@ impl SecretsResolver {
 
         let references = || {
             let mut keys = BTreeSet::new();
-            for listener in gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
+            for listener in
+                gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls)
+            {
                 let listener_data = listener.data();
                 if let Some(TlsType::Terminate(certificates)) = &listener_data.config.tls_type {
                     for certificate in certificates {
@@ -37,7 +39,9 @@ impl SecretsResolver {
         let gateway_key = gateway.key();
         let references = || {
             let mut keys = BTreeSet::new();
-            for listener in gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
+            for listener in
+                gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls)
+            {
                 let listener_data = listener.data();
                 if let Some(TlsType::Terminate(certificates)) = &listener_data.config.tls_type {
                     for certificate in certificates {

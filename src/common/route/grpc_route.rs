@@ -7,8 +7,9 @@ use gateway_api::{
 use kube::ResourceExt;
 
 use super::{
-    get_add_headers, get_remove_headers, get_set_headers, Backend, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType, ServiceTypeConfig,
-    DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME,
+    Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, FilterHeaders, NotResolvedReason, ResolutionStatus,
+    ResourceKey, Route, RouteConfig, RouteType, ServiceTypeConfig, get_add_headers, get_remove_headers,
+    get_set_headers,
 };
 use crate::{common::BackendType, controllers::ControllerError};
 
@@ -76,7 +77,11 @@ impl TryFrom<&GRPCRoute> for Route {
             .hostnames
             .as_ref()
             .map(|hostnames| {
-                let hostnames = hostnames.iter().filter(|hostname| hostname.parse::<IpAddr>().is_err()).cloned().collect::<Vec<_>>();
+                let hostnames = hostnames
+                    .iter()
+                    .filter(|hostname| hostname.parse::<IpAddr>().is_err())
+                    .cloned()
+                    .collect::<Vec<_>>();
                 hostnames
             })
             .unwrap_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()]);

@@ -11,11 +11,11 @@ use envoy_api_rs::{
     envoy::{
         config::core::v3::Node as EnvoyNode,
         service::discovery::v3::{
-            aggregated_discovery_service_server::{AggregatedDiscoveryService, AggregatedDiscoveryServiceServer},
             DeltaDiscoveryRequest, DeltaDiscoveryResponse, DiscoveryRequest, DiscoveryResponse, Resource,
+            aggregated_discovery_service_server::{AggregatedDiscoveryService, AggregatedDiscoveryServiceServer},
         },
     },
-    tonic::{transport::Server, IntoStreamingRequest, Response, Status},
+    tonic::{IntoStreamingRequest, Response, Status, transport::Server},
 };
 use futures::FutureExt;
 use k8s_openapi::api::core::v1::Pod;
@@ -25,14 +25,14 @@ use tokio::{
     sync::mpsc::{self, Receiver},
 };
 use tokio_stream::{
-    wrappers::{ReceiverStream, TcpListenerStream},
     Stream, StreamExt,
+    wrappers::{ReceiverStream, TcpListenerStream},
 };
 use tracing::{debug, info, warn};
 
 use crate::{
     backends::envoy::envoy_xds_backend::model::TypeUrl,
-    common::{create_id, ResourceKey},
+    common::{ResourceKey, create_id},
 };
 
 pub enum ServerAction {
@@ -93,12 +93,7 @@ struct AdsClient {
 
 impl AdsClient {
     fn new(client_id: SocketAddr, sender: mpsc::Sender<Result<DiscoveryResponse, Status>>) -> Self {
-        Self {
-            sender,
-            client_id,
-            gateway_id: None,
-            ack_versions: AckVersions::default(),
-        }
+        Self { sender, client_id, gateway_id: None, ack_versions: AckVersions::default() }
     }
 
     fn update_from(&mut self, value: &AdsClient) {
@@ -136,7 +131,8 @@ impl AdsClients {
 
     fn get_clients_by_gateway_id(&self, gateway_id: &str) -> Vec<AdsClient> {
         let clients = self.ads_clients.lock().expect("We expect the lock to work");
-        let clients = clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect();
+        let clients =
+            clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect();
         clients
     }
 
@@ -190,20 +186,16 @@ pub struct AggregateServerService {
 
 impl AggregateServer {
     fn new(kube_client: kube::Client, ads_channels: Arc<Mutex<ResourcesMapping>>, ads_clients: AdsClients) -> Self {
-        Self {
-            kube_client,
-            ads_channels,
-            ads_clients,
-        }
+        Self { kube_client, ads_channels, ads_clients }
     }
 }
 impl AggregateServerService {
-    fn new(stream_resources_rx: Receiver<ServerAction>, ads_channels: Arc<Mutex<ResourcesMapping>>, ads_clients: AdsClients) -> Self {
-        Self {
-            ads_channels,
-            ads_clients,
-            stream_resources_rx,
-        }
+    fn new(
+        stream_resources_rx: Receiver<ServerAction>,
+        ads_channels: Arc<Mutex<ResourcesMapping>>,
+        ads_clients: AdsClients,
+    ) -> Self {
+        Self { ads_channels, ads_clients, stream_resources_rx }
     }
 
     pub async fn start(self) {
@@ -282,7 +274,8 @@ type AggregatedDiscoveryServiceResult<T> = std::result::Result<Response<T>, Stat
 
 #[envoy_api_rs::tonic::async_trait]
 impl AggregatedDiscoveryService for AggregateServer {
-    type StreamAggregatedResourcesStream = Pin<Box<dyn Stream<Item = std::result::Result<DiscoveryResponse, Status>> + Send>>;
+    type StreamAggregatedResourcesStream =
+        Pin<Box<dyn Stream<Item = std::result::Result<DiscoveryResponse, Status>> + Send>>;
 
     async fn stream_aggregated_resources(
         &self,
@@ -366,7 +359,12 @@ impl AggregatedDiscoveryService for AggregateServer {
                                     let ack_version = ads_client.ack_versions.cluster;
                                     let response = DiscoveryResponse {
                                         type_url: TypeUrl::Cluster.to_string(),
-                                        resources: resources.iter().map(|resource| resource.resource.clone().expect("We would expect this to work")).collect(),
+                                        resources: resources
+                                            .iter()
+                                            .map(|resource| {
+                                                resource.resource.clone().expect("We would expect this to work")
+                                            })
+                                            .collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
                                         version_info: ack_version.to_string(),
 
@@ -375,7 +373,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                                     let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
                                 }
                             }
-                        }
+                        },
                         Ok(TypeUrl::Listener) => {
                             let ack_version = ads_client.versions().listener;
                             if !first_connect && incoming_version == ack_version {
@@ -405,7 +403,10 @@ impl AggregatedDiscoveryService for AggregateServer {
 
                                     let response = DiscoveryResponse {
                                         type_url: TypeUrl::Listener.to_string(),
-                                        resources: resources.iter().map(|resource| resource.resource.clone().expect("We expect this to work")).collect(),
+                                        resources: resources
+                                            .iter()
+                                            .map(|resource| resource.resource.clone().expect("We expect this to work"))
+                                            .collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
                                         version_info: ack_version.to_string(),
 
@@ -414,10 +415,10 @@ impl AggregatedDiscoveryService for AggregateServer {
                                     let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
                                 }
                             }
-                        }
+                        },
                         _ => {
                             warn!("Unknown resource type");
-                        }
+                        },
                     }
                 } else {
                     warn!("Discovery request error {:?}", item.err());
@@ -432,7 +433,8 @@ impl AggregatedDiscoveryService for AggregateServer {
         Ok(Response::new(Box::pin(output_stream) as Self::StreamAggregatedResourcesStream))
     }
 
-    type DeltaAggregatedResourcesStream = Pin<Box<dyn Stream<Item = std::result::Result<DeltaDiscoveryResponse, Status>> + Send>>;
+    type DeltaAggregatedResourcesStream =
+        Pin<Box<dyn Stream<Item = std::result::Result<DeltaDiscoveryResponse, Status>> + Send>>;
 
     async fn delta_aggregated_resources(
         &self,
@@ -445,7 +447,11 @@ impl AggregatedDiscoveryService for AggregateServer {
     }
 }
 
-pub async fn start_aggregate_server(kube_client: kube::Client, server_address: SocketAddr, stream_resources_rx: Receiver<ResourceAction>) -> crate::Result<()> {
+pub async fn start_aggregate_server(
+    kube_client: kube::Client,
+    server_address: SocketAddr,
+    stream_resources_rx: Receiver<ResourceAction>,
+) -> crate::Result<()> {
     let stream = TcpListenerStream::new(TcpListener::bind(server_address).await?);
     let channels = Arc::new(Mutex::new(ResourcesMapping::default()));
     let ads_clients = AdsClients::new();

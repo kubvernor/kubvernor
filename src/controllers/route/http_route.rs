@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gateway_api::{
     common::RouteStatus,
     httproutes::{self, HTTPRoute},
 };
 use gateway_api_inference_extension::inferencepools::InferencePool;
 use kube::{
-    runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource,
+    runtime::{Controller, controller::Action, watcher::Config},
 };
 use tokio::sync::mpsc::{self};
 use typed_builder::TypedBuilder;
@@ -19,9 +19,9 @@ use super::routes_common::CommonRouteHandler;
 use crate::{
     common::{ReferenceValidateRequest, ResourceKey, Route},
     controllers::{
+        ControllerError, RECONCILE_LONG_WAIT,
         handlers::ResourceHandler,
         utils::{ResourceCheckerArgs, ResourceState},
-        ControllerError, RECONCILE_LONG_WAIT,
     },
     services::patchers::{DeleteContext, Operation},
     state::State,
@@ -60,7 +60,10 @@ impl HttpRouteController {
         Action::requeue(RECONCILE_LONG_WAIT)
     }
 
-    async fn reconcile_http_route(resource: Arc<httproutes::HTTPRoute>, ctx: Arc<HttpRouteControllerContext>) -> Result<Action> {
+    async fn reconcile_http_route(
+        resource: Arc<httproutes::HTTPRoute>,
+        ctx: Arc<HttpRouteControllerContext>,
+    ) -> Result<Action> {
         let controller_name = ctx.controller_name.clone();
         let http_route_patcher = ctx.http_route_patcher.clone();
 
@@ -100,11 +103,7 @@ impl HttpRouteController {
 
     fn check_spec(args: ResourceCheckerArgs<HTTPRoute>) -> ResourceState {
         let (resource, stored_resource) = args;
-        if resource.spec == stored_resource.spec {
-            ResourceState::SpecNotChanged
-        } else {
-            ResourceState::SpecChanged
-        }
+        if resource.spec == stored_resource.spec { ResourceState::SpecNotChanged } else { ResourceState::SpecChanged }
     }
 
     fn check_status(args: ResourceCheckerArgs<HTTPRoute>) -> ResourceState {
@@ -181,7 +180,8 @@ impl HTTPRouteHandler<HTTPRoute> {
                 |state: &State, route_status: Option<RouteStatus>| {
                     let mut route = (**resource).clone();
                     route.status = route_status;
-                    let () = state.save_http_route(route_key.clone(), &Arc::new(route)).expect("We expect the lock to work");
+                    let () =
+                        state.save_http_route(route_key.clone(), &Arc::new(route)).expect("We expect the lock to work");
                 },
             )
             .await

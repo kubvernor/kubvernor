@@ -8,7 +8,10 @@ pub mod route;
 mod utils;
 
 use kube_core::ObjectMeta;
-pub use utils::{find_linked_routes, FinalizerPatcher, HostnameMatchFilter, ListenerTlsConfigValidator, ResourceFinalizer, RoutesResolver};
+pub use utils::{
+    FinalizerPatcher, HostnameMatchFilter, ListenerTlsConfigValidator, ResourceFinalizer, RoutesResolver,
+    find_linked_routes,
+};
 
 use crate::{
     common::ResourceKey,
@@ -39,7 +42,11 @@ impl std::fmt::Display for ControllerError {
     }
 }
 
-pub fn needs_finalizer<T: serde::Serialize>(resource_key: &ResourceKey, controller_name: &String, resource_meta: &ObjectMeta) -> Option<Operation<T>> {
+pub fn needs_finalizer<T: serde::Serialize>(
+    resource_key: &ResourceKey,
+    controller_name: &String,
+    resource_meta: &ObjectMeta,
+) -> Option<Operation<T>> {
     let has_finalizer = if let Some(finalizers) = resource_meta.finalizers.as_ref() {
         finalizers.contains(controller_name)
     } else {

@@ -13,17 +13,19 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-pub use gateway::{ChangedContext, Gateway};
+pub use gateway::{ChangedContext, Gateway, GatewayImplementationType};
 pub use gateway_api::gateways::Gateway as KubeGateway;
 use gateway_api::{gatewayclasses::GatewayClass, gateways::GatewayListeners};
-use gateway_api_inference_extension::inferencepools::{InferencePoolExtensionRef, InferencePoolExtensionRefFailureMode, InferencePoolSpec};
+use gateway_api_inference_extension::inferencepools::{
+    InferencePoolExtensionRef, InferencePoolExtensionRefFailureMode, InferencePoolSpec,
+};
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};
-pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE};
+pub use resource_key::{DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE, ResourceKey, RouteRefKey};
 pub use route::{
+    FilterHeaders, NotResolvedReason, ResolutionStatus, Route, RouteStatus, RouteType,
     grpc_route::{GRPCRoutingConfiguration, GRPCRoutingRule},
     http_route::{HTTPRoutingConfiguration, HTTPRoutingRule},
-    FilterHeaders, NotResolvedReason, ResolutionStatus, Route, RouteStatus, RouteType,
 };
 use tokio::sync::{mpsc, oneshot};
 use typed_builder::TypedBuilder;
@@ -42,35 +44,50 @@ pub enum Certificate {
 impl Certificate {
     pub fn resolve(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key)
+            | Certificate::ResolvedCrossSpace(resource_key)
+            | Certificate::NotResolved(resource_key)
+            | Certificate::Invalid(resource_key) => resource_key,
         };
         Certificate::ResolvedSameSpace(resource.clone())
     }
 
     pub fn resolve_cross_space(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key)
+            | Certificate::ResolvedCrossSpace(resource_key)
+            | Certificate::NotResolved(resource_key)
+            | Certificate::Invalid(resource_key) => resource_key,
         };
         Certificate::ResolvedCrossSpace(resource.clone())
     }
 
     pub fn not_resolved(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key)
+            | Certificate::ResolvedCrossSpace(resource_key)
+            | Certificate::NotResolved(resource_key)
+            | Certificate::Invalid(resource_key) => resource_key,
         };
         Certificate::NotResolved(resource.clone())
     }
 
     pub fn invalid(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key)
+            | Certificate::ResolvedCrossSpace(resource_key)
+            | Certificate::NotResolved(resource_key)
+            | Certificate::Invalid(resource_key) => resource_key,
         };
         Certificate::Invalid(resource.clone())
     }
 
     pub fn resouce_key(&self) -> &ResourceKey {
         match self {
-            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key)
+            | Certificate::ResolvedCrossSpace(resource_key)
+            | Certificate::NotResolved(resource_key)
+            | Certificate::Invalid(resource_key) => resource_key,
         }
     }
 }
@@ -132,8 +149,14 @@ impl Ord for InferencePoolConfig {
         match (this_failure_mode, other_failure_mode) {
             (None, Some(_)) => return cmp::Ordering::Less,
             (Some(_), None) => return cmp::Ordering::Greater,
-            (Some(InferencePoolExtensionRefFailureMode::FailOpen), Some(InferencePoolExtensionRefFailureMode::FailClose)) => return cmp::Ordering::Greater,
-            (Some(InferencePoolExtensionRefFailureMode::FailClose), Some(InferencePoolExtensionRefFailureMode::FailOpen)) => return cmp::Ordering::Less,
+            (
+                Some(InferencePoolExtensionRefFailureMode::FailOpen),
+                Some(InferencePoolExtensionRefFailureMode::FailClose),
+            ) => return cmp::Ordering::Greater,
+            (
+                Some(InferencePoolExtensionRefFailureMode::FailClose),
+                Some(InferencePoolExtensionRefFailureMode::FailOpen),
+            ) => return cmp::Ordering::Less,
             _ => (),
         }
 
@@ -242,15 +265,21 @@ impl BackendType {
 impl Backend {
     pub fn resource_key(&self) -> ResourceKey {
         match self {
-            Backend::Resolved(backend_type) | Backend::Unresolved(backend_type) | Backend::NotAllowed(backend_type) | Backend::Maybe(backend_type) | Backend::Invalid(backend_type) => {
-                backend_type.resource_key()
-            }
+            Backend::Resolved(backend_type)
+            | Backend::Unresolved(backend_type)
+            | Backend::NotAllowed(backend_type)
+            | Backend::Maybe(backend_type)
+            | Backend::Invalid(backend_type) => backend_type.resource_key(),
         }
     }
 
     pub fn backend_type(&self) -> &BackendType {
         match self {
-            Backend::Resolved(backend_type) | Backend::Unresolved(backend_type) | Backend::NotAllowed(backend_type) | Backend::Maybe(backend_type) | Backend::Invalid(backend_type) => backend_type,
+            Backend::Resolved(backend_type)
+            | Backend::Unresolved(backend_type)
+            | Backend::NotAllowed(backend_type)
+            | Backend::Maybe(backend_type)
+            | Backend::Invalid(backend_type) => backend_type,
         }
     }
 }
@@ -285,11 +314,7 @@ pub struct DeployedGatewayStatus {
 #[derive(Debug)]
 pub enum BackendGatewayResponse {
     Processed(Box<Gateway>),
-    ProcessedWithContext {
-        gateway: Box<Gateway>,
-        kube_gateway: Box<KubeGateway>,
-        gateway_class_name: String,
-    },
+    ProcessedWithContext { gateway: Box<Gateway>, kube_gateway: Box<KubeGateway>, gateway_class_name: String },
     Deleted(Vec<RouteStatus>),
     ProcessingError,
 }
@@ -337,7 +362,7 @@ impl Display for BackendGatewayEvent {
             BackendGatewayEvent::Changed(ctx) => write!(f, "GatewayEvent::GatewayChanged {ctx}"),
             BackendGatewayEvent::Deleted(ctx) => {
                 write!(f, "GatewayEvent::GatewayDeleted gateway {:?}", ctx.gateway)
-            }
+            },
         }
     }
 }
@@ -419,7 +444,11 @@ pub enum GatewayDeployRequest {
     Deploy(RequestContext),
 }
 
-pub async fn add_finalizer(sender: &mpsc::Sender<Operation<KubeGateway>>, gateway_id: &ResourceKey, controller_name: &str) {
+pub async fn add_finalizer(
+    sender: &mpsc::Sender<Operation<KubeGateway>>,
+    gateway_id: &ResourceKey,
+    controller_name: &str,
+) {
     let _ = sender
         .send(Operation::PatchFinalizer(FinalizerContext {
             resource_key: gateway_id.clone(),
@@ -431,7 +460,11 @@ pub async fn add_finalizer(sender: &mpsc::Sender<Operation<KubeGateway>>, gatewa
 
 const GATEWAY_CLASS_FINALIZER_NAME: &str = "gateway-exists-finalizer.gateway.networking.k8s.io";
 
-pub async fn add_finalizer_to_gateway_class(sender: &mpsc::Sender<Operation<GatewayClass>>, gateway_class_name: &str, controller_name: &str) {
+pub async fn add_finalizer_to_gateway_class(
+    sender: &mpsc::Sender<Operation<GatewayClass>>,
+    gateway_class_name: &str,
+    controller_name: &str,
+) {
     let key = ResourceKey::new(gateway_class_name);
     let _ = sender
         .send(Operation::PatchFinalizer(FinalizerContext {

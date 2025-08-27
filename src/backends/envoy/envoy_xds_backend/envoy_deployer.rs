@@ -1,5 +1,5 @@
 use std::{
-    collections::{btree_map::Values, BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, btree_map::Values},
     sync::LazyLock,
 };
 
@@ -7,8 +7,8 @@ use envoy_api_rs::{
     envoy::{
         config::{
             core::v3::{
-                grpc_service::{GoogleGrpc, TargetSpecifier},
                 GrpcService, TransportSocket,
+                grpc_service::{GoogleGrpc, TargetSpecifier},
             },
             listener::v3::{Filter, FilterChain, Listener as EnvoyListener, ListenerFilter},
             route::v3::{RouteConfiguration, VirtualHost},
@@ -16,13 +16,13 @@ use envoy_api_rs::{
         extensions::{
             filters::{
                 http::{
-                    ext_proc::v3::{processing_mode::HeaderSendMode, ExternalProcessor, ProcessingMode},
+                    ext_proc::v3::{ExternalProcessor, ProcessingMode, processing_mode::HeaderSendMode},
                     router::v3::Router,
                 },
                 listener::tls_inspector::v3::TlsInspector,
                 network::http_connection_manager::v3::{
-                    http_connection_manager::{CodecType, RouteSpecifier},
                     HttpConnectionManager, HttpFilter,
+                    http_connection_manager::{CodecType, RouteSpecifier},
                 },
             },
             transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig},
@@ -37,15 +37,16 @@ use k8s_openapi::{
     api::{
         apps::v1::{Deployment, DeploymentSpec},
         core::v1::{
-            ConfigMap, ConfigMapVolumeSource, ContainerPort, KeyToPath, PodSpec, PodTemplateSpec, ProjectedVolumeSource, SecretProjection, Service, ServiceAccount, ServicePort, ServiceSpec, Volume,
+            ConfigMap, ConfigMapVolumeSource, ContainerPort, KeyToPath, PodSpec, PodTemplateSpec,
+            ProjectedVolumeSource, SecretProjection, Service, ServiceAccount, ServicePort, ServiceSpec, Volume,
             VolumeProjection,
         },
     },
     apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
 };
 use kube::{
-    api::{DeleteParams, Patch, PatchParams},
     Api, Client,
+    api::{DeleteParams, Patch, PatchParams},
 };
 use kube_core::ObjectMeta;
 use tera::Tera;
@@ -57,18 +58,20 @@ use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
-use super::server::{start_aggregate_server, AckVersions, ServerAction};
+use super::server::{AckVersions, ServerAction, start_aggregate_server};
 use crate::{
+    Error,
     backends::envoy::{
         common::{
-            converters,
+            DurationConverter, INFERENCE_EXT_PROC_FILTER_NAME, SocketAddressFactory, converters,
             resource_generator::{EnvoyVirtualHost, ResourceGenerator},
-            DurationConverter, SocketAddressFactory, INFERENCE_EXT_PROC_FILTER_NAME,
         },
         envoy_xds_backend::resources,
     },
-    common::{self, BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType},
-    Error,
+    common::{
+        self, BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, ControlPlaneConfig, Gateway,
+        GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType,
+    },
 };
 
 pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templates/**.tera") {
@@ -76,7 +79,7 @@ pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templat
     Err(e) => {
         warn!("Parsing error(s): {}", e);
         ::std::process::exit(1);
-    }
+    },
 });
 
 #[derive(TypedBuilder)]
@@ -154,10 +157,10 @@ impl EnvoyDeployerChannelHandlerService {
             Ok(_) => (),
             Err(kube::Error::Api(e)) if e.code != 404 => {
                 debug!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
-            }
+            },
             Err(e) => {
                 warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
-            }
+            },
         }
     }
 
@@ -182,11 +185,7 @@ impl EnvoyDeployerChannelHandlerService {
     async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext) {
         if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
             debug!("Got address address {attached_addresses:?}");
-            let ChangedContext {
-                mut gateway,
-                kube_gateway,
-                gateway_class_name,
-            } = ctx;
+            let ChangedContext { mut gateway, kube_gateway, gateway_class_name } = ctx;
             gateway.addresses_mut().append(
                 &mut attached_addresses
                     .into_iter()
@@ -208,11 +207,7 @@ impl EnvoyDeployerChannelHandlerService {
             let backend_response_channel_sender = self.backend_response_channel_sender.clone();
             let _handle = tokio::spawn(async move {
                 let api: Api<Service> = Api::namespaced(client, &resource_key.namespace);
-                let ChangedContext {
-                    mut gateway,
-                    kube_gateway,
-                    gateway_class_name,
-                } = ctx;
+                let ChangedContext { mut gateway, kube_gateway, gateway_class_name } = ctx;
                 let mut interval = time::interval(time::Duration::from_secs(1));
                 loop {
                     interval.tick().await;
@@ -231,7 +226,9 @@ impl EnvoyDeployerChannelHandlerService {
                         }
                     } else {
                         warn!("Problem {maybe_service:?}");
-                        let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
+                        let _res = backend_response_channel_sender
+                            .send(BackendGatewayResponse::Processed(Box::new(gateway.clone())))
+                            .await;
                     }
                 }
                 debug!("Task completed for gateway {} service {}", gateway.key(), resource_key);
@@ -251,11 +248,7 @@ impl EnvoyDeployerChannelHandlerService {
             }
         }
         let ips = ips.into_iter().flatten().collect::<Vec<_>>();
-        if ips.is_empty() {
-            None
-        } else {
-            Some(ips)
-        }
+        if ips.is_empty() { None } else { Some(ips) }
     }
 
     fn update_addresses(gateway: &mut Gateway, service: &Service) -> bool {
@@ -273,7 +266,12 @@ impl EnvoyDeployerChannelHandlerService {
     }
 }
 
-async fn deploy_envoy(control_plane_config: &ControlPlaneConfig, client: Client, gateway: &Gateway, secrets: &[ResourceKey]) -> std::result::Result<Service, kube::Error> {
+async fn deploy_envoy(
+    control_plane_config: &ControlPlaneConfig,
+    client: Client,
+    gateway: &Gateway,
+    secrets: &[ResourceKey],
+) -> std::result::Result<Service, kube::Error> {
     let controller_name = &control_plane_config.controller_name;
     let service_api: Api<Service> = Api::namespaced(client.clone(), gateway.namespace());
     let service_account_api: Api<ServiceAccount> = Api::namespaced(client.clone(), gateway.namespace());
@@ -285,10 +283,7 @@ async fn deploy_envoy(control_plane_config: &ControlPlaneConfig, client: Client,
     let service = create_service(gateway);
     let service_account = create_service_account(gateway);
 
-    let pp = PatchParams {
-        field_manager: Some(controller_name.to_owned()),
-        ..Default::default()
-    };
+    let pp = PatchParams { field_manager: Some(controller_name.to_owned()), ..Default::default() };
 
     let bootstrap_content = if secrets.is_empty() {
         bootstrap_content(control_plane_config).map_err(kube::Error::Service)?
@@ -352,9 +347,14 @@ fn create_resources(gateway: &Gateway) -> Resources {
             ..Default::default()
         };
         let listener_name = listener.name.clone();
-        let http_connection_manager_router_filter_any = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.router.v3.Router".to_owned(), &router));
-        let http_connection_manager_ext_processor_any =
-            converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor".to_owned(), &ext_processor));
+        let http_connection_manager_router_filter_any = converters::AnyTypeConverter::from((
+            "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router".to_owned(),
+            &router,
+        ));
+        let http_connection_manager_ext_processor_any = converters::AnyTypeConverter::from((
+            "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor".to_owned(),
+            &ext_processor,
+        ));
 
         let router_filter = HttpFilter {
             name: format!("{listener_name}-http-connection-manager-route-filter"),
@@ -389,13 +389,16 @@ fn create_resources(gateway: &Gateway) -> Resources {
         };
 
         let http_connection_manager_any = converters::AnyTypeConverter::from((
-            "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager".to_owned(),
+            "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager"
+                .to_owned(),
             &http_connection_manager,
         ));
 
         let http_connection_manager_filter = Filter {
             name: format!("{listener_name}-http-connection-manager"),
-            config_type: Some(envoy_api_rs::envoy::config::listener::v3::filter::ConfigType::TypedConfig(http_connection_manager_any)),
+            config_type: Some(envoy_api_rs::envoy::config::listener::v3::filter::ConfigType::TypedConfig(
+                http_connection_manager_any,
+            )),
         };
 
         let (transport_socket, mut secrets) = if let Some(TlsType::Terminate(secrets)) = listener.tls_type.as_ref() {
@@ -404,7 +407,9 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 .cloned()
                 .filter_map(|cert| match cert {
                     common::Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
-                    common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) | common::Certificate::ResolvedCrossSpace(_) => None,
+                    common::Certificate::NotResolved(_)
+                    | common::Certificate::Invalid(_)
+                    | common::Certificate::ResolvedCrossSpace(_) => None,
                 })
                 .collect();
 
@@ -414,21 +419,25 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 common_tls_context: Some(CommonTlsContext {
                     tls_certificate_sds_secret_configs: secrets
                         .iter()
-                        .map(|s| SdsSecretConfig {
-                            name: create_secret_name(s),
-                            ..Default::default()
-                        })
+                        .map(|s| SdsSecretConfig { name: create_secret_name(s), ..Default::default() })
                         .collect(),
                     ..Default::default()
                 }),
                 ..Default::default()
             };
 
-            let downstream_context_any = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext".to_owned(), &downstream_context));
+            let downstream_context_any = converters::AnyTypeConverter::from((
+                "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext".to_owned(),
+                &downstream_context,
+            ));
 
             (
                 Some(TransportSocket {
-                    config_type: Some(envoy_api_rs::envoy::config::core::v3::transport_socket::ConfigType::TypedConfig(downstream_context_any)),
+                    config_type: Some(
+                        envoy_api_rs::envoy::config::core::v3::transport_socket::ConfigType::TypedConfig(
+                            downstream_context_any,
+                        ),
+                    ),
                     name: format!("{listener_name}-downstream-tls-context"),
                 }),
                 secrets,
@@ -440,9 +449,12 @@ fn create_resources(gateway: &Gateway) -> Resources {
 
         let tls_inspector_listener_filter = ListenerFilter {
             name: format!("{listener_name}-tls-inspector"),
-            config_type: Some(envoy_api_rs::envoy::config::listener::v3::listener_filter::ConfigType::TypedConfig(converters::AnyTypeConverter::from(
-                ("type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector".to_owned(), &tls_inspector),
-            ))),
+            config_type: Some(envoy_api_rs::envoy::config::listener::v3::listener_filter::ConfigType::TypedConfig(
+                converters::AnyTypeConverter::from((
+                    "type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector".to_owned(),
+                    &tls_inspector,
+                )),
+            )),
             ..Default::default()
         };
 
@@ -463,13 +475,10 @@ fn create_resources(gateway: &Gateway) -> Resources {
         secret_resources.append(&mut secrets);
     }
 
-    let cluster_resources = resource_generator.generate_envoy_clusters().iter().map(resources::create_cluster_resource).collect();
+    let cluster_resources =
+        resource_generator.generate_envoy_clusters().iter().map(resources::create_cluster_resource).collect();
     secret_resources.dedup_by_key(|k| k.name.clone());
-    Resources {
-        listeners: listener_resources,
-        clusters: cluster_resources,
-        secrets: secret_resources,
-    }
+    Resources { listeners: listener_resources, clusters: cluster_resources, secrets: secret_resources }
 }
 
 impl From<ProtocolType> for i32 {
@@ -478,7 +487,10 @@ impl From<ProtocolType> for i32 {
     }
 }
 
-fn bootstrap_content_with_secrets(control_plane_config: &ControlPlaneConfig, secrets: &[ResourceKey]) -> Result<String, Error> {
+fn bootstrap_content_with_secrets(
+    control_plane_config: &ControlPlaneConfig,
+    secrets: &[ResourceKey],
+) -> Result<String, Error> {
     use serde::Serialize;
     #[derive(Serialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
     pub struct TeraSecret {
@@ -565,15 +577,9 @@ fn create_deployment(gateway: &Gateway) -> Deployment {
         },
         spec: Some(DeploymentSpec {
             replicas: Some(1),
-            selector: LabelSelector {
-                match_expressions: None,
-                match_labels: Some(labels.clone()),
-            },
+            selector: LabelSelector { match_expressions: None, match_labels: Some(labels.clone()) },
             template: PodTemplateSpec {
-                metadata: Some(ObjectMeta {
-                    labels: Some(labels.clone()),
-                    ..Default::default()
-                }),
+                metadata: Some(ObjectMeta { labels: Some(labels.clone()), ..Default::default() }),
                 spec: Some(pod_spec),
             },
             ..Default::default()
@@ -791,11 +797,7 @@ fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
                         path: create_certificate_name(&resource_key),
                         ..Default::default()
                     },
-                    KeyToPath {
-                        key: "tls.key".to_owned(),
-                        path: create_key_name(&resource_key),
-                        ..Default::default()
-                    },
+                    KeyToPath { key: "tls.key".to_owned(), path: create_key_name(&resource_key), ..Default::default() },
                 ]),
                 ..Default::default()
             }),
@@ -805,10 +807,7 @@ fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
 
     vec![Volume {
         name: "envoy-secrets".to_owned(),
-        projected: Some(ProjectedVolumeSource {
-            sources: Some(secrets),
-            ..Default::default()
-        }),
+        projected: Some(ProjectedVolumeSource { sources: Some(secrets), ..Default::default() }),
         ..Default::default()
     }]
 }

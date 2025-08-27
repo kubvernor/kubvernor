@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gateway_api::{
     common::RouteStatus,
     grpcroutes::{self, GRPCRoute},
 };
 use kube::{
-    runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource,
+    runtime::{Controller, controller::Action, watcher::Config},
 };
 use tokio::sync::mpsc::{self};
 use typed_builder::TypedBuilder;
@@ -18,9 +18,9 @@ use super::routes_common::CommonRouteHandler;
 use crate::{
     common::{ReferenceValidateRequest, ResourceKey, Route},
     controllers::{
+        ControllerError, RECONCILE_LONG_WAIT,
         handlers::ResourceHandler,
         utils::{ResourceCheckerArgs, ResourceState},
-        ControllerError, RECONCILE_LONG_WAIT,
     },
     services::patchers::{DeleteContext, Operation},
     state::State,
@@ -58,7 +58,10 @@ impl GRPCRouteController {
         Action::requeue(RECONCILE_LONG_WAIT)
     }
 
-    async fn reconcile_grpc_route(resource: Arc<grpcroutes::GRPCRoute>, ctx: Arc<GRPCRouteControllerContext>) -> Result<Action> {
+    async fn reconcile_grpc_route(
+        resource: Arc<grpcroutes::GRPCRoute>,
+        ctx: Arc<GRPCRouteControllerContext>,
+    ) -> Result<Action> {
         let controller_name = ctx.controller_name.clone();
         let grpc_route_patcher = ctx.grpc_route_patcher.clone();
 
@@ -97,11 +100,7 @@ impl GRPCRouteController {
 
     fn check_spec(args: ResourceCheckerArgs<GRPCRoute>) -> ResourceState {
         let (resource, stored_resource) = args;
-        if resource.spec == stored_resource.spec {
-            ResourceState::SpecNotChanged
-        } else {
-            ResourceState::SpecChanged
-        }
+        if resource.spec == stored_resource.spec { ResourceState::SpecNotChanged } else { ResourceState::SpecChanged }
     }
 
     fn check_status(args: ResourceCheckerArgs<GRPCRoute>) -> ResourceState {
@@ -165,7 +164,12 @@ impl ResourceHandler<GRPCRoute> for GRPCRouteHandler<GRPCRoute> {
 }
 
 impl GRPCRouteHandler<GRPCRoute> {
-    async fn on_new_or_changed(&self, route_key: ResourceKey, resource: &Arc<GRPCRoute>, _state: &State) -> Result<Action> {
+    async fn on_new_or_changed(
+        &self,
+        route_key: ResourceKey,
+        resource: &Arc<GRPCRoute>,
+        _state: &State,
+    ) -> Result<Action> {
         let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
             return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
         };
@@ -178,7 +182,8 @@ impl GRPCRouteHandler<GRPCRoute> {
                 |state: &State, route_status: Option<RouteStatus>| {
                     let mut route = (**resource).clone();
                     route.status = route_status;
-                    let () = state.save_grpc_route(route_key.clone(), &Arc::new(route)).expect("We expect the lock to work");
+                    let () =
+                        state.save_grpc_route(route_key.clone(), &Arc::new(route)).expect("We expect the lock to work");
                 },
             )
             .await

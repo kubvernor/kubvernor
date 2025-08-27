@@ -18,6 +18,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "agentgateway-api-rs"
+version = "0.1.1"
+source = "git+https://github.com/kubvernor/agentgateway-api-rs#2edf464861e3a0a48ac3d2d11d69503002849866"
+dependencies = [
+ "glob",
+ "prost 0.13.5",
+ "prost-build",
+ "prost-reflect",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tonic",
+ "tonic-build",
+ "tonic-health",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1579,6 +1596,7 @@ dependencies = [
 name = "kubvernor"
 version = "0.1.1"
 dependencies = [
+ "agentgateway-api-rs",
  "async-trait",
  "atomic-take",
  "cfg-if",
@@ -1595,6 +1613,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "kube-core",
+ "kubvernor-api",
  "multiset",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -1615,6 +1634,22 @@ dependencies = [
  "tracing-subscriber",
  "typed-builder",
  "uuid",
+]
+
+[[package]]
+name = "kubvernor-api"
+version = "0.1.0"
+source = "git+https://github.com/kubvernor/kubvernor-api-rs#66d1dd8c047a4112d4d3d96bbaa9a9594530d96c"
+dependencies = [
+ "delegate",
+ "k8s-openapi",
+ "kube",
+ "once_cell",
+ "regex-lite",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "serde_yaml",
 ]
 
 [[package]]

@@ -3,8 +3,8 @@ use std::collections::{BTreeSet, HashMap};
 use gateway_api::gateways::Gateway;
 use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolSpec};
 use k8s_openapi::api::core::v1::{Pod, Service};
-use kube::{api::ListParams, Api, Client};
-use kube_core::{object::HasSpec, Expression, Selector};
+use kube::{Api, Client, api::ListParams};
+use kube_core::{Expression, Selector, object::HasSpec};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
@@ -12,8 +12,8 @@ use typed_builder::TypedBuilder;
 use super::BackendReferenceResolver;
 use crate::{
     common::{
-        self, Backend, BackendType, BackendTypeConfig, InferencePoolConfig, NotResolvedReason, ReferenceGrantRef, ReferenceGrantsResolver, ResolutionStatus, ResourceKey, Route,
-        RouteToListenersMapping, KUBERNETES_NONE,
+        self, Backend, BackendType, BackendTypeConfig, InferencePoolConfig, KUBERNETES_NONE, NotResolvedReason,
+        ReferenceGrantRef, ReferenceGrantsResolver, ResolutionStatus, ResourceKey, Route, RouteToListenersMapping,
     },
     controllers::{
         inference_pool::{self},
@@ -50,7 +50,8 @@ impl RouteResolver<'_> {
         match &mut route_config.route_type {
             common::RouteType::Http(httprouting_configuration) => {
                 for rule in &mut httprouting_configuration.routing_rules {
-                    let (new_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;
+                    let (new_backends, resolution_status) =
+                        self.process_backends(route_resource_key, rule.backends.clone()).await;
                     if resolution_status != ResolutionStatus::Resolved {
                         route_resolution_status = resolution_status;
                     }
@@ -61,16 +62,17 @@ impl RouteResolver<'_> {
                     //     .filter(|r| r.name == rule.name)
                     //     .for_each(|r| r.backends.clone_from(&new_backends));
                 }
-            }
+            },
             common::RouteType::Grpc(grpcrouting_configuration) => {
                 for rule in &mut grpcrouting_configuration.routing_rules {
-                    let (new_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;
+                    let (new_backends, resolution_status) =
+                        self.process_backends(route_resource_key, rule.backends.clone()).await;
                     if resolution_status != ResolutionStatus::Resolved {
                         route_resolution_status = resolution_status;
                     }
                     rule.backends.clone_from(&new_backends);
                 }
-            }
+            },
         }
 
         route_config.resolution_status = route_resolution_status;
@@ -93,7 +95,7 @@ impl RouteResolver<'_> {
                         k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::String(port_name) => {
                             warn!("Port names are not supported {port_name}");
                             port
-                        }
+                        },
                     });
                 }
             }
@@ -101,13 +103,18 @@ impl RouteResolver<'_> {
         port
     }
 
-    async fn process_backends(&self, route_resource_key: &ResourceKey, backends: Vec<Backend>) -> (Vec<Backend>, ResolutionStatus) {
+    async fn process_backends(
+        &self,
+        route_resource_key: &ResourceKey,
+        backends: Vec<Backend>,
+    ) -> (Vec<Backend>, ResolutionStatus) {
         let mut new_backends = vec![];
         let mut route_resolution_status = ResolutionStatus::Resolved;
-        let (service_backends, inference_pool_backends): (Vec<_>, Vec<_>) = backends.into_iter().partition(|b| match b.backend_type() {
-            BackendType::Service(_) | BackendType::Invalid(_) => true,
-            BackendType::InferencePool(_) => false,
-        });
+        let (service_backends, inference_pool_backends): (Vec<_>, Vec<_>) =
+            backends.into_iter().partition(|b| match b.backend_type() {
+                BackendType::Service(_) | BackendType::Invalid(_) => true,
+                BackendType::InferencePool(_) => false,
+            });
 
         for backend in service_backends {
             let (new_backend, resolution_status) = self.process_service_backend(route_resource_key, backend).await;
@@ -118,7 +125,8 @@ impl RouteResolver<'_> {
         }
 
         for backend in inference_pool_backends {
-            let (new_backend, resolution_status) = self.process_inference_pool_backend(route_resource_key, backend).await;
+            let (new_backend, resolution_status) =
+                self.process_inference_pool_backend(route_resource_key, backend).await;
             if resolution_status != ResolutionStatus::Resolved {
                 route_resolution_status = resolution_status;
             }
@@ -127,7 +135,11 @@ impl RouteResolver<'_> {
         (new_backends, route_resolution_status)
     }
 
-    async fn process_service_backend(&self, route_resource_key: &ResourceKey, backend: Backend) -> (Backend, ResolutionStatus) {
+    async fn process_service_backend(
+        &self,
+        route_resource_key: &ResourceKey,
+        backend: Backend,
+    ) -> (Backend, ResolutionStatus) {
         let gateway_resource_key = self.gateway_resource_key;
         let gateway_namespace = &self.gateway_resource_key.namespace;
         let route_namespace = &route_resource_key.namespace;
@@ -149,8 +161,11 @@ impl RouteResolver<'_> {
 
                 let backend_resource_key = backend_config.resource_key();
                 let backend_namespace = &backend_resource_key.namespace;
-                if reference_grant_allowed || PermittedBackends(gateway_namespace.to_owned()).is_permitted(route_namespace, backend_namespace) {
-                    let maybe_service = self.backend_reference_resolver.get_service_reference(&backend_resource_key).await;
+                if reference_grant_allowed
+                    || PermittedBackends(gateway_namespace.to_owned()).is_permitted(route_namespace, backend_namespace)
+                {
+                    let maybe_service =
+                        self.backend_reference_resolver.get_service_reference(&backend_resource_key).await;
 
                     if let Some(service) = maybe_service {
                         backend_config.effective_port = Self::backend_remap_port(backend_config.port, service);
@@ -172,26 +187,30 @@ impl RouteResolver<'_> {
                         ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted),
                     )
                 }
-            }
+            },
             Backend::Unresolved(_) | Backend::NotAllowed(_) | Backend::Invalid(_) => {
                 debug!("Skipping unresolved backend {:?}", backend);
                 (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
-            }
+            },
             Backend::Maybe(_) => {
                 warn!("This should not be processed here {:?}", backend);
                 (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
-            }
+            },
             Backend::Resolved(_) => {
                 debug!("Skipping resolved/unupported backend {:?}", backend);
                 (backend, ResolutionStatus::Resolved)
-            }
+            },
         }
     }
 
     async fn get_inference_extension(client: Client, namespace: &str, inference_pool_spec: &InferencePoolSpec) -> bool {
         let service_api: Api<Service> = Api::namespaced(client, namespace);
         if let Ok(service) = service_api.get(&inference_pool_spec.extension_ref.name).await {
-            debug!("Inference Pool: Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
+            debug!(
+                "Inference Pool: Endpoint picker found with IP {:?} {:?} ",
+                service.metadata.name,
+                service.spec.map(|s| s.cluster_ips)
+            );
             true
         } else {
             debug!("Inference Pool: Can't get endpoint picker service {:?} ", inference_pool_spec.extension_ref);
@@ -199,7 +218,11 @@ impl RouteResolver<'_> {
         }
     }
 
-    async fn get_model_endpoints(client: Client, namespace: &str, inference_pool_spec: &InferencePoolSpec) -> Vec<String> {
+    async fn get_model_endpoints(
+        client: Client,
+        namespace: &str,
+        inference_pool_spec: &InferencePoolSpec,
+    ) -> Vec<String> {
         let mut selector: Selector = Selector::default();
 
         for (k, v) in &inference_pool_spec.selector {
@@ -210,13 +233,21 @@ impl RouteResolver<'_> {
         let api: Api<Pod> = Api::namespaced(client, namespace);
 
         if let Ok(pods) = api.list(&list_params).await {
-            pods.iter().filter_map(|pod| pod.status.as_ref()).filter_map(|status| status.pod_ip.as_ref()).cloned().collect()
+            pods.iter()
+                .filter_map(|pod| pod.status.as_ref())
+                .filter_map(|status| status.pod_ip.as_ref())
+                .cloned()
+                .collect()
         } else {
             vec![]
         }
     }
 
-    async fn process_inference_pool_backend(&self, route_resource_key: &ResourceKey, backend: Backend) -> (Backend, ResolutionStatus) {
+    async fn process_inference_pool_backend(
+        &self,
+        route_resource_key: &ResourceKey,
+        backend: Backend,
+    ) -> (Backend, ResolutionStatus) {
         let gateway_namespace = &self.gateway_resource_key.namespace;
         let route_namespace = &route_resource_key.namespace;
         match backend {
@@ -229,13 +260,32 @@ impl RouteResolver<'_> {
 
                     if let Some(inference_pool) = maybe_inference_pool {
                         let inference_pool_spec = inference_pool.spec();
-                        let model_endpoints = Self::get_model_endpoints(self.client.clone(), &route_resource_key.namespace, inference_pool_spec).await;
+                        let model_endpoints = Self::get_model_endpoints(
+                            self.client.clone(),
+                            &route_resource_key.namespace,
+                            inference_pool_spec,
+                        )
+                        .await;
 
                         debug!("Inference Pool: got model endpoints {:?}", model_endpoints);
 
                         let resolved_endpoint_picker = match inference_pool_spec.extension_ref.kind.as_ref() {
-                            None => Self::get_inference_extension(self.client.clone(), &route_resource_key.namespace, inference_pool_spec).await,
-                            Some(val) if val == "Service" => Self::get_inference_extension(self.client.clone(), &route_resource_key.namespace, inference_pool_spec).await,
+                            None => {
+                                Self::get_inference_extension(
+                                    self.client.clone(),
+                                    &route_resource_key.namespace,
+                                    inference_pool_spec,
+                                )
+                                .await
+                            },
+                            Some(val) if val == "Service" => {
+                                Self::get_inference_extension(
+                                    self.client.clone(),
+                                    &route_resource_key.namespace,
+                                    inference_pool_spec,
+                                )
+                                .await
+                            },
                             _ => false,
                         };
 
@@ -243,10 +293,16 @@ impl RouteResolver<'_> {
                         backend_config.effective_port = inference_pool_spec.target_port_number;
                         backend_config.endpoints = Some(model_endpoints);
 
-                        debug!("Inference Pool: Setting backend config {backend_resource_key:?} {inference_pool_spec:?}",);
+                        debug!(
+                            "Inference Pool: Setting backend config {backend_resource_key:?} {inference_pool_spec:?}",
+                        );
 
                         if inference_pool.metadata.name.is_some() {
-                            let mut inference_pool = inference_pool::update_inference_pool_parents(self.gateway_resource_key, inference_pool, resolved_endpoint_picker);
+                            let mut inference_pool = inference_pool::update_inference_pool_parents(
+                                self.gateway_resource_key,
+                                inference_pool,
+                                resolved_endpoint_picker,
+                            );
                             inference_pool.metadata.managed_fields = None;
                             let (sender, receiver) = oneshot::channel();
                             let _ = self
@@ -260,7 +316,10 @@ impl RouteResolver<'_> {
                                 .await;
 
                             if let Ok(Ok(_)) = receiver.await {
-                                (Backend::Resolved(BackendType::InferencePool(backend_config)), ResolutionStatus::Resolved)
+                                (
+                                    Backend::Resolved(BackendType::InferencePool(backend_config)),
+                                    ResolutionStatus::Resolved,
+                                )
                             } else {
                                 warn!("Inference Pool: Can't update the status");
                                 (
@@ -276,7 +335,9 @@ impl RouteResolver<'_> {
                             )
                         }
                     } else {
-                        info!("Inference Pool: Backend can't resolve {backend_resource_key:?} {maybe_inference_pool:?}",);
+                        info!(
+                            "Inference Pool: Backend can't resolve {backend_resource_key:?} {maybe_inference_pool:?}",
+                        );
                         (
                             Backend::Unresolved(BackendType::InferencePool(backend_config)),
                             ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound),
@@ -292,19 +353,19 @@ impl RouteResolver<'_> {
                         ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted),
                     )
                 }
-            }
+            },
             Backend::Unresolved(_) | Backend::NotAllowed(_) | Backend::Invalid(_) => {
                 debug!("Skipping unresolved backend {:?}", backend);
                 (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
-            }
+            },
             Backend::Maybe(_) => {
                 warn!("This should not be processed here {:?}", backend);
                 (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
-            }
+            },
             Backend::Resolved(_) => {
                 debug!("Skipping resolved/unupported backend {:?}", backend);
                 (backend, ResolutionStatus::Resolved)
-            }
+            },
         }
     }
 }
@@ -344,12 +405,16 @@ impl RoutesResolver<'_> {
 
         info!("Linked routes {:?}", linked_routes.iter().map(Route::resource_key));
 
-        let (route_to_listeners_mapping, routes_with_no_listeners) = RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();
+        let (route_to_listeners_mapping, routes_with_no_listeners) =
+            RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();
         let per_listener_calculated_attached_routes = calculate_attached_routes(&route_to_listeners_mapping);
         let routes_with_no_listeners = BTreeSet::from_iter(routes_with_no_listeners);
         for (k, routes) in per_listener_calculated_attached_routes {
             if let Some(listener) = self.gateway.listener_mut(&k) {
-                let (resolved, unresolved): (BTreeSet<_>, BTreeSet<_>) = routes.iter().map(|r| (**r).clone()).partition(|f| *f.resolution_status() == ResolutionStatus::Resolved);
+                let (resolved, unresolved): (BTreeSet<_>, BTreeSet<_>) = routes
+                    .iter()
+                    .map(|r| (**r).clone())
+                    .partition(|f| *f.resolution_status() == ResolutionStatus::Resolved);
                 listener.update_routes(resolved, unresolved);
             }
         }

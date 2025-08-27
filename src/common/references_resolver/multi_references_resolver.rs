@@ -25,10 +25,7 @@ struct References<R> {
 }
 impl<R> Default for References<R> {
     fn default() -> Self {
-        Self {
-            parents: BTreeMap::new(),
-            resolved_references: BTreeMap::new(),
-        }
+        Self { parents: BTreeMap::new(), resolved_references: BTreeMap::new() }
     }
 }
 impl<R> References<R> {
@@ -133,7 +130,8 @@ where
                 resolved_references_parents.entry(resource_key).and_modify(|f| *f += 1).or_insert(1);
             }
         }
-        let keys: Vec<_> = resolved_references_parents.iter().filter_map(|(k, v)| (*v < 1).then_some(k)).cloned().collect();
+        let keys: Vec<_> =
+            resolved_references_parents.iter().filter_map(|(k, v)| (*v < 1).then_some(k)).cloned().collect();
         for key in keys {
             references.remove(&key);
         }
@@ -156,7 +154,8 @@ where
                 }
             }
 
-            let keys: Vec<_> = resolved_references_parents.iter().filter_map(|(k, v)| (*v < 1).then_some(k)).cloned().collect();
+            let keys: Vec<_> =
+                resolved_references_parents.iter().filter_map(|(k, v)| (*v < 1).then_some(k)).cloned().collect();
 
             for key in keys {
                 references.remove(&key);
@@ -173,7 +172,9 @@ where
 
         let (affected_gateways, resources_to_delete): (BTreeSet<_>, BTreeSet<_>) = gateway_route_reference_mapping
             .iter_mut()
-            .filter_map(|(gateway, route_mapping)| route_mapping.remove(route_key).map(|resources_to_delete| (gateway.clone(), resources_to_delete)))
+            .filter_map(|(gateway, route_mapping)| {
+                route_mapping.remove(route_key).map(|resources_to_delete| (gateway.clone(), resources_to_delete))
+            })
             .unzip();
 
         let resources_to_delete: BTreeSet<_> = resources_to_delete.iter().flatten().cloned().collect();
@@ -185,7 +186,8 @@ where
             resolved_references_parents.entry(resource_key).and_modify(|f| *f -= 1);
         }
 
-        let keys: Vec<_> = resolved_references_parents.iter().filter_map(|(k, v)| (*v < 1).then_some(k)).cloned().collect();
+        let keys: Vec<_> =
+            resolved_references_parents.iter().filter_map(|(k, v)| (*v < 1).then_some(k)).cloned().collect();
 
         for key in keys {
             references.remove(&key);
@@ -248,7 +250,9 @@ where
 
         let (gateways, routes): (BTreeSet<_>, BTreeSet<_>) = gateway_route_reference_mapping
             .iter()
-            .filter(|&(_gateway, route_reference)| route_reference.iter().any(|(_, references)| references.contains(key)))
+            .filter(|&(_gateway, route_reference)| {
+                route_reference.iter().any(|(_, references)| references.contains(key))
+            })
             .map(|(gateway, route_reference)| (gateway.clone(), route_reference.keys().collect::<BTreeSet<_>>()))
             .unzip();
         let changed_routes = routes.into_iter().flatten().collect::<BTreeSet<_>>();
@@ -276,13 +280,13 @@ mod tests {
 
     use http::{Request, Response};
     use k8s_openapi::api::core::v1::Service;
-    use kube::{client::Body, Client};
+    use kube::{Client, client::Body};
     use tokio::sync::mpsc;
     use tower_test::mock;
 
     use crate::common::{
-        references_resolver::multi_references_resolver::{MultiReferencesResolver, ReferenceKey, RouteKey},
         ResourceKey,
+        references_resolver::multi_references_resolver::{MultiReferencesResolver, ReferenceKey, RouteKey},
     };
 
     #[tokio::test]
@@ -291,7 +295,10 @@ mod tests {
         let client = Client::new(mock_service, "dummy");
 
         let (sender, _receiver) = mpsc::channel(100);
-        let multi_refernces_resolver = MultiReferencesResolver::<Service>::builder().client(client).reference_validate_channel_sender(sender).build();
+        let multi_refernces_resolver = MultiReferencesResolver::<Service>::builder()
+            .client(client)
+            .reference_validate_channel_sender(sender)
+            .build();
 
         let g1 = ResourceKey::new("g1");
         let g2 = ResourceKey::new("g2");

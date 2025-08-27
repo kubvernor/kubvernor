@@ -1,16 +1,18 @@
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gateway_api::httproutes::{HTTPRoute, HTTPRouteRule};
-use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolStatus, InferencePoolStatusParent, InferencePoolStatusParentParentRef};
+use gateway_api_inference_extension::inferencepools::{
+    InferencePool, InferencePoolStatus, InferencePoolStatusParent, InferencePoolStatusParentParentRef,
+};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
 };
 use kube::{
-    runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource,
+    runtime::{Controller, controller::Action, watcher::Config},
 };
 use tokio::sync::{
     mpsc::{self},
@@ -23,9 +25,9 @@ use uuid::Uuid;
 use crate::{
     common::{ReferenceValidateRequest, ResourceKey},
     controllers::{
+        ControllerError, RECONCILE_LONG_WAIT,
         handlers::ResourceHandler,
         utils::{ResourceCheckerArgs, ResourceState},
-        ControllerError, RECONCILE_LONG_WAIT,
     },
     services::patchers::{DeleteContext, Operation, PatchContext},
     state::State,
@@ -63,7 +65,10 @@ impl InferencePoolController {
         Action::requeue(RECONCILE_LONG_WAIT)
     }
 
-    async fn reconcile_inference_pool(resource: Arc<InferencePool>, ctx: Arc<InferencePoolControllerContext>) -> Result<Action> {
+    async fn reconcile_inference_pool(
+        resource: Arc<InferencePool>,
+        ctx: Arc<InferencePoolControllerContext>,
+    ) -> Result<Action> {
         let controller_name = ctx.controller_name.clone();
 
         let Some(maybe_id) = resource.metadata.uid.clone() else {
@@ -93,11 +98,7 @@ impl InferencePoolController {
 
     fn check_spec_changed(args: ResourceCheckerArgs<InferencePool>) -> ResourceState {
         let (resource, stored_resource) = args;
-        if resource.spec == stored_resource.spec {
-            ResourceState::SpecNotChanged
-        } else {
-            ResourceState::SpecChanged
-        }
+        if resource.spec == stored_resource.spec { ResourceState::SpecNotChanged } else { ResourceState::SpecChanged }
     }
 
     fn check_status_changed(args: ResourceCheckerArgs<InferencePool>) -> ResourceState {
@@ -139,12 +140,22 @@ impl ResourceHandler<InferencePool> for InferencePoolControllerHandler<Inference
         self.resource_key.clone()
     }
 
-    async fn on_spec_not_changed(&self, id: ResourceKey, resource: &Arc<InferencePool>, state: &State) -> Result<Action> {
+    async fn on_spec_not_changed(
+        &self,
+        id: ResourceKey,
+        resource: &Arc<InferencePool>,
+        state: &State,
+    ) -> Result<Action> {
         let () = state.save_inference_pool(id, resource).expect("We expect the lock to work");
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_status_not_changed(&self, id: ResourceKey, resource: &Arc<InferencePool>, state: &State) -> Result<Action> {
+    async fn on_status_not_changed(
+        &self,
+        id: ResourceKey,
+        resource: &Arc<InferencePool>,
+        state: &State,
+    ) -> Result<Action> {
         let () = state.maybe_save_inference_pool(id, resource).expect("We expect the lock to work");
         Err(ControllerError::AlreadyAdded)
     }
@@ -168,7 +179,12 @@ impl ResourceHandler<InferencePool> for InferencePoolControllerHandler<Inference
 }
 
 impl InferencePoolControllerHandler<InferencePool> {
-    async fn on_new_or_changed(&self, inference_pool_key: ResourceKey, resource: &Arc<InferencePool>, _state: &State) -> Result<Action> {
+    async fn on_new_or_changed(
+        &self,
+        inference_pool_key: ResourceKey,
+        resource: &Arc<InferencePool>,
+        _state: &State,
+    ) -> Result<Action> {
         let routes: Vec<_> = self
             .state
             .get_http_routes()
@@ -219,7 +235,12 @@ impl InferencePoolControllerHandler<InferencePool> {
         }
     }
 
-    async fn on_deleted(&self, inference_pool_key: ResourceKey, resource: &Arc<InferencePool>, _: &State) -> Result<Action> {
+    async fn on_deleted(
+        &self,
+        inference_pool_key: ResourceKey,
+        resource: &Arc<InferencePool>,
+        _: &State,
+    ) -> Result<Action> {
         let deleted = self.state.delete_inference_pool(&inference_pool_key).expect("We expect the lock to work");
         if deleted.is_none() {
             warn!("Unable to delete {inference_pool_key:?}");
@@ -281,15 +302,22 @@ fn has_inference_pool(route: &HTTPRoute, inference_pool_key: &ResourceKey) -> bo
                     } else {
                         true
                     }
-            }
+            },
             _ => false,
         })
     })
 }
 
-fn create_accepted_inference_pool_status(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
+fn create_accepted_inference_pool_status(
+    mut inference_pool: InferencePool,
+    gateways_ids: &BTreeSet<ResourceKey>,
+) -> InferencePool {
     inference_pool.status = None;
-    create_inference_pool_status_with_conditions(inference_pool, gateways_ids, &[InferencePoolCondition::Accepted(None).get_condition()])
+    create_inference_pool_status_with_conditions(
+        inference_pool,
+        gateways_ids,
+        &[InferencePoolCondition::Accepted(None).get_condition()],
+    )
 }
 
 pub fn clear_all_conditions(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
@@ -306,7 +334,11 @@ pub fn clear_all_conditions(mut inference_pool: InferencePool, gateways_ids: &BT
     inference_pool
 }
 
-fn create_inference_pool_status_with_conditions(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>, conditions: &[Condition]) -> InferencePool {
+fn create_inference_pool_status_with_conditions(
+    mut inference_pool: InferencePool,
+    gateways_ids: &BTreeSet<ResourceKey>,
+    conditions: &[Condition],
+) -> InferencePool {
     let mut inference_pool_status = inference_pool.status.clone().unwrap_or_default();
     inference_pool_status.parent = Some(
         gateways_ids
@@ -327,7 +359,11 @@ fn create_inference_pool_status_with_conditions(mut inference_pool: InferencePoo
     inference_pool
 }
 
-pub fn update_inference_pool_parents(gateway: &ResourceKey, mut inference_pool: InferencePool, resolved_endpoint_picker: bool) -> InferencePool {
+pub fn update_inference_pool_parents(
+    gateway: &ResourceKey,
+    mut inference_pool: InferencePool,
+    resolved_endpoint_picker: bool,
+) -> InferencePool {
     let gateway_name = gateway.name.clone();
     let gateway_namespace = gateway.namespace.clone();
 
@@ -345,10 +381,11 @@ pub fn update_inference_pool_parents(gateway: &ResourceKey, mut inference_pool: 
         ]
     };
 
-    if let Some(parent) = parents
-        .iter_mut()
-        .find(|p| p.parent_ref.kind == Some("Gateway".to_owned()) && p.parent_ref.name == gateway_name.clone() && p.parent_ref.namespace == Some(gateway_namespace.clone()))
-    {
+    if let Some(parent) = parents.iter_mut().find(|p| {
+        p.parent_ref.kind == Some("Gateway".to_owned())
+            && p.parent_ref.name == gateway_name.clone()
+            && p.parent_ref.namespace == Some(gateway_namespace.clone())
+    }) {
         update_conditions(parent, conditions);
         info!("Updating conditions {gateway} {parent:?}");
     } else {
@@ -422,7 +459,10 @@ impl PartialEq for ConditionHolder {
     }
 }
 
-pub fn remove_inference_pool_parents(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
+pub fn remove_inference_pool_parents(
+    mut inference_pool: InferencePool,
+    gateways_ids: &BTreeSet<ResourceKey>,
+) -> InferencePool {
     let parents = inference_pool.status.clone().map(|s| s.parent.unwrap_or_default()).unwrap_or_default();
     let parents = parents
         .into_iter()

@@ -1,7 +1,7 @@
 pub mod gateway_deployer_internal;
 pub mod gateway_processed_handler;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use gateway_api::{gatewayclasses::GatewayClass, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
 use gateway_deployer_internal::{GatewayDeployer, GatewayDeployerServiceInternal};
@@ -11,16 +11,20 @@ use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{BackendGatewayEvent, BackendGatewayResponse, GatewayDeployRequest, KubeGateway, RequestContext},
+    Result,
+    common::{
+        BackendGatewayEvent, BackendGatewayResponse, GatewayDeployRequest, GatewayImplementationType, KubeGateway,
+        RequestContext,
+    },
     services::patchers::{Operation, PatchContext},
     state::State,
-    Result,
 };
 
 #[derive(TypedBuilder)]
 pub struct GatewayDeployerService {
     state: State,
-    backend_deployer_channel_sender: tokio::sync::mpsc::Sender<BackendGatewayEvent>,
+    backend_deployer_channel_senders:
+        HashMap<GatewayImplementationType, tokio::sync::mpsc::Sender<BackendGatewayEvent>>,
     backend_response_channel_receiver: tokio::sync::mpsc::Receiver<BackendGatewayResponse>,
     gateway_deployer_channel_receiver: tokio::sync::mpsc::Receiver<GatewayDeployRequest>,
     gateway_patcher_channel_sender: tokio::sync::mpsc::Sender<Operation<KubeGateway>>,
@@ -40,7 +44,7 @@ impl GatewayDeployerService {
                 Some(GatewayDeployRequest::Deploy(RequestContext{ gateway, kube_gateway, gateway_class_name, })) = resolve_receiver.recv() => {
                     info!("GatewayDeployerService Deploy {}" ,gateway.key());
                     let deployer = GatewayDeployer::builder()
-                        .sender(self.backend_deployer_channel_sender.clone())
+                        .senders(self.backend_deployer_channel_senders.clone())
                         .gateway(gateway.clone())
                         .kube_gateway(kube_gateway)
                         .gateway_class_name(gateway_class_name)
