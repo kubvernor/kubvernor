@@ -1,0 +1,46 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kubvernorconfigs.kubvernor.gateway.api
+spec:
+  group: kubvernor.gateway.api
+  scope: Namespaced
+  names:
+    plural: kubvernorconfigs
+    singular: kubvernorconfig
+    kind: KubvernorConfig
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              backendtype:
+                type: string
+    # selectableFields:
+    # - jsonPath: .spec.backendtype
+
+
+    additionalPrinterColumns:
+    - jsonPath: .spec.backendtype
+      name: BackendType
+      type: string
+---
+apiVersion: kubvernor.gateway.api/v1
+kind: KubvernorConfig
+metadata:
+  name: kubernor-config-1
+spec:
+  backendtype: envoy
+---
+apiVersion: kubvernor.gateway.api/v1
+kind: KubvernorConfig
+metadata:
+  name: kubernor-config-2
+spec:
+  backendtype: agentgateway

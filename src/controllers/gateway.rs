@@ -21,6 +21,7 @@ use super::{
     ControllerError, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
+    backends::envoy::common::get_inference_pool_configurations,
     common::{self, BackendGatewayEvent, DeletedContext, ReferenceValidateRequest, RequestContext, ResourceKey},
     services::patchers::{DeleteContext, Operation},
     state::State,
@@ -92,11 +93,20 @@ impl GatewayController {
 
         let gateway_class_name = {
             let gateway_class_name = &resource.spec.gateway_class_name;
-            let gateway_class = state
+            if let Some(gateway_class) = state
                 .get_gateway_classes()
                 .expect("We expect the lock to work")
                 .into_iter()
-                .find(|gc| gc.metadata.name == Some(gateway_class_name.clone()));
+                .find(|gc| gc.metadata.name == Some(gateway_class_name.clone()))
+            {
+                if let Some(config_reference) = &gateway_class.spec.parameters_ref {
+                    // get configuration reference
+                }
+            } else {
+                warn!("reconcile_gateway: {controller_name} {name} Unknown gateway class name {gateway_class_name}");
+                return Err(ControllerError::UnknownGatewayClass(gateway_class_name.clone()));
+            }
+
             if !state
                 .get_gateway_classes()
                 .expect("We expect the lock to work")
