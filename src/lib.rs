@@ -32,6 +32,8 @@ cfg_if::cfg_if! {
 
     }
 }
+#[cfg(feature = "agentgateway")]
+use backends::agentgateway::AgentgatewayDeployerChannelHandlerService;
 
 use controllers::{
     gateway::{self, GatewayController},
@@ -70,6 +72,7 @@ pub async fn start(args: Args) -> Result<()> {
     let (grpc_route_patcher_channel_sender, grpc_route_patcher_channel_receiver) = mpsc::channel(1024);
     let (inference_pool_patcher_channel_sender, inference_pool_patcher_channel_receiver) = mpsc::channel(1024);
     let (backend_deployer_channel_sender, backend_deployer_channel_receiver) = mpsc::channel(1024);
+    let (agentgateway_backend_deployer_channel_sender, agentgateway_backend_deployer_channel_receiver) = mpsc::channel(1024);
     let (backend_response_channel_sender, backend_response_channel_receiver) = mpsc::channel(1024);
 
     let secrets_resolver = SecretsResolver::builder().reference_resolver(client.clone(), reference_validate_channel_sender.clone()).build();
@@ -124,6 +127,14 @@ pub async fn start(args: Args) -> Result<()> {
     };
 
     let mut envoy_deployer_service = EnvoyDeployerChannelHandlerService::builder()
+        .client(client.clone())
+        .control_plane_config(control_plane_config)
+        .backend_deploy_request_channel_receiver(backend_deployer_channel_receiver)
+        .backend_response_channel_sender(backend_response_channel_sender)
+        .build();
+
+    #[cfg(feature = "agentgateway")]
+    let mut agentgateway_deployer_service = AgentgatewayDeployerChannelHandlerService::builder()
         .client(client.clone())
         .control_plane_config(control_plane_config)
         .backend_deploy_request_channel_receiver(backend_deployer_channel_receiver)

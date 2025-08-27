@@ -42,13 +42,12 @@ cfg-if = "1.0"
 tokio-stream = "0.1.17"
 gateway-api-inference-extension = { version = "0.1.0", git = "https://github.com/kubvernor/gateway-api-inference-extension-rs.git" }
 multiset = "0.0.5"
-
+agentgateway-api-rs =  {version = "0.1.0" , git = "https://github.com/kubvernor/agentgateway-api-rs", optional=true }
 
 [dev-dependencies]
 serde_yaml = "0.9"
 tower-test = "0.4"
 http = "1.3"
-
 
 [features]
 default = ["standard", "envoy_xds"]
@@ -56,6 +55,7 @@ standard = []
 experimental = []
 envoy_xds = []
 envoy_cm = []
+agentgateway = ["dep:agentgateway-api-rs"]
 
 
 [profile.release]

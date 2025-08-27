@@ -92,6 +92,11 @@ impl GatewayController {
 
         let gateway_class_name = {
             let gateway_class_name = &resource.spec.gateway_class_name;
+            let gateway_class = state
+                .get_gateway_classes()
+                .expect("We expect the lock to work")
+                .into_iter()
+                .find(|gc| gc.metadata.name == Some(gateway_class_name.clone()));
             if !state
                 .get_gateway_classes()
                 .expect("We expect the lock to work")
