@@ -59,9 +59,12 @@ use uuid::Uuid;
 
 use super::server::{start_aggregate_server, AckVersions, ServerAction};
 use crate::{
-    backends::{
-        self,
-        common::{converters, DurationConverter, ResourceGenerator, SocketAddressFactory, INFERENCE_EXT_PROC_FILTER_NAME},
+    backends::envoy::{
+        common::{
+            converters,
+            resource_generator::{EnvoyVirtualHost, ResourceGenerator},
+            DurationConverter, SocketAddressFactory, INFERENCE_EXT_PROC_FILTER_NAME,
+        },
         envoy_xds_backend::resources,
     },
     common::{self, BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType},
@@ -109,7 +112,7 @@ impl EnvoyDeployerChannelHandlerService {
 
                                     let maybe_service = deploy_envoy(&control_plane_config, client.clone(), gateway, &secrets).await;
                                     if let Ok(service) = maybe_service{
-                                        info!("Service deployed {:?} listeners {} clusters {}", service.metadata.name, listeners.len(), clusters.len());                                        
+                                        info!("Service deployed {:?} listeners {} clusters {}", service.metadata.name, listeners.len(), clusters.len());
                                         let _ = stream_resource_sender.send(ServerAction::UpdateClusters{gateway_id: gateway.key().clone(), resources: clusters, ack_version: ack_version.cluster()}).await;
                                         let _ = stream_resource_sender.send(ServerAction::UpdateListeners{gateway_id: gateway.key().clone(), resources: listeners, ack_version: ack_version.listener()}).await;
 
@@ -654,7 +657,7 @@ fn create_service_account(gateway: &Gateway) -> ServiceAccount {
     }
 }
 
-fn generate_virtual_hosts_from_xds(virtual_hosts: &BTreeSet<backends::common::EnvoyVirtualHost>) -> Vec<VirtualHost> {
+fn generate_virtual_hosts_from_xds(virtual_hosts: &BTreeSet<EnvoyVirtualHost>) -> Vec<VirtualHost> {
     virtual_hosts
         .iter()
         .map(|vh| VirtualHost {
@@ -680,7 +683,7 @@ const ENVOY_POD_SPEC: &str = r#"
                     }
                 ]
             }
-        }        
+        }
     ],
     "containers": [
         {
@@ -722,7 +725,7 @@ const ENVOY_POD_SPEC: &str = r#"
                 }
             ],
             "ports": [
-                
+
             ],
             "readinessProbe": {
                 "httpGet": {
@@ -743,7 +746,7 @@ const ENVOY_POD_SPEC: &str = r#"
                     "mountPath": "/envoy-secrets",
                     "readOnly": true
                 }
-            ]            
+            ]
         }
     ]
 }

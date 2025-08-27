@@ -15,7 +15,8 @@ use envoy_api_rs::{
 use gateway_api::common::{self};
 use tracing::warn;
 
-use crate::{backends::common::GRPCEffectiveRoutingRule, common::BackendTypeConfig};
+use super::super::super::common::GRPCEffectiveRoutingRule;
+use crate::common::BackendTypeConfig;
 
 impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
     fn from(effective_routing_rule: GRPCEffectiveRoutingRule) -> Self {

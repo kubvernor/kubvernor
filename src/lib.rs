@@ -25,7 +25,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 cfg_if::cfg_if! {
     if #[cfg(feature="envoy_xds")] {
-        use backends::envoy_xds_backend::EnvoyDeployerChannelHandlerService;
+        use backends::envoy::envoy_xds_backend::EnvoyDeployerChannelHandlerService;
     } else if #[cfg(feature = "envoy_cm")] {
         use backends::envoy_cm_backend::EnvoyDeployerChannelHandlerService;
     } else {

@@ -7,7 +7,7 @@ use envoy_api_rs::{
 };
 
 use super::model::TypeUrl;
-use crate::backends::common::converters;
+use crate::backends::envoy::common::converters;
 
 pub fn create_cluster_resource(cluster: &Cluster) -> Resource {
     let any = converters::AnyTypeConverter::from((TypeUrl::Cluster.to_string(), cluster));

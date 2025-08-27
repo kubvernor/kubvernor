@@ -4,9 +4,11 @@ use gateway_api::{common::HTTPHeader, httproutes};
 use serde::Serialize;
 use tracing::{debug, info, warn};
 
-use super::envoy_deployer::{create_certificate_name, create_key_name, create_secret_name, TEMPLATES};
+use super::{
+    super::common::{resource_generator::calculate_hostnames_common, HTTPEffectiveRoutingRule},
+    envoy_deployer::{create_certificate_name, create_key_name, create_secret_name, TEMPLATES},
+};
 use crate::{
-    backends::common::{calculate_hostnames_common, HTTPEffectiveRoutingRule},
     common::{self, Backend, BackendTypeConfig, Listener, ProtocolType, Route, RouteType, TlsType},
     controllers::HostnameMatchFilter,
 };
@@ -63,7 +65,7 @@ impl Eq for EnvoyVirutalHost {}
 
 impl PartialOrd for EnvoyVirutalHost {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.name.cmp(&other.name))
+        Some(self.cmp(other))
     }
 }
 

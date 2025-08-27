@@ -3,10 +3,7 @@ use std::cmp;
 use gateway_api::grpcroutes::GRPCRouteMatch;
 use tracing::debug;
 
-use crate::{
-    backends::common::route::HeaderComparator,
-    common::{Backend, FilterHeaders},
-};
+use crate::common::{Backend, FilterHeaders};
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct GRPCEffectiveRoutingRule {
@@ -27,7 +24,7 @@ impl PartialOrd for GRPCEffectiveRoutingRule {
 
 impl GRPCEffectiveRoutingRule {
     fn header_matching(this: &GRPCRouteMatch, other: &GRPCRouteMatch) -> std::cmp::Ordering {
-        let matcher = HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
+        let matcher = super::HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
         matcher.compare_headers()
     }
 

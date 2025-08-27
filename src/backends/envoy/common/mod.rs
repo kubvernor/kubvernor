@@ -1,5 +1,5 @@
 pub mod converters;
-mod resource_generator;
+pub mod resource_generator;
 mod route;
 use envoy_api_rs::{
     envoy::config::{
@@ -9,11 +9,10 @@ use envoy_api_rs::{
     },
     google::protobuf::Duration,
 };
-pub use resource_generator::{calculate_hostnames_common, EnvoyListener, EnvoyVirtualHost, ResourceGenerator};
 pub use route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule};
 
 use crate::{
-    backends::{self},
+    backends::envoy::common::resource_generator::EnvoyListener,
     common::{Backend, InferencePoolTypeConfig, ServiceTypeConfig},
 };
 
@@ -34,7 +33,7 @@ impl PartialEq for ClusterHolder {
 
 impl PartialOrd for ClusterHolder {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.name.cmp(&other.name))
+        Some(self.cmp(other))
     }
 }
 impl Ord for ClusterHolder {
@@ -56,7 +55,7 @@ impl DurationConverter {
 
 pub enum SocketAddressFactory {}
 impl SocketAddressFactory {
-    pub fn from(listener: &backends::common::EnvoyListener) -> envoy_api_rs::envoy::config::core::v3::Address {
+    pub fn from(listener: &EnvoyListener) -> envoy_api_rs::envoy::config::core::v3::Address {
         Address {
             address: Some(address::Address::SocketAddress(SocketAddress {
                 address: "0.0.0.0".to_owned(),

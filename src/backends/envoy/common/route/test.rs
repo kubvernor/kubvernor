@@ -3,7 +3,7 @@ use gateway_api::{
     httproutes::{HTTPRouteRulesMatchesPathType, PathMatch, RouteMatch},
 };
 
-use crate::backends::common::HTTPEffectiveRoutingRule;
+use super::HTTPEffectiveRoutingRule;
 
 #[test]
 pub fn test_headers_sorting_rules() {

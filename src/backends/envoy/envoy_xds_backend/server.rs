@@ -31,7 +31,7 @@ use tokio_stream::{
 use tracing::{debug, info, warn};
 
 use crate::{
-    backends::envoy_xds_backend::model::TypeUrl,
+    backends::envoy::envoy_xds_backend::model::TypeUrl,
     common::{create_id, ResourceKey},
 };
 

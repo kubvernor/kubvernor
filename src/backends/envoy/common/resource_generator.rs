@@ -34,7 +34,7 @@ use gateway_api::{
 use tracing::debug;
 
 use crate::{
-    backends::common::{
+    backends::envoy::common::{
         converters, get_inference_pool_configurations,
         route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule},
         ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory,
@@ -164,7 +164,7 @@ impl Eq for EnvoyVirtualHost {}
 
 impl PartialOrd for EnvoyVirtualHost {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.name.cmp(&other.name))
+        Some(self.cmp(other))
     }
 }
 

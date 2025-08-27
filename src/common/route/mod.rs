@@ -92,21 +92,6 @@ impl RouteConfig {
     }
 }
 
-// impl RouteConfig {
-//     pub fn reorder_routes(&mut self) {
-//         match &mut self.route_type {
-//             RouteType::Http(HTTPRoutingConfiguration {
-//                 routing_rules: _,
-//                 effective_routing_rules,
-//             }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
-//             RouteType::Grpc(GRPCRoutingConfiguration {
-//                 routing_rules: _,
-//                 effective_routing_rules,
-//             }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
-//         }
-//     }
-// }
-
 impl PartialEq for RouteConfig {
     fn eq(&self, other: &Self) -> bool {
         self.resource_key == other.resource_key
@@ -115,7 +100,7 @@ impl PartialEq for RouteConfig {
 
 impl PartialOrd for RouteConfig {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.resource_key.cmp(&other.resource_key))
+        Some(self.cmp(other))
     }
 }
 

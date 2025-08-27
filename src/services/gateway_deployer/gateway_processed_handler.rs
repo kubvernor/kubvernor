@@ -870,7 +870,9 @@ impl GatewayProcessedHandler<'_> {
                 .find(|f| f.metadata.name == Some(route.name().to_owned()) && f.metadata.namespace == Some(route.namespace().clone()));
 
             if let Some(mut kube_route) = kube_route.map(|r| (**r).clone()) {
-                new_conditions.iter_mut().for_each(|f| f.observed_generation = kube_route.meta().generation);
+                for f in &mut new_conditions {
+                    f.observed_generation = kube_route.meta().generation;
+                }
 
                 let mut status = if let Some(status) = kube_route.status { status } else { RouteStatus { parents: vec![] } };
 
@@ -917,7 +919,9 @@ impl GatewayProcessedHandler<'_> {
                 .find(|f| f.metadata.name == Some(route.name().to_owned()) && f.metadata.namespace == Some(route.namespace().clone()));
 
             if let Some(mut kube_route) = kube_route.map(|r| (**r).clone()) {
-                new_conditions.iter_mut().for_each(|f| f.observed_generation = kube_route.meta().generation);
+                for f in &mut new_conditions {
+                    f.observed_generation = kube_route.meta().generation;
+                }
 
                 let mut status = if let Some(status) = kube_route.status { status } else { RouteStatus { parents: vec![] } };
 
