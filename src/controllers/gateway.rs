@@ -11,7 +11,7 @@ use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
 };
-use tracing::warn;
+use tracing::{debug, warn};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -109,14 +109,25 @@ impl GatewayController {
                         Api::namespaced(ctx.client.clone(), &resource_key.namespace);
 
                     if let Ok(configuration) = configuration_api.get(&config_reference.name).await {
+                        debug!(
+                            "reconcile_gateway: {controller_name} {name} retrieved configuration {:?}",
+                            configuration
+                        );
                         let Ok(backend_type) =
                             GatewayImplementationType::try_from(configuration.spec.backendtype.as_ref())
                         else {
                             return Err(ControllerError::InvalidPayload("Uid must be present".to_owned()));
                         };
+
                         configured_backend_type = backend_type;
+                    } else {
+                        debug!(
+                            "reconcile_gateway: {controller_name} {name} Unable to find KubernorConfig {config_reference:?}"
+                        );
+                        return Err(ControllerError::InvalidPayload("Unable to find KubernorConfig".to_owned()));
                     }
-                    warn!("Unable to find KubernorConfig {config_reference:?}");
+                } else {
+                    debug!("reconcile_gateway: {controller_name} {name} No configuration found.. using defaults ");
                 }
             } else {
                 warn!("reconcile_gateway: {controller_name} {name} Unknown gateway class name {gateway_class_name}");

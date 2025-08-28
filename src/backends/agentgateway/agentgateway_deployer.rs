@@ -7,7 +7,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 
-use crate::common::{BackendGatewayEvent, BackendGatewayResponse, ControlPlaneConfig};
+use crate::common::{BackendGatewayEvent, BackendGatewayResponse, ControlPlaneConfig, Gateway, ResourceKey};
 
 pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templates/**.tera") {
     Ok(t) => t,
@@ -42,6 +42,7 @@ impl AgentgatewayDeployerChannelHandlerService {
                                 BackendGatewayEvent::Changed(ctx) => {
                                     let gateway = &ctx.gateway;
                                     info!("AgentgatewayDeployerChannelHandlerService GatewayChanged {}",gateway.key());
+
                                     let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                                 }
 
@@ -67,4 +68,25 @@ impl AgentgatewayDeployerChannelHandlerService {
         futures::future::join_all(vec![agentgateway_deployer_service]).await;
         Ok(())
     }
+
 }
+
+use agentgateway_api_rs::{envoy::service::discovery::v3::Resource as AgentgatewayResource};
+
+#[derive(Debug, Default)]
+struct Resources {
+    listeners: Vec<AgentgatewayResource>,
+    clusters: Vec<AgentgatewayResource>,
+    secrets: Vec<ResourceKey>,
+}
+
+fn create_resources(gateway: &Gateway) -> Resources {
+    let mut listener_resources = vec![];
+    let mut secret_resources = vec![];
+    let mut resource_generator = super::resource_generator::ResourceGenerator::new(gateway);
+
+    let listeners = resource_generator.generate_listeners().values();
+
+    Resources { listeners: listener_resources, clusters: cluster_resources, secrets: secret_resources }
+
+};
