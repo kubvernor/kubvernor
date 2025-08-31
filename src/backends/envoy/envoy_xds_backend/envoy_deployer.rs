@@ -70,7 +70,7 @@ use crate::{
     },
     common::{
         self, BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, ControlPlaneConfig, Gateway,
-        GatewayAddress, Listener, ProtocolType, ResourceKey, TlsType,
+        GatewayAddress, Listener, ResourceKey, TlsType,
     },
 };
 
@@ -91,7 +91,7 @@ pub struct EnvoyDeployerChannelHandlerService {
 }
 
 impl EnvoyDeployerChannelHandlerService {
-    pub async fn start(&mut self) -> crate::Result<()> {
+    pub async fn start(mut self) -> crate::Result<()> {
         let (stream_resource_sender, stream_resource_receiver) = mpsc::channel::<ServerAction>(1024);
         let control_plane_config = self.control_plane_config.clone();
         let client = self.client.clone();
@@ -481,12 +481,6 @@ fn create_resources(gateway: &Gateway) -> Resources {
     Resources { listeners: listener_resources, clusters: cluster_resources, secrets: secret_resources }
 }
 
-impl From<ProtocolType> for i32 {
-    fn from(val: ProtocolType) -> Self {
-        i32::from(val == ProtocolType::Udp)
-    }
-}
-
 fn bootstrap_content_with_secrets(
     control_plane_config: &ControlPlaneConfig,
     secrets: &[ResourceKey],
@@ -510,16 +504,16 @@ fn bootstrap_content_with_secrets(
     if !tera_secrets.is_empty() {
         tera_context.insert("secrets", &tera_secrets);
     }
-    tera_context.insert("control_plane_host", &control_plane_config.host);
-    tera_context.insert("control_plane_port", &control_plane_config.port);
+    tera_context.insert("control_plane_host", &control_plane_config.listening_socket.ip().to_string());
+    tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port());
 
     Ok(TEMPLATES.render("envoy-bootstrap-dynamic-with-secrets.yaml.tera", &tera_context)?)
 }
 
 fn bootstrap_content(control_plane_config: &ControlPlaneConfig) -> Result<String, Error> {
     let mut tera_context = tera::Context::new();
-    tera_context.insert("control_plane_host", &control_plane_config.host);
-    tera_context.insert("control_plane_port", &control_plane_config.port);
+    tera_context.insert("control_plane_host", &control_plane_config.listening_socket.ip().to_string());
+    tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port());
 
     Ok(TEMPLATES.render("envoy-bootstrap-dynamic.yaml.tera", &tera_context)?)
 }

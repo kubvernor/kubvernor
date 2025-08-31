@@ -481,8 +481,6 @@ pub fn create_id(name: &str, namespace: &str) -> String {
 
 #[derive(Clone, Debug, TypedBuilder)]
 pub struct ControlPlaneConfig {
-    pub host: String,
-    pub port: u32,
     pub controller_name: String,
     pub listening_socket: SocketAddr,
 }

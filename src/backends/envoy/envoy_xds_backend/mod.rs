@@ -1,5 +1,5 @@
 mod envoy_deployer;
-mod model;
+pub(crate) mod model;
 mod resources;
 mod route_converters;
 mod server;

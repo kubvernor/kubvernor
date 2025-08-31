@@ -1,14 +1,15 @@
 use std::{collections::HashMap, fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
 
-use clap::Parser;
 use common::{BackendReferenceResolver, ControlPlaneConfig, ReferenceGrantsResolver, SecretsResolver};
 use futures::FutureExt;
 use kube::Client;
+use serde::Deserialize;
 use services::{
     GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher,
     ReferenceValidatorService, patchers::GRPCRoutePatcherService,
 };
 use state::State;
+use thiserror::Error;
 use tokio::{
     sync::mpsc::{self},
     time::sleep,
@@ -54,16 +55,46 @@ use crate::{
 
 const STARTUP_DURATION: Duration = Duration::from_secs(10);
 
-#[derive(Parser, Debug, TypedBuilder)]
-pub struct Args {
-    controller_name: String,
-    envoy_control_plane_host: String,
-    envoy_control_plane_port: u16,
+#[derive(Debug, TypedBuilder, Deserialize)]
+pub struct EnvoyGatewayControlPlaneConfiguration {
     control_plane_socket: SocketAddr,
 }
 
+#[derive(Debug, TypedBuilder, Deserialize)]
+pub struct AgentgatewayGatewayControlPlaneConfiguration {
+    control_plane_socket: SocketAddr,
+}
+
+#[derive(Debug, TypedBuilder, Deserialize)]
+pub struct Configuration {
+    pub controller_name: String,
+    pub enable_open_telemetry: Option<bool>,
+    envoy_gateway_control_plane: Option<EnvoyGatewayControlPlaneConfiguration>,
+    agentgateway_gateway_control_plane: Option<AgentgatewayGatewayControlPlaneConfiguration>,
+}
+
+#[derive(Error, Debug)]
+enum ConfigurationError {
+    #[error("controller name must be not empty")]
+    ControllerName,
+    #[error("one control plane must be configured")]
+    ControlPlane,
+}
+
+impl Configuration {
+    pub fn validate(&self) -> Result<()> {
+        if self.controller_name.is_empty() {
+            return Err(ConfigurationError::ControllerName.into());
+        }
+        match (&self.agentgateway_gateway_control_plane, &self.envoy_gateway_control_plane) {
+            (None, None) => Err(ConfigurationError::ControlPlane.into()),
+            _ => Ok(()),
+        }
+    }
+}
+
 #[allow(clippy::too_many_lines)]
-pub async fn start(args: Args) -> Result<()> {
+pub async fn start(configuration: Configuration) -> Result<()> {
     info!("Kubvernor started");
     let state = State::new();
     let client = Client::try_default().await?;
@@ -112,11 +143,11 @@ pub async fn start(args: Args) -> Result<()> {
         .gateway_class_patcher_channel_sender(gateway_class_patcher_channel_sender.clone())
         .http_route_patcher_channel_sender(http_route_patcher_channel_sender.clone())
         .grpc_route_patcher_channel_sender(grpc_route_patcher_channel_sender.clone())
-        .controller_name(args.controller_name.clone())
+        .controller_name(configuration.controller_name.clone())
         .build();
 
     let resolver_service = ReferenceValidatorService::builder()
-        .controller_name(args.controller_name.clone())
+        .controller_name(configuration.controller_name.clone())
         .client(client.clone())
         .reference_validate_channel_receiver(reference_validate_channel_receiver)
         .gateway_deployer_channel_sender(gateway_deployer_channel_sender.clone())
@@ -142,30 +173,8 @@ pub async fn start(args: Args) -> Result<()> {
         .receiver(inference_pool_patcher_channel_receiver)
         .build();
 
-    let control_plane_config = ControlPlaneConfig {
-        host: args.envoy_control_plane_host.clone(),
-        port: args.envoy_control_plane_port.into(),
-        listening_socket: args.control_plane_socket,
-        controller_name: args.controller_name.clone(),
-    };
-
-    let mut envoy_deployer_service = EnvoyDeployerChannelHandlerService::builder()
-        .client(client.clone())
-        .control_plane_config(control_plane_config.clone())
-        .backend_deploy_request_channel_receiver(envoy_backend_deployer_channel_receiver)
-        .backend_response_channel_sender(backend_response_channel_sender.clone())
-        .build();
-
-    #[cfg(feature = "agentgateway")]
-    let mut agentgateway_deployer_service = AgentgatewayDeployerChannelHandlerService::builder()
-        .client(client.clone())
-        .control_plane_config(control_plane_config)
-        .backend_deploy_request_channel_receiver(agentgateway_backend_deployer_channel_receiver)
-        .backend_response_channel_sender(backend_response_channel_sender)
-        .build();
-
     let gateway_class_controller = GatewayClassController::new(
-        args.controller_name.clone(),
+        configuration.controller_name.clone(),
         &client,
         state.clone(),
         gateway_class_patcher_channel_sender.clone(),
@@ -174,7 +183,7 @@ pub async fn start(args: Args) -> Result<()> {
         .ctx(Arc::new(
             gateway::GatewayControllerContext::builder()
                 .client(client.clone())
-                .controller_name(args.controller_name.clone())
+                .controller_name(configuration.controller_name.clone())
                 .gateway_channel_senders(backend_deployer_channel_senders.clone())
                 .gateway_class_patcher(gateway_class_patcher_channel_sender)
                 .state(state.clone())
@@ -188,7 +197,7 @@ pub async fn start(args: Args) -> Result<()> {
         .ctx(Arc::new(
             http_route::HttpRouteControllerContext::builder()
                 .client(client.clone())
-                .controller_name(args.controller_name.clone())
+                .controller_name(configuration.controller_name.clone())
                 .state(state.clone())
                 .http_route_patcher(http_route_patcher_channel_sender.clone())
                 .validate_references_channel_sender(reference_validate_channel_sender.clone())
@@ -201,7 +210,7 @@ pub async fn start(args: Args) -> Result<()> {
         .ctx(Arc::new(
             grpc_route::GRPCRouteControllerContext::builder()
                 .client(client.clone())
-                .controller_name(args.controller_name.clone())
+                .controller_name(configuration.controller_name.clone())
                 .state(state.clone())
                 .grpc_route_patcher(grpc_route_patcher_channel_sender.clone())
                 .validate_references_channel_sender(reference_validate_channel_sender.clone())
@@ -213,7 +222,7 @@ pub async fn start(args: Args) -> Result<()> {
         .ctx(Arc::new(
             inference_pool::InferencePoolControllerContext::builder()
                 .client(client.clone())
-                .controller_name(args.controller_name.clone())
+                .controller_name(configuration.controller_name.clone())
                 .state(state.clone())
                 .validate_references_channel_sender(reference_validate_channel_sender)
                 .inference_pool_patcher_sender(inference_pool_patcher_channel_sender)
@@ -228,9 +237,6 @@ pub async fn start(args: Args) -> Result<()> {
     let http_route_patcher_service = http_route_patcher_service.start().boxed();
     let grpc_route_patcher_service = grpc_route_patcher_service.start().boxed();
     let inference_pool_patcher_service = inference_pool_patcher_service.start().boxed();
-    let envoy_deployer_service = envoy_deployer_service.start().boxed();
-    #[cfg(feature = "agentgateway")]
-    let agentgateway_deployer_service = agentgateway_deployer_service.start().boxed();
 
     let gateway_class_controller_task = async move {
         info!("Gateway Class controller...started");
@@ -273,7 +279,7 @@ pub async fn start(args: Args) -> Result<()> {
     let secret_resolver_service = async move { secrets_resolver.resolve().await }.boxed();
     let backend_references_resolver_service = async move { backend_references_resolver.resolve().await }.boxed();
     let reference_grants_resolver_service = async move { reference_grants_resolver.resolve().await }.boxed();
-    futures::future::join_all(vec![
+    let mut services = vec![
         reference_grants_resolver_service,
         backend_references_resolver_service,
         secret_resolver_service,
@@ -284,16 +290,46 @@ pub async fn start(args: Args) -> Result<()> {
         http_route_patcher_service,
         grpc_route_patcher_service,
         inference_pool_patcher_service,
-        envoy_deployer_service,
-        #[cfg(feature = "agentgateway")]
-        agentgateway_deployer_service,
         gateway_class_controller_task.boxed(),
         gateway_controller_task.boxed(),
         http_route_controller_task.boxed(),
         grpc_route_controller_task.boxed(),
         inference_pool_controller_task.boxed(),
-    ])
-    .await;
+    ];
+
+    if let Some(control_plane_config) = configuration.envoy_gateway_control_plane {
+        let control_plane_config = ControlPlaneConfig {
+            listening_socket: control_plane_config.control_plane_socket,
+            controller_name: configuration.controller_name.clone(),
+        };
+
+        let service = EnvoyDeployerChannelHandlerService::builder()
+            .client(client.clone())
+            .control_plane_config(control_plane_config.clone())
+            .backend_deploy_request_channel_receiver(envoy_backend_deployer_channel_receiver)
+            .backend_response_channel_sender(backend_response_channel_sender.clone())
+            .build();
+
+        services.push(service.start().boxed());
+    }
+
+    #[cfg(feature = "agentgateway")]
+    if let Some(control_plane_config) = configuration.agentgateway_gateway_control_plane {
+        let control_plane_config = ControlPlaneConfig {
+            listening_socket: control_plane_config.control_plane_socket,
+            controller_name: configuration.controller_name.clone(),
+        };
+
+        let service = AgentgatewayDeployerChannelHandlerService::builder()
+            .client(client.clone())
+            .control_plane_config(control_plane_config)
+            .backend_deploy_request_channel_receiver(agentgateway_backend_deployer_channel_receiver)
+            .backend_response_channel_sender(backend_response_channel_sender)
+            .build();
+        services.push(service.start().boxed());
+    }
+
+    futures::future::join_all(services).await;
     info!("Kubvernor stopped");
     Ok(())
 }
