@@ -10,34 +10,41 @@ Kubvernor is a Rust implementation of Kubernetes Gateway APIs. The aim of the pr
 ## Running 
 
 0. Install Rust, Docker and Kind
+1. Install dependencies
+   
+   Ubuntu/Debian
+   ```
+   apt install -y protobuf-compiler
+   protoc --version  # Ensure compiler version is 3+
+   ```
 
-1. Clone the Kubvernor GitHub repository
+3. Clone the Kubvernor GitHub repository
    ```bash
    git clone https://github.com/kubvernor/kubvernor && cd kubvernor
    ```
 
-2. Deploy your cluster
+4. Deploy your cluster
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/refs/heads/main/hack/implementations/common/create-cluster.sh | sh
 
    ```
 
 
-3. Install required CRDs for Gateway API
+5. Install required CRDs for Gateway API
     ```bash
     kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml	
     ```
 
 
 
-4. Compile and run Kubvernor
+6. Compile and run Kubvernor
 
     ```bash         
    export CONTROL_PLANE_IP=<IP>
    ./run_kubvernor.sh    
    ```
 
-5. Run Gateway API Conformance suite
+7. Run Gateway API Conformance suite
 
     ```bash
     ./run_conformance_tests.sh
