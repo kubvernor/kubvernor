@@ -207,7 +207,9 @@ impl ReferenceResolverHandler {
                     .await;
                 match receiver.await {
                     Err(e) => error!("Sytem error  {e:?}"),
-                    Ok(Err(e)) => warn!("Inference Pool: Can't update the status {e:?}"),
+                    Ok(Err(e)) => {
+                        warn!("Inference Pool: Can't update the status {e:?}")
+                    },
                     _ => (),
                 }
             } else {

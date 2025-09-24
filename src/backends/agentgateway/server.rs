@@ -1,17 +1,3 @@
-use envoy_api_rs::{
-    envoy::{
-        config::core::v3::Node as EnvoyNode,
-        service::discovery::v3::{
-            DeltaDiscoveryRequest, DeltaDiscoveryResponse, DiscoveryRequest, DiscoveryResponse, Resource,
-            aggregated_discovery_service_server::{AggregatedDiscoveryService, AggregatedDiscoveryServiceServer},
-        },
-    },
-    tonic::{IntoStreamingRequest, Response, Status, transport::Server},
-};
-use futures::FutureExt;
-use k8s_openapi::api::core::v1::Pod;
-use kube::Api;
-use lru_time_cache;
 use std::{
     collections::BTreeMap,
     fmt::Display,
@@ -20,6 +6,19 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
 };
+
+use agentgateway_api_rs::{
+    agentgateway::dev::resource::Resource,
+    envoy::service::discovery::v3::{
+        DeltaDiscoveryRequest, DeltaDiscoveryResponse, DiscoveryRequest, DiscoveryResponse, Node,
+        aggregated_discovery_service_server::{AggregatedDiscoveryService, AggregatedDiscoveryServiceServer},
+    },
+};
+use envoy_api_rs::tonic::{IntoStreamingRequest, Response, Status, transport::Server};
+use futures::FutureExt;
+use k8s_openapi::api::core::v1::Pod;
+use kube::Api;
+use lru_time_cache;
 use tokio::{
     net::TcpListener,
     sync::mpsc::{self, Receiver},
@@ -32,26 +31,52 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
-    backends::envoy::envoy_xds_backend::model::TypeUrl,
+    backends::agentgateway::converters::AnyTypeConverter,
     common::{ResourceKey, create_id},
 };
 
 pub enum ServerAction {
-    UpdateClusters { gateway_id: ResourceKey, resources: Vec<Resource>, ack_version: u32 },
+    UpdateBindings { gateway_id: ResourceKey, resources: Vec<Resource>, ack_version: u32 },
     UpdateListeners { gateway_id: ResourceKey, resources: Vec<Resource>, ack_version: u32 },
+    UpdateRoutes { gateway_id: ResourceKey, resources: Vec<Resource>, ack_version: u32 },
+
+    DeleteBindings { gateway_id: ResourceKey, resources: Vec<Resource>, ack_version: u32 },
+    DeleteListeners { gateway_id: ResourceKey, resources: Vec<Resource>, ack_version: u32 },
+    DeleteRoutes { gateway_id: ResourceKey, resources: Vec<Resource>, ack_version: u32 },
 }
 
 impl Display for ServerAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ServerAction::UpdateClusters { gateway_id, resources, ack_version } => write!(
+            ServerAction::UpdateBindings { gateway_id, resources, ack_version } => write!(
                 f,
-                "ServerAction::UpdateClusters {{gateway_id: {gateway_id}, resources: {}, ack_version: {ack_version} }}",
+                "ServerAction::UpdateBindings {{gateway_id: {gateway_id}, resources: {}, ack_version: {ack_version} }}",
                 resources.len()
             ),
             ServerAction::UpdateListeners { gateway_id, resources, ack_version } => write!(
                 f,
                 "ServerAction::UpdateListeners {{gateway_id: {gateway_id}, resources: {}, ack_version: {ack_version} }}",
+                resources.len()
+            ),
+            ServerAction::UpdateRoutes { gateway_id, resources, ack_version } => write!(
+                f,
+                "ServerAction::UpdateRoutes {{gateway_id: {gateway_id}, resources: {}, ack_version: {ack_version} }}",
+                resources.len()
+            ),
+
+            ServerAction::DeleteBindings { gateway_id, resources, ack_version } => write!(
+                f,
+                "ServerAction::DeleteBindings {{gateway_id: {gateway_id}, resources: {}, ack_version: {ack_version} }}",
+                resources.len()
+            ),
+            ServerAction::DeleteListeners { gateway_id, resources, ack_version } => write!(
+                f,
+                "ServerAction::DeleteListeners {{gateway_id: {gateway_id}, resources: {}, ack_version: {ack_version} }}",
+                resources.len()
+            ),
+            ServerAction::DeleteRoutes { gateway_id, resources, ack_version } => write!(
+                f,
+                "ServerAction::DeleteRoutes {{gateway_id: {gateway_id}, resources: {}, ack_version: {ack_version} }}",
                 resources.len()
             ),
         }
@@ -86,14 +111,14 @@ impl AckVersions {
 
 #[derive(Debug, Clone)]
 struct AdsClient {
-    sender: mpsc::Sender<Result<DiscoveryResponse, Status>>,
+    sender: mpsc::Sender<Result<DeltaDiscoveryResponse, Status>>,
     ack_versions: AckVersions,
     client_id: SocketAddr,
     gateway_id: Option<String>,
 }
 
 impl AdsClient {
-    fn new(client_id: SocketAddr, sender: mpsc::Sender<Result<DiscoveryResponse, Status>>) -> Self {
+    fn new(client_id: SocketAddr, sender: mpsc::Sender<Result<DeltaDiscoveryResponse, Status>>) -> Self {
         Self { sender, client_id, gateway_id: None, ack_versions: AckVersions::default() }
     }
 
@@ -217,7 +242,7 @@ impl AggregateServerService {
                     Some(event) = stream_resources_rx.recv() => {
                         info!("{event}");
                         match event{
-                            ServerAction::UpdateClusters{ gateway_id: gateway_key, resources, ack_version } => {
+                            ServerAction::UpdateBindings{ gateway_id: gateway_key, resources, ack_version } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
 
 
@@ -228,13 +253,13 @@ impl AggregateServerService {
                                 };
 
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
-                                info!("Sending cluster discovery response {gateway_id} clients {}", clients.len());
+                                info!("Sending Bindings discovery response {gateway_id} clients {}", clients.len());
                                 for client in &mut clients{
-                                    let response = DiscoveryResponse {
-                                        type_url: TypeUrl::Cluster.to_string(),
-                                        resources: resources.iter().map(|resource| resource.resource.clone().expect("We expect this to work")).collect(),
+
+                                    let response = DeltaDiscoveryResponse {
+                                        type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                        resources: resources.iter().map(|resource| agentgateway_api_rs::envoy::service::discovery::v3::Resource{name:"type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource))),..Default::default() }).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
-                                        version_info: ack_version.to_string(),
                                         ..Default::default()
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
@@ -252,16 +277,13 @@ impl AggregateServerService {
 
                                 };
 
-
-
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
-                                info!("Sending listener discovery response {gateway_id} clients {}", clients.len());
+                                info!("Sending Listeners discovery response {gateway_id} clients {}", clients.len());
                                 for client in &mut clients{
-                                    let response = DiscoveryResponse {
-                                        type_url: TypeUrl::Listener.to_string(),
-                                        resources: resources.iter().map(|resource| resource.resource.clone().expect("We expect this to work")).collect(),
+                                    let response = DeltaDiscoveryResponse {
+                                        type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                        resources: resources.iter().map(|resource| agentgateway_api_rs::envoy::service::discovery::v3::Resource{name:"type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource))),..Default::default() }).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
-                                        version_info: ack_version.to_string(),
                                         ..Default::default()
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
@@ -269,7 +291,57 @@ impl AggregateServerService {
                                     ads_clients.update_client(client);
                                 }
                             },
+                            ServerAction::UpdateRoutes{ gateway_id: gateway_key, resources, ack_version } => {
+                                let gateway_id = create_gateway_id(&gateway_key);
 
+                                {
+                                    let mut channels = ads_channels.lock().expect("We expect lock to work");
+                                    channels.listener.insert(gateway_id.clone(), resources.clone());
+                                };
+
+                                let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
+                                info!("Sending Routes discovery response {gateway_id} clients {}", clients.len());
+                                for client in &mut clients{
+                                    let response = DeltaDiscoveryResponse {
+                                        type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                        resources: resources.iter().map(|resource| agentgateway_api_rs::envoy::service::discovery::v3::Resource{name:"type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource))),..Default::default() }).collect(),
+                                        nonce: uuid::Uuid::new_v4().to_string(),
+                                        ..Default::default()
+                                    };
+                                    let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                    client.versions_mut().listener = ack_version;
+                                    ads_clients.update_client(client);
+                                }
+                            },
+                            ServerAction::DeleteRoutes{ gateway_id: gateway_key, resources, ack_version } |
+                            ServerAction::DeleteListeners{ gateway_id: gateway_key, resources, ack_version }|
+                            ServerAction::DeleteBindings{ gateway_id: gateway_key, resources, ack_version }
+                            => {
+                                let gateway_id = create_gateway_id(&gateway_key);
+
+                                let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
+                                info!("Deleting discovery response {gateway_id} clients {}", clients.len());
+                                for client in &mut clients{
+                                    let response = DeltaDiscoveryResponse {
+                                        type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                        removed_resources: resources.iter().filter_map(|resource| match &resource.kind{
+                                            Some(kind) => match kind{
+                                                agentgateway_api_rs::agentgateway::dev::resource::resource::Kind::Bind(bind) => Some(bind.key.clone()),
+                                                agentgateway_api_rs::agentgateway::dev::resource::resource::Kind::Listener(listener) => Some(listener.key.clone()),
+                                                agentgateway_api_rs::agentgateway::dev::resource::resource::Kind::Route(route) => Some(route.key.clone()),
+                                                agentgateway_api_rs::agentgateway::dev::resource::resource::Kind::TcpRoute(_)| agentgateway_api_rs::agentgateway::dev::resource::resource::Kind::Policy(_)| agentgateway_api_rs::agentgateway::dev::resource::resource::Kind::Backend(_) => None,
+                                            },
+                                            None => None,
+                                        }).collect(),
+                                        nonce: uuid::Uuid::new_v4().to_string(),
+
+                                        ..Default::default()
+                                    };
+                                    let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                    client.versions_mut().listener = ack_version;
+                                    ads_clients.update_client(client);
+                                }
+                            }
                         }
                     }
                     else => {
@@ -282,7 +354,7 @@ impl AggregateServerService {
 
 type AggregatedDiscoveryServiceResult<T> = std::result::Result<Response<T>, Status>;
 
-#[envoy_api_rs::tonic::async_trait]
+#[agentgateway_api_rs::tonic::async_trait]
 impl AggregatedDiscoveryService for AggregateServer {
     type StreamAggregatedResourcesStream =
         Pin<Box<dyn Stream<Item = std::result::Result<DiscoveryResponse, Status>> + Send>>;
@@ -375,7 +447,7 @@ pub async fn start_aggregate_server(
     Ok(())
 }
 
-async fn fetch_gateway_id_by_node_id(client: kube::Client, node: &EnvoyNode) -> Option<String> {
+async fn fetch_gateway_id_by_node_id(client: kube::Client, node: &Node) -> Option<String> {
     let id = &node.id;
     let namespace = &node.cluster;
     let api_client: kube::api::Api<Pod> = Api::namespaced(client, namespace);

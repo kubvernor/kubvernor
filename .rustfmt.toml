@@ -1,5 +1,5 @@
 condense_wildcard_suffixes = true
-#group_imports = "StdExternalCrate"
+group_imports = "StdExternalCrate"
 style_edition = "2024"
 reorder_imports = true
 imports_granularity = "crate"

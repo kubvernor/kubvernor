@@ -449,7 +449,9 @@ fn create_service_cluster(
 }
 
 fn generate_ext_service_cluster(config: &InferenceClusterInfo) -> Option<ClusterHolder> {
-    let Some(extension_config) = &config.config.inference_config else { return None };
+    let Some(extension_config) = &config.config.inference_config else {
+        return None;
+    };
 
     let address_port = (
         extension_config.extension_ref().name.clone() + "." + &config.config.resource_key.namespace,

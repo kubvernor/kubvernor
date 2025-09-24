@@ -30,9 +30,10 @@ fn create_bind_name(port: i32) -> String {
 }
 
 #[derive(Debug, Clone, Ord, Eq, PartialEq, PartialOrd)]
+// created because xds bind is not Ord
 pub(crate) struct Bind {
-    key: String,
-    port: u32,
+    pub key: String,
+    pub port: u32,
 }
 
 impl<'a> ResourceGenerator<'a> {

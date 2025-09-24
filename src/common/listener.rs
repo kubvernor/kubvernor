@@ -28,7 +28,9 @@ impl TryFrom<&String> for ProtocolType {
             "TCP" => Self::Tcp,
             "TLS" => Self::Tls,
             "UDP" => Self::Udp,
-            _ => return Err(ControllerError::InvalidPayload("Wrong protocol".to_owned())),
+            _ => {
+                return Err(ControllerError::InvalidPayload("Wrong protocol".to_owned()));
+            },
         })
     }
 }

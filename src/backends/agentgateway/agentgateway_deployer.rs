@@ -1,24 +1,16 @@
-use std::{
-    net::SocketAddr,
-    sync::{Arc, LazyLock, Mutex},
-};
+use std::sync::LazyLock;
 
-use envoy_api_rs::tonic::transport::Server;
 use futures::FutureExt;
 use kube::Client;
 use tera::Tera;
-use tokio::{
-    net::TcpListener,
-    sync::mpsc::{self, Receiver, Sender},
-};
-use tokio_stream::wrappers::TcpListenerStream;
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
     backends::agentgateway::{
         resource_generator::ResourceGenerator,
-        server::{AggregateServer, AggregateServerService, ServerAction, start_aggregate_server},
+        server::{ServerAction, start_aggregate_server},
     },
     common::{BackendGatewayEvent, BackendGatewayResponse, ControlPlaneConfig, Gateway, ResourceKey},
 };
@@ -59,16 +51,38 @@ impl AgentgatewayDeployerChannelHandlerService {
                                     info!("AgentgatewayDeployerChannelHandlerService GatewayChanged {}",gateway.key());
                                     let resource_generator = ResourceGenerator::new(gateway);
                                     let bindings_and_listeners = resource_generator.generate_bindings_and_listeners();
-                                    let routes = resource_generator.generate_routes();
+                                    let bindings = bindings_and_listeners.keys().cloned().map(|b|Resource{kind: Some(Kind::Bind(Bind{ key: b.key, port: b.port }))}).collect::<Vec<_>>();
+                                    let listeners = bindings_and_listeners.values().cloned().flat_map(| listeners | listeners.into_iter()
+                                    .map(|listener|
+                                        Resource{kind: Some(Kind::Listener(listener))}
+                                    )).collect::<Vec<_>>();
+                                    let routes = resource_generator.generate_routes().into_iter().map(|r| Resource{kind: Some(Kind::Route(r))}).collect::<Vec<_>>();
+
+                                    let _ = stream_resource_sender.send(ServerAction::UpdateBindings{gateway_id: gateway.key().clone(), resources: bindings,ack_version: 1}).await;
+                                    let _ = stream_resource_sender.send(ServerAction::UpdateListeners { gateway_id: gateway.key().clone(), resources: listeners, ack_version: 1}).await;
+                                    let _ = stream_resource_sender.send(ServerAction::UpdateRoutes { gateway_id: gateway.key().clone(), resources: routes, ack_version: 1}).await;
                                     let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                                 }
 
-                                BackendGatewayEvent::Deleted(boxed) => {
-                                    let response_sender = boxed.response_sender;
-                                    let gateway  = boxed.gateway;
+                                BackendGatewayEvent::Deleted(ctx) => {
+                                    let response_sender = ctx.response_sender;
+                                    let gateway  = &ctx.gateway;
                                     info!("AgentgatewayDeployerChannelHandlerService GatewayDeleted {}",gateway.key());
-                                    let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Deleted(vec![]));
-                                    let _res = response_sender.send(BackendGatewayResponse::Deleted(vec![]));
+
+                                    let resource_generator = ResourceGenerator::new(gateway);
+                                    let bindings_and_listeners = resource_generator.generate_bindings_and_listeners();
+                                    let bindings = bindings_and_listeners.keys().cloned().map(|b|Resource{kind: Some(Kind::Bind(Bind{ key: b.key, port: b.port }))}).collect::<Vec<_>>();
+                                    let listeners = bindings_and_listeners.values().cloned().flat_map(| listeners | listeners.into_iter()
+                                    .map(|listener|
+                                        Resource{kind: Some(Kind::Listener(listener))}
+                                    )).collect::<Vec<_>>();
+                                    let routes = resource_generator.generate_routes().into_iter().map(|r| Resource{kind: Some(Kind::Route(r))}).collect::<Vec<_>>();
+
+                                    let _ = stream_resource_sender.send(ServerAction::DeleteRoutes{gateway_id: gateway.key().clone(), resources: routes,ack_version: 1}).await;
+                                    let _ = stream_resource_sender.send(ServerAction::DeleteListeners { gateway_id: gateway.key().clone(), resources: listeners, ack_version: 1}).await;
+                                    let _ = stream_resource_sender.send(ServerAction::DeleteBindings { gateway_id: gateway.key().clone(), resources: bindings, ack_version: 1}).await;
+                                    let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
+                                    let _ = response_sender.send(BackendGatewayResponse::Deleted(vec![]));
                                 }
 
                             }
@@ -88,7 +102,10 @@ impl AgentgatewayDeployerChannelHandlerService {
     }
 }
 
-use agentgateway_api_rs::envoy::service::discovery::v3::Resource as AgentgatewayResource;
+use agentgateway_api_rs::{
+    agentgateway::dev::resource::{Bind, Resource, resource::Kind},
+    envoy::service::discovery::v3::Resource as AgentgatewayResource,
+};
 
 #[derive(Debug, Default)]
 struct Resources {
