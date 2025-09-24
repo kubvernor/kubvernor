@@ -7,9 +7,8 @@ use gateway_api::{
 use kube::ResourceExt;
 
 use super::{
-    Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, FilterHeaders, NotResolvedReason, ResolutionStatus,
-    ResourceKey, Route, RouteConfig, RouteType, ServiceTypeConfig, get_add_headers, get_remove_headers,
-    get_set_headers,
+    Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route,
+    RouteConfig, RouteType, ServiceTypeConfig, get_add_headers, get_remove_headers, get_set_headers,
 };
 use crate::{
     common::{BackendType, InferencePoolTypeConfig, resource_key::DEFAULT_INFERENCE_GROUP_NAME},
@@ -51,9 +50,9 @@ impl TryFrom<&HTTPRoute> for Route {
                         Some(kind) if kind == "Service" => {
                             Backend::Maybe(BackendType::Service(ServiceTypeConfig::from((br, local_namespace))))
                         },
-                        Some(kind) if kind == "InferencePool" => Backend::Maybe(BackendType::InferencePool(
-                            InferencePoolTypeConfig::from((br, local_namespace)),
-                        )),
+                        Some(kind) if kind == "InferencePool" => {
+                            Backend::Maybe(BackendType::InferencePool(InferencePoolTypeConfig::from((br, local_namespace))))
+                        },
                         _ => {
                             has_invalid_backends = true;
                             Backend::Invalid(BackendType::Invalid(ServiceTypeConfig::from((br, local_namespace))))
@@ -67,11 +66,7 @@ impl TryFrom<&HTTPRoute> for Route {
             .hostnames
             .as_ref()
             .map(|hostnames| {
-                let hostnames = hostnames
-                    .iter()
-                    .filter(|hostname| hostname.parse::<IpAddr>().is_err())
-                    .cloned()
-                    .collect::<Vec<_>>();
+                let hostnames = hostnames.iter().filter(|hostname| hostname.parse::<IpAddr>().is_err()).cloned().collect::<Vec<_>>();
                 hostnames
             })
             .unwrap_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()]);

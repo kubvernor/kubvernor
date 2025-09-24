@@ -58,10 +58,7 @@ impl GRPCRouteController {
         Action::requeue(RECONCILE_LONG_WAIT)
     }
 
-    async fn reconcile_grpc_route(
-        resource: Arc<grpcroutes::GRPCRoute>,
-        ctx: Arc<GRPCRouteControllerContext>,
-    ) -> Result<Action> {
+    async fn reconcile_grpc_route(resource: Arc<grpcroutes::GRPCRoute>, ctx: Arc<GRPCRouteControllerContext>) -> Result<Action> {
         let controller_name = ctx.controller_name.clone();
         let grpc_route_patcher = ctx.grpc_route_patcher.clone();
 
@@ -105,11 +102,7 @@ impl GRPCRouteController {
 
     fn check_status(args: ResourceCheckerArgs<GRPCRoute>) -> ResourceState {
         let (resource, stored_resource) = args;
-        if resource.status == stored_resource.status {
-            ResourceState::StatusNotChanged
-        } else {
-            ResourceState::StatusChanged
-        }
+        if resource.status == stored_resource.status { ResourceState::StatusNotChanged } else { ResourceState::StatusChanged }
     }
 }
 
@@ -164,12 +157,7 @@ impl ResourceHandler<GRPCRoute> for GRPCRouteHandler<GRPCRoute> {
 }
 
 impl GRPCRouteHandler<GRPCRoute> {
-    async fn on_new_or_changed(
-        &self,
-        route_key: ResourceKey,
-        resource: &Arc<GRPCRoute>,
-        _state: &State,
-    ) -> Result<Action> {
+    async fn on_new_or_changed(&self, route_key: ResourceKey, resource: &Arc<GRPCRoute>, _state: &State) -> Result<Action> {
         let Some(parent_gateway_refs) = resource.spec.parent_refs.as_ref() else {
             return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
         };
@@ -182,8 +170,7 @@ impl GRPCRouteHandler<GRPCRoute> {
                 |state: &State, route_status: Option<RouteStatus>| {
                     let mut route = (**resource).clone();
                     route.status = route_status;
-                    let () =
-                        state.save_grpc_route(route_key.clone(), &Arc::new(route)).expect("We expect the lock to work");
+                    let () = state.save_grpc_route(route_key.clone(), &Arc::new(route)).expect("We expect the lock to work");
                 },
             )
             .await

@@ -5,8 +5,8 @@ use futures::FutureExt;
 use kube::Client;
 use serde::Deserialize;
 use services::{
-    GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher,
-    ReferenceValidatorService, patchers::GRPCRoutePatcherService,
+    GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService,
+    patchers::GRPCRoutePatcherService,
 };
 use state::State;
 use thiserror::Error;
@@ -49,9 +49,7 @@ use controllers::{
 };
 use typed_builder::TypedBuilder;
 
-use crate::{
-    common::GatewayImplementationType, controllers::inference_pool, services::patchers::InferencePoolPatcherService,
-};
+use crate::{common::GatewayImplementationType, controllers::inference_pool, services::patchers::InferencePoolPatcherService};
 
 const STARTUP_DURATION: Duration = Duration::from_secs(10);
 
@@ -112,15 +110,11 @@ pub async fn start(configuration: Configuration) -> Result<()> {
     backend_deployer_channel_senders.insert(GatewayImplementationType::Envoy, envoy_backend_deployer_channel_sender);
 
     #[cfg(feature = "agentgateway")]
-    let (agentgateway_backend_deployer_channel_sender, agentgateway_backend_deployer_channel_receiver) =
-        mpsc::channel(1024);
+    let (agentgateway_backend_deployer_channel_sender, agentgateway_backend_deployer_channel_receiver) = mpsc::channel(1024);
     #[cfg(feature = "agentgateway")]
-    backend_deployer_channel_senders
-        .insert(GatewayImplementationType::Agentgateway, agentgateway_backend_deployer_channel_sender);
+    backend_deployer_channel_senders.insert(GatewayImplementationType::Agentgateway, agentgateway_backend_deployer_channel_sender);
 
-    let secrets_resolver = SecretsResolver::builder()
-        .reference_resolver(client.clone(), reference_validate_channel_sender.clone())
-        .build();
+    let secrets_resolver = SecretsResolver::builder().reference_resolver(client.clone(), reference_validate_channel_sender.clone()).build();
 
     let backend_references_resolver = BackendReferenceResolver::builder()
         .state(state.clone())
@@ -160,18 +154,14 @@ pub async fn start(configuration: Configuration) -> Result<()> {
 
     let mut gateway_patcher_service =
         GatewayPatcherService::builder().client(client.clone()).receiver(gateway_patcher_channel_receiver).build();
-    let mut gateway_class_patcher_service = GatewayClassPatcherService::builder()
-        .client(client.clone())
-        .receiver(gateway_class_patcher_channel_receiver)
-        .build();
+    let mut gateway_class_patcher_service =
+        GatewayClassPatcherService::builder().client(client.clone()).receiver(gateway_class_patcher_channel_receiver).build();
     let mut http_route_patcher_service =
         HttpRoutePatcherService::builder().client(client.clone()).receiver(http_route_patcher_channel_receiver).build();
     let mut grpc_route_patcher_service =
         GRPCRoutePatcherService::builder().client(client.clone()).receiver(grpc_route_patcher_channel_receiver).build();
-    let mut inference_pool_patcher_service = InferencePoolPatcherService::builder()
-        .client(client.clone())
-        .receiver(inference_pool_patcher_channel_receiver)
-        .build();
+    let mut inference_pool_patcher_service =
+        InferencePoolPatcherService::builder().client(client.clone()).receiver(inference_pool_patcher_channel_receiver).build();
 
     let gateway_class_controller = GatewayClassController::new(
         configuration.controller_name.clone(),

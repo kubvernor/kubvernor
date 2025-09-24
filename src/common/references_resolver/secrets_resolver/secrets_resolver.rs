@@ -9,7 +9,9 @@ use crate::common::{Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey
 
 #[derive(Clone, TypedBuilder)]
 pub struct SecretsResolver {
-    #[builder(setter(transform = |client:Client, reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>| ReferencesResolver::builder().client(client).reference_validate_channel_sender(reference_validate_channel_sender).build()))]
+    #[builder(setter(transform =
+        |client:Client, reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>|
+            ReferencesResolver::builder().client(client).reference_validate_channel_sender(reference_validate_channel_sender).build()))]
     reference_resolver: ReferencesResolver<Secret>,
 }
 
@@ -19,9 +21,7 @@ impl SecretsResolver {
 
         let references = || {
             let mut keys = BTreeSet::new();
-            for listener in
-                gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls)
-            {
+            for listener in gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
                 let listener_data = listener.data();
                 if let Some(TlsType::Terminate(certificates)) = &listener_data.config.tls_type {
                     for certificate in certificates {
@@ -39,9 +39,7 @@ impl SecretsResolver {
         let gateway_key = gateway.key();
         let references = || {
             let mut keys = BTreeSet::new();
-            for listener in
-                gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls)
-            {
+            for listener in gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
                 let listener_data = listener.data();
                 if let Some(TlsType::Terminate(certificates)) = &listener_data.config.tls_type {
                     for certificate in certificates {

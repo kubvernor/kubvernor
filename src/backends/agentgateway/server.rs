@@ -8,7 +8,7 @@ use std::{
 };
 
 use agentgateway_api_rs::{
-    agentgateway::dev::resource::Resource,
+    agentgateway::dev::resource::{Resource, resource::Kind},
     envoy::service::discovery::v3::{
         DeltaDiscoveryRequest, DeltaDiscoveryResponse, DiscoveryRequest, DiscoveryResponse, Node,
         aggregated_discovery_service_server::{AggregatedDiscoveryService, AggregatedDiscoveryServiceServer},
@@ -157,8 +157,7 @@ impl AdsClients {
 
     fn get_clients_by_gateway_id(&self, gateway_id: &str) -> Vec<AdsClient> {
         let clients = self.ads_clients.lock().expect("We expect the lock to work");
-        let clients =
-            clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect();
+        let clients = clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect();
         clients
     }
 
@@ -225,11 +224,7 @@ impl AggregateServer {
     }
 }
 impl AggregateServerService {
-    fn new(
-        stream_resources_rx: Receiver<ServerAction>,
-        ads_channels: Arc<Mutex<ResourcesMapping>>,
-        ads_clients: AdsClients,
-    ) -> Self {
+    fn new(stream_resources_rx: Receiver<ServerAction>, ads_channels: Arc<Mutex<ResourcesMapping>>, ads_clients: AdsClients) -> Self {
         Self { ads_channels, ads_clients, stream_resources_rx }
     }
 
@@ -258,7 +253,12 @@ impl AggregateServerService {
 
                                     let response = DeltaDiscoveryResponse {
                                         type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
-                                        resources: resources.iter().map(|resource| agentgateway_api_rs::envoy::service::discovery::v3::Resource{name:"type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource))),..Default::default() }).collect(),
+                                        resources: resources.iter().map(|resource|
+                                            agentgateway_api_rs::envoy::service::discovery::v3::Resource{
+                                                name:"type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                                resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource))),
+                                                ..Default::default() }
+                                            ).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
                                         ..Default::default()
                                     };
@@ -282,7 +282,12 @@ impl AggregateServerService {
                                 for client in &mut clients{
                                     let response = DeltaDiscoveryResponse {
                                         type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
-                                        resources: resources.iter().map(|resource| agentgateway_api_rs::envoy::service::discovery::v3::Resource{name:"type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource))),..Default::default() }).collect(),
+                                        resources: resources.iter().map(|resource|
+                                            agentgateway_api_rs::envoy::service::discovery::v3::Resource{
+                                                name:"type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                                resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource))),
+                                                ..Default::default() }
+                                            ).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
                                         ..Default::default()
                                     };
@@ -304,7 +309,12 @@ impl AggregateServerService {
                                 for client in &mut clients{
                                     let response = DeltaDiscoveryResponse {
                                         type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
-                                        resources: resources.iter().map(|resource| agentgateway_api_rs::envoy::service::discovery::v3::Resource{name:"type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource))),..Default::default() }).collect(),
+                                        resources: resources.iter().map(|resource|
+                                            agentgateway_api_rs::envoy::service::discovery::v3::Resource{
+                                                name:"type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                                resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource))),
+                                                ..Default::default() }
+                                            ).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
                                         ..Default::default()
                                     };
@@ -326,10 +336,12 @@ impl AggregateServerService {
                                         type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
                                         removed_resources: resources.iter().filter_map(|resource| match &resource.kind{
                                             Some(kind) => match kind{
-                                                agentgateway_api_rs::agentgateway::dev::resource::resource::Kind::Bind(bind) => Some(bind.key.clone()),
-                                                agentgateway_api_rs::agentgateway::dev::resource::resource::Kind::Listener(listener) => Some(listener.key.clone()),
-                                                agentgateway_api_rs::agentgateway::dev::resource::resource::Kind::Route(route) => Some(route.key.clone()),
-                                                agentgateway_api_rs::agentgateway::dev::resource::resource::Kind::TcpRoute(_)| agentgateway_api_rs::agentgateway::dev::resource::resource::Kind::Policy(_)| agentgateway_api_rs::agentgateway::dev::resource::resource::Kind::Backend(_) => None,
+                                                Kind::Bind(bind) => Some(bind.key.clone()),
+                                                Kind::Listener(listener) => Some(listener.key.clone()),
+                                                Kind::Route(route) => Some(route.key.clone()),
+                                                Kind::TcpRoute(_) |
+                                                Kind::Policy(_) |
+                                                Kind::Backend(_) => None,
                                             },
                                             None => None,
                                         }).collect(),
@@ -356,8 +368,7 @@ type AggregatedDiscoveryServiceResult<T> = std::result::Result<Response<T>, Stat
 
 #[agentgateway_api_rs::tonic::async_trait]
 impl AggregatedDiscoveryService for AggregateServer {
-    type StreamAggregatedResourcesStream =
-        Pin<Box<dyn Stream<Item = std::result::Result<DiscoveryResponse, Status>> + Send>>;
+    type StreamAggregatedResourcesStream = Pin<Box<dyn Stream<Item = std::result::Result<DiscoveryResponse, Status>> + Send>>;
 
     async fn stream_aggregated_resources(
         &self,
@@ -368,8 +379,7 @@ impl AggregatedDiscoveryService for AggregateServer {
         return Err(Status::aborted("AggregateServer::stream_aggregated_resources not supported"));
     }
 
-    type DeltaAggregatedResourcesStream =
-        Pin<Box<dyn Stream<Item = std::result::Result<DeltaDiscoveryResponse, Status>> + Send>>;
+    type DeltaAggregatedResourcesStream = Pin<Box<dyn Stream<Item = std::result::Result<DeltaDiscoveryResponse, Status>> + Send>>;
 
     async fn delta_aggregated_resources(
         &self,
@@ -428,11 +438,7 @@ pub async fn start_aggregate_server(
     let service = AggregateServerService::new(stream_resources_rx, Arc::clone(&channels), ads_clients.clone());
     let server = AggregateServer::new(kube_client, channels, ads_clients);
     let aggregate_server = AggregatedDiscoveryServiceServer::new(server);
-    let server = Server::builder()
-        .concurrency_limit_per_connection(256)
-        .add_service(aggregate_server)
-        .serve_with_incoming(stream)
-        .boxed();
+    let server = Server::builder().concurrency_limit_per_connection(256).add_service(aggregate_server).serve_with_incoming(stream).boxed();
 
     let service = async move {
         service.start().await;

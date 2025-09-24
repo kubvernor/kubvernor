@@ -15,10 +15,7 @@ use tracing::{debug, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{
-        self, Backend, BackendType, ReferenceValidateRequest, RequestContext, ResourceKey, Route, RouteRefKey,
-        VerifiyItems,
-    },
+    common::{self, Backend, BackendType, ReferenceValidateRequest, RequestContext, ResourceKey, Route, RouteRefKey, VerifiyItems},
     controllers::{ControllerError, inference_pool, utils::RouteListenerMatcher},
     services::patchers::{DeleteContext, Operation, PatchContext},
     state::State,
@@ -99,12 +96,10 @@ where
         T: Fn(&State, Option<RouteStatus>),
     {
         let route = self.resource.as_ref().clone();
-        let route =
-            route.try_into().map_err(|e| ControllerError::InvalidPayload(format!("Can't convert the route {e:?}")))?;
+        let route = route.try_into().map_err(|e| ControllerError::InvalidPayload(format!("Can't convert the route {e:?}")))?;
         let state = &self.state;
-        let parent_gateway_refs_keys = parent_gateway_refs
-            .iter()
-            .map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
+        let parent_gateway_refs_keys =
+            parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
 
         let parent_gateway_refs = parent_gateway_refs_keys
             .clone()
@@ -114,14 +109,11 @@ where
         let (resolved_gateways, unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
 
         parent_gateway_refs_keys.for_each(|(_ref, key)| {
-            state
-                .attach_http_route_to_gateway(key.as_ref().clone(), route_key.clone())
-                .expect("We expect the lock to work");
+            state.attach_http_route_to_gateway(key.as_ref().clone(), route_key.clone()).expect("We expect the lock to work");
         });
 
         let matching_gateways = RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
-        let unknown_gateway_status =
-            generate_status_for_unknown_gateways(&self.controller_name, &unknown_gateways, generation);
+        let unknown_gateway_status = generate_status_for_unknown_gateways(&self.controller_name, &unknown_gateways, generation);
 
         save_route(state, Some(RouteStatus { parents: unknown_gateway_status }));
 
@@ -129,8 +121,7 @@ where
 
         let references = extract_references(&route);
 
-        let _ =
-            self.references_validator_sender.send(ReferenceValidateRequest::AddRoute { route_key, references }).await;
+        let _ = self.references_validator_sender.send(ReferenceValidateRequest::AddRoute { route_key, references }).await;
 
         for kube_gateway in matching_gateways {
             let gateway_class_name = {
@@ -168,16 +159,11 @@ where
         Ok(Action::await_change())
     }
 
-    pub async fn on_deleted(
-        &self,
-        route_key: ResourceKey,
-        parent_gateway_refs: &[ParentReference],
-    ) -> Result<Action, ControllerError> {
+    pub async fn on_deleted(&self, route_key: ResourceKey, parent_gateway_refs: &[ParentReference]) -> Result<Action, ControllerError> {
         let state = &self.state;
         let controller_name = &self.controller_name;
-        let parent_gateway_refs_keys = parent_gateway_refs
-            .iter()
-            .map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
+        let parent_gateway_refs_keys =
+            parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
 
         debug!("Parent keys = {parent_gateway_refs_keys:?}");
         let gateway_ids = parent_gateway_refs_keys.map(|(_, r)| r.resource_key).collect::<BTreeSet<_>>();
@@ -205,18 +191,13 @@ where
 
         let references = extract_references(&route);
 
-        let _ = self
-            .references_validator_sender
-            .send(ReferenceValidateRequest::DeleteRoute { route_key: resource_key, references })
-            .await;
+        let _ = self.references_validator_sender.send(ReferenceValidateRequest::DeleteRoute { route_key: resource_key, references }).await;
 
         Ok(Action::await_change())
     }
 
     async fn add_finalizer(&self, resource: &Arc<impl Resource>) -> Result<Action, ControllerError> {
-        if let Some(finalizer) =
-            crate::controllers::needs_finalizer::<R>(&self.resource_key, &self.controller_name, resource.meta())
-        {
+        if let Some(finalizer) = crate::controllers::needs_finalizer::<R>(&self.resource_key, &self.controller_name, resource.meta()) {
             let _res = self.route_patcher_sender.send(finalizer).await;
         }
 
@@ -230,12 +211,9 @@ where
                 BackendType::InferencePool(pool) => Some(&pool.resource_key),
                 _ => None,
             }) {
-                if let Some(inference_pool) =
-                    self.state.get_inference_pool(inference_pool_backend).expect("We expect the lock to work")
-                {
+                if let Some(inference_pool) = self.state.get_inference_pool(inference_pool_backend).expect("We expect the lock to work") {
                     debug!("Retrieved inference pool is {inference_pool:#?}");
-                    let mut inference_pool =
-                        inference_pool::remove_inference_pool_parents((*inference_pool).clone(), gateway_ids);
+                    let mut inference_pool = inference_pool::remove_inference_pool_parents((*inference_pool).clone(), gateway_ids);
                     inference_pool.metadata.managed_fields = None;
                     let inference_pool_resource_key = ResourceKey::from(&inference_pool);
                     let (sender, receiver) = oneshot::channel();
@@ -253,10 +231,7 @@ where
                         _ => (),
                     }
                 } else {
-                    warn!(
-                        "No inference pool - Updating inference pools of route delete {} {gateway_ids:?}",
-                        route.name()
-                    );
+                    warn!("No inference pool - Updating inference pools of route delete {} {gateway_ids:?}", route.name());
                 }
             }
         }

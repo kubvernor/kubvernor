@@ -72,9 +72,9 @@ impl GatewayClassController {
             | ControllerError::FinalizerPatchFailed(_)
             | ControllerError::BackendError
             | ControllerError::UnknownResource => Action::requeue(RECONCILE_LONG_WAIT),
-            ControllerError::UnknownGatewayClass(_)
-            | ControllerError::ResourceInWrongState
-            | ControllerError::ResourceHasWrongStatus => Action::requeue(RECONCILE_ERROR_WAIT),
+            ControllerError::UnknownGatewayClass(_) | ControllerError::ResourceInWrongState | ControllerError::ResourceHasWrongStatus => {
+                Action::requeue(RECONCILE_ERROR_WAIT)
+            },
         }
     }
 
@@ -100,8 +100,7 @@ impl GatewayClassController {
             return Err(ControllerError::InvalidRecipent);
         }
 
-        let maybe_stored_gateway_class =
-            ctx.state.get_gateway_class_by_id(&resource_key).expect("We expect the lock to work");
+        let maybe_stored_gateway_class = ctx.state.get_gateway_class_by_id(&resource_key).expect("We expect the lock to work");
 
         let handler = GatewayClassResourceHandler {
             state: ctx.state.clone(),
@@ -121,11 +120,7 @@ impl GatewayClassController {
 
     fn check_status(args: ResourceCheckerArgs<GatewayClass>) -> ResourceState {
         let (resource, stored_resource) = args;
-        if resource.status == stored_resource.status {
-            ResourceState::StatusNotChanged
-        } else {
-            ResourceState::StatusChanged
-        }
+        if resource.status == stored_resource.status { ResourceState::StatusNotChanged } else { ResourceState::StatusChanged }
     }
 }
 
@@ -173,12 +168,7 @@ impl GatewayClassResourceHandler<GatewayClass> {
         new_gateway_class
     }
 
-    async fn on_new_or_changed(
-        &self,
-        gateway_class_id: ResourceKey,
-        resource: &Arc<GatewayClass>,
-        state: &State,
-    ) -> Result<Action> {
+    async fn on_new_or_changed(&self, gateway_class_id: ResourceKey, resource: &Arc<GatewayClass>, state: &State) -> Result<Action> {
         let updated_gateway_class = Self::update_status_conditions((**resource).clone());
         let _ = state.save_gateway_class(gateway_class_id.clone(), resource).expect("We expect the lock to work");
         let (sender, receiver) = oneshot::channel();
@@ -195,9 +185,8 @@ impl GatewayClassResourceHandler<GatewayClass> {
         if let Ok(maybe_patched) = patched_gateway_class {
             match maybe_patched {
                 Ok(patched_gateway_class) => {
-                    let _ = state
-                        .save_gateway_class(gateway_class_id, &Arc::new(patched_gateway_class))
-                        .expect("We expect the lock to work");
+                    let _ =
+                        state.save_gateway_class(gateway_class_id, &Arc::new(patched_gateway_class)).expect("We expect the lock to work");
                 },
                 Err(e) => {
                     warn!("Error while patching {e}");
@@ -226,12 +215,7 @@ impl ResourceHandler<GatewayClass> for GatewayClassResourceHandler<GatewayClass>
         Arc::clone(&self.resource)
     }
 
-    async fn on_spec_not_changed(
-        &self,
-        id: ResourceKey,
-        resource: &Arc<GatewayClass>,
-        state: &State,
-    ) -> Result<Action> {
+    async fn on_spec_not_changed(&self, id: ResourceKey, resource: &Arc<GatewayClass>, state: &State) -> Result<Action> {
         let _ = state.save_gateway_class(id, resource).expect("We expect the lock to work");
         Err(ControllerError::AlreadyAdded)
     }

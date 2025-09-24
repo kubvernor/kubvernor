@@ -24,8 +24,7 @@ impl PartialOrd for GRPCEffectiveRoutingRule {
 
 impl GRPCEffectiveRoutingRule {
     fn header_matching(this: &GRPCRouteMatch, other: &GRPCRouteMatch) -> std::cmp::Ordering {
-        let matcher =
-            super::HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
+        let matcher = super::HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
         matcher.compare_headers()
     }
 

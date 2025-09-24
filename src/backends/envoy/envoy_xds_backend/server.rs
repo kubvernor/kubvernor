@@ -131,8 +131,7 @@ impl AdsClients {
 
     fn get_clients_by_gateway_id(&self, gateway_id: &str) -> Vec<AdsClient> {
         let clients = self.ads_clients.lock().expect("We expect the lock to work");
-        let clients =
-            clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect();
+        let clients = clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect();
         clients
     }
 
@@ -190,11 +189,7 @@ impl AggregateServer {
     }
 }
 impl AggregateServerService {
-    fn new(
-        stream_resources_rx: Receiver<ServerAction>,
-        ads_channels: Arc<Mutex<ResourcesMapping>>,
-        ads_clients: AdsClients,
-    ) -> Self {
+    fn new(stream_resources_rx: Receiver<ServerAction>, ads_channels: Arc<Mutex<ResourcesMapping>>, ads_clients: AdsClients) -> Self {
         Self { ads_channels, ads_clients, stream_resources_rx }
     }
 
@@ -274,8 +269,7 @@ type AggregatedDiscoveryServiceResult<T> = std::result::Result<Response<T>, Stat
 
 #[envoy_api_rs::tonic::async_trait]
 impl AggregatedDiscoveryService for AggregateServer {
-    type StreamAggregatedResourcesStream =
-        Pin<Box<dyn Stream<Item = std::result::Result<DiscoveryResponse, Status>> + Send>>;
+    type StreamAggregatedResourcesStream = Pin<Box<dyn Stream<Item = std::result::Result<DiscoveryResponse, Status>> + Send>>;
 
     async fn stream_aggregated_resources(
         &self,
@@ -361,9 +355,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                                         type_url: TypeUrl::Cluster.to_string(),
                                         resources: resources
                                             .iter()
-                                            .map(|resource| {
-                                                resource.resource.clone().expect("We would expect this to work")
-                                            })
+                                            .map(|resource| resource.resource.clone().expect("We would expect this to work"))
                                             .collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
                                         version_info: ack_version.to_string(),
@@ -433,8 +425,7 @@ impl AggregatedDiscoveryService for AggregateServer {
         Ok(Response::new(Box::pin(output_stream) as Self::StreamAggregatedResourcesStream))
     }
 
-    type DeltaAggregatedResourcesStream =
-        Pin<Box<dyn Stream<Item = std::result::Result<DeltaDiscoveryResponse, Status>> + Send>>;
+    type DeltaAggregatedResourcesStream = Pin<Box<dyn Stream<Item = std::result::Result<DeltaDiscoveryResponse, Status>> + Send>>;
 
     async fn delta_aggregated_resources(
         &self,
@@ -458,11 +449,7 @@ pub async fn start_aggregate_server(
     let service = AggregateServerService::new(stream_resources_rx, Arc::clone(&channels), ads_clients.clone());
     let server = AggregateServer::new(kube_client, channels, ads_clients);
     let aggregate_server = AggregatedDiscoveryServiceServer::new(server);
-    let server = Server::builder()
-        .concurrency_limit_per_connection(256)
-        .add_service(aggregate_server)
-        .serve_with_incoming(stream)
-        .boxed();
+    let server = Server::builder().concurrency_limit_per_connection(256).add_service(aggregate_server).serve_with_incoming(stream).boxed();
 
     let service = async move {
         service.start().await;

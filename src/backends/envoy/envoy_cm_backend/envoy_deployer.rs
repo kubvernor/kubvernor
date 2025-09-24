@@ -9,9 +9,8 @@ use k8s_openapi::{
     api::{
         apps::v1::{Deployment, DeploymentSpec},
         core::v1::{
-            ConfigMap, ConfigMapVolumeSource, ContainerPort, KeyToPath, PodSpec, PodTemplateSpec,
-            ProjectedVolumeSource, SecretProjection, Service, ServiceAccount, ServicePort, ServiceSpec, Volume,
-            VolumeProjection,
+            ConfigMap, ConfigMapVolumeSource, ContainerPort, KeyToPath, PodSpec, PodTemplateSpec, ProjectedVolumeSource, SecretProjection,
+            Service, ServiceAccount, ServicePort, ServiceSpec, Volume, VolumeProjection,
         },
     },
     apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
@@ -32,8 +31,7 @@ use uuid::Uuid;
 
 use super::xds_generator::{self, RdsData};
 use crate::common::{
-    BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, Gateway, GatewayAddress, Listener,
-    ResourceKey, TlsType,
+    BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, Gateway, GatewayAddress, Listener, ResourceKey, TlsType,
 };
 
 pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templates/**.tera") {
@@ -68,7 +66,8 @@ impl EnvoyDeployerChannelHandlerService {
                                     self.update_address_with_polling(&service, *ctx).await;
                                 }else{
                                     warn!("Problem {maybe_service:?}");
-                                    let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
+                                    let _res = self.backend_response_channel_sender
+                                        .send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                                 }
                             }
 
@@ -110,14 +109,10 @@ impl EnvoyDeployerChannelHandlerService {
 
         let maybe_templates = xds_generator::EnvoyXDSGenerator::new(gateway).generate_xds();
 
-        if let Ok(xds_generator::XdsData { bootstrap_content, lds_content, rds_content, cds_content }) = maybe_templates
-        {
-            let envoy_xds_config_map =
-                Self::create_envoy_xds_config_map(&xds_cm, gateway, lds_content, rds_content, cds_content);
-            let _envoy_xds_config_map =
-                config_map_api.patch(&xds_cm, &pp, &Patch::Apply(&envoy_xds_config_map)).await?;
-            let envoy_boostrap_config_map =
-                Self::create_envoy_bootstrap_config_map(&bootstrap_cm, gateway, bootstrap_content);
+        if let Ok(xds_generator::XdsData { bootstrap_content, lds_content, rds_content, cds_content }) = maybe_templates {
+            let envoy_xds_config_map = Self::create_envoy_xds_config_map(&xds_cm, gateway, lds_content, rds_content, cds_content);
+            let _envoy_xds_config_map = config_map_api.patch(&xds_cm, &pp, &Patch::Apply(&envoy_xds_config_map)).await?;
+            let envoy_boostrap_config_map = Self::create_envoy_bootstrap_config_map(&bootstrap_cm, gateway, bootstrap_content);
             let _res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&envoy_boostrap_config_map)).await?;
             debug!("Created xds config map for {}-{}", gateway.name(), gateway.namespace());
         } else {
@@ -183,13 +178,7 @@ impl EnvoyDeployerChannelHandlerService {
         if ips.is_empty() { None } else { Some(ips) }
     }
 
-    fn create_envoy_xds_config_map(
-        name: &str,
-        gateway: &Gateway,
-        lds: String,
-        routes: Vec<RdsData>,
-        cds: String,
-    ) -> ConfigMap {
+    fn create_envoy_xds_config_map(name: &str, gateway: &Gateway, lds: String, routes: Vec<RdsData>, cds: String) -> ConfigMap {
         let mut map = BTreeMap::new();
         map.insert("cds.yaml".to_owned(), cds);
         map.insert("lds.yaml".to_owned(), lds);
@@ -236,12 +225,7 @@ impl EnvoyDeployerChannelHandlerService {
         let mut labels = Self::create_labels(gateway);
         let ports = gateway
             .listeners()
-            .map(|l| ContainerPort {
-                name: None,
-                container_port: l.port(),
-                protocol: Some("TCP".to_owned()),
-                ..Default::default()
-            })
+            .map(|l| ContainerPort { name: None, container_port: l.port(), protocol: Some("TCP".to_owned()), ..Default::default() })
             .dedup_by(|x, y| x.container_port == y.container_port && x.protocol == y.protocol)
             .collect();
         labels.insert("app".to_owned(), gateway.name().to_owned());
@@ -410,9 +394,7 @@ impl EnvoyDeployerChannelHandlerService {
                         }
                     } else {
                         warn!("Problem {maybe_service:?}");
-                        let _res = backend_response_channel_sender
-                            .send(BackendGatewayResponse::Processed(Box::new(gateway.clone())))
-                            .await;
+                        let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                     }
                 }
                 debug!("Task completed for gateway {} service {}", gateway.key(), resource_key);
@@ -442,16 +424,8 @@ impl EnvoyDeployerChannelHandlerService {
                 secret: Some(SecretProjection {
                     name: resource_key.name.clone(),
                     items: Some(vec![
-                        KeyToPath {
-                            key: "tls.crt".to_owned(),
-                            path: create_certificate_name(&resource_key),
-                            ..Default::default()
-                        },
-                        KeyToPath {
-                            key: "tls.key".to_owned(),
-                            path: create_key_name(&resource_key),
-                            ..Default::default()
-                        },
+                        KeyToPath { key: "tls.crt".to_owned(), path: create_certificate_name(&resource_key), ..Default::default() },
+                        KeyToPath { key: "tls.key".to_owned(), path: create_key_name(&resource_key), ..Default::default() },
                     ]),
                     ..Default::default()
                 }),

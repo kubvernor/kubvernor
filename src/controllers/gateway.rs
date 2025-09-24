@@ -21,10 +21,7 @@ use super::{
     utils::{ResourceCheckerArgs, ResourceState},
 };
 use crate::{
-    common::{
-        self, BackendGatewayEvent, DeletedContext, GatewayImplementationType, ReferenceValidateRequest, RequestContext,
-        ResourceKey,
-    },
+    common::{self, BackendGatewayEvent, DeletedContext, GatewayImplementationType, ReferenceValidateRequest, RequestContext, ResourceKey},
     services::patchers::{DeleteContext, Operation},
     state::State,
 };
@@ -68,9 +65,9 @@ impl GatewayController {
             | ControllerError::FinalizerPatchFailed(_)
             | ControllerError::BackendError
             | ControllerError::UnknownResource => Action::requeue(RECONCILE_LONG_WAIT),
-            ControllerError::UnknownGatewayClass(_)
-            | ControllerError::ResourceInWrongState
-            | ControllerError::ResourceHasWrongStatus => Action::requeue(RECONCILE_ERROR_WAIT),
+            ControllerError::UnknownGatewayClass(_) | ControllerError::ResourceInWrongState | ControllerError::ResourceHasWrongStatus => {
+                Action::requeue(RECONCILE_ERROR_WAIT)
+            },
         }
     }
 
@@ -109,20 +106,13 @@ impl GatewayController {
                         Api::namespaced(ctx.client.clone(), &resource_key.namespace);
 
                     if let Ok(configuration) = configuration_api.get(&config_reference.name).await {
-                        debug!(
-                            "reconcile_gateway: {controller_name} {name} retrieved configuration {:?}",
-                            configuration
-                        );
-                        let Ok(backend_type) =
-                            GatewayImplementationType::try_from(configuration.spec.backendtype.as_ref())
-                        else {
+                        debug!("reconcile_gateway: {controller_name} {name} retrieved configuration {:?}", configuration);
+                        let Ok(backend_type) = GatewayImplementationType::try_from(configuration.spec.backendtype.as_ref()) else {
                             return Err(ControllerError::InvalidPayload("Uid must be present".to_owned()));
                         };
                         configured_backend_type = backend_type;
                     } else {
-                        debug!(
-                            "reconcile_gateway: {controller_name} {name} Unable to find KubernorConfig {config_reference:?}"
-                        );
+                        debug!("reconcile_gateway: {controller_name} {name} Unable to find KubernorConfig {config_reference:?}");
                         return Err(ControllerError::InvalidPayload("Unable to find KubernorConfig".to_owned()));
                     }
                 } else {
@@ -171,11 +161,7 @@ impl GatewayController {
 
     fn check_status_changed(args: ResourceCheckerArgs<Gateway>) -> ResourceState {
         let (resource, stored_resource) = args;
-        if resource.status == stored_resource.status {
-            ResourceState::StatusNotChanged
-        } else {
-            ResourceState::StatusChanged
-        }
+        if resource.status == stored_resource.status { ResourceState::StatusNotChanged } else { ResourceState::StatusChanged }
     }
 }
 
@@ -212,12 +198,7 @@ impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
         Arc::clone(&self.resource)
     }
 
-    async fn on_spec_not_changed(
-        &self,
-        resource_key: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &State,
-    ) -> Result<Action> {
+    async fn on_spec_not_changed(&self, resource_key: ResourceKey, resource: &Arc<Gateway>, state: &State) -> Result<Action> {
         let () = state.save_gateway(resource_key, resource).expect("We expect the lock to work");
         Err(ControllerError::AlreadyAdded)
     }
@@ -238,12 +219,7 @@ impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
     async fn on_deleted(&self, id: ResourceKey, resource: &Arc<Gateway>, state: &State) -> Result<Action> {
         self.on_deleted(id, resource, state).await
     }
-    async fn on_status_not_changed(
-        &self,
-        resource_key: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &State,
-    ) -> Result<Action> {
+    async fn on_status_not_changed(&self, resource_key: ResourceKey, resource: &Arc<Gateway>, state: &State) -> Result<Action> {
         let () = state.maybe_save_gateway(resource_key, resource).expect("We expect the lock to work");
         Err(ControllerError::AlreadyAdded)
     }
@@ -284,10 +260,7 @@ impl GatewayResourceHandler<Gateway> {
             DeletedContext::builder().response_sender(response_sender).gateway(backend_gateway.clone()).build(),
         ));
 
-        let _ = self
-            .validate_references_channel_sender
-            .send(ReferenceValidateRequest::DeleteGateway { gateway: backend_gateway })
-            .await;
+        let _ = self.validate_references_channel_sender.send(ReferenceValidateRequest::DeleteGateway { gateway: backend_gateway }).await;
 
         let _ = sender.send(listener_event).await;
         let _response = response_receiver.await;
@@ -318,24 +291,14 @@ impl GatewayResourceHandler<Gateway> {
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 
-    async fn on_status_changed(
-        &self,
-        gateway_id: ResourceKey,
-        resource: &Arc<Gateway>,
-        state: &State,
-    ) -> Result<Action> {
+    async fn on_status_changed(&self, gateway_id: ResourceKey, resource: &Arc<Gateway>, state: &State) -> Result<Action> {
         let controller_name = &self.controller_name;
         let gateway_class_name = &self.gateway_class_name;
         if let Some(status) = &resource.status {
             if let Some(conditions) = &status.conditions {
                 if conditions.iter().any(|c| c.type_ == constants::GatewayConditionType::Ready.to_string()) {
                     let () = state.save_gateway(gateway_id.clone(), resource).expect("We expect the lock to work");
-                    common::add_finalizer_to_gateway_class(
-                        &self.gateway_class_patcher,
-                        gateway_class_name,
-                        controller_name,
-                    )
-                    .await;
+                    common::add_finalizer_to_gateway_class(&self.gateway_class_patcher, gateway_class_name, controller_name).await;
                     let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
                         finalizers.iter().any(|f| f == controller_name)
                     } else {

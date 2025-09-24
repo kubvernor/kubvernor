@@ -69,10 +69,7 @@ impl FinalizerPatcher {
                 object_meta.managed_fields = None;
                 let meta: PartialObjectMeta<T> = object_meta.into_request_partial::<_>();
 
-                match api
-                    .patch_metadata(resource_name, &PatchParams::apply(controller_name), &Patch::Apply(&meta))
-                    .await
-                {
+                match api.patch_metadata(resource_name, &PatchParams::apply(controller_name), &Patch::Apply(&meta)).await {
                     Ok(_) => Ok(()),
                     Err(e) => {
                         warn!("patch_finalizer: {type_name} {controller_name} {resource_name} patch failed {e:?}",);
@@ -112,11 +109,7 @@ impl ResourceStateChecker {
                 return ResourceState::VersionNotChanged;
             }
             let status = resource_spec_checker((resource, Arc::clone(&stored_object)));
-            if ResourceState::SpecNotChanged == status {
-                resource_status_checker((resource, stored_object))
-            } else {
-                status
-            }
+            if ResourceState::SpecNotChanged == status { resource_status_checker((resource, stored_object)) } else { status }
         } else {
             ResourceState::New
         }
@@ -141,9 +134,7 @@ impl ResourceFinalizer {
         let res: std::result::Result<Action, Error<_>> =
             finalizer::finalizer(api, finalizer_name, Arc::clone(resource), |event| async move {
                 match event {
-                    finalizer::Event::Apply(_) | finalizer::Event::Cleanup(_) => {
-                        Result::<Action, ReconcileErr>::Ok(Action::await_change())
-                    },
+                    finalizer::Event::Apply(_) | finalizer::Event::Cleanup(_) => Result::<Action, ReconcileErr>::Ok(Action::await_change()),
                 }
             })
             .await;

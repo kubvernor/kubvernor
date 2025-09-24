@@ -10,7 +10,7 @@ newline_style = "Auto"
 # Do not merge multiple Derive macros into the same line
 merge_derives = false
 # Set line length
-max_width = 120
-
+max_width = 140
+error_on_line_overflow=true
 
 

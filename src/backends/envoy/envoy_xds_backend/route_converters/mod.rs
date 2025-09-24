@@ -56,9 +56,7 @@ where
         .filter(|b| b.weight() > 0)
         .map(|b| ClusterWeight {
             name: b.cluster_name(),
-            weight: Some(UInt32Value {
-                value: b.weight().try_into().expect("We do expect this to work for time being"),
-            }),
+            weight: Some(UInt32Value { value: b.weight().try_into().expect("We do expect this to work for time being") }),
             ..Default::default()
         })
         .collect()

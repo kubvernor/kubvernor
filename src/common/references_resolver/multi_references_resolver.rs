@@ -130,8 +130,7 @@ where
                 resolved_references_parents.entry(resource_key).and_modify(|f| *f += 1).or_insert(1);
             }
         }
-        let keys: Vec<_> =
-            resolved_references_parents.iter().filter_map(|(k, v)| (*v < 1).then_some(k)).cloned().collect();
+        let keys: Vec<_> = resolved_references_parents.iter().filter_map(|(k, v)| (*v < 1).then_some(k)).cloned().collect();
         for key in keys {
             references.remove(&key);
         }
@@ -154,8 +153,7 @@ where
                 }
             }
 
-            let keys: Vec<_> =
-                resolved_references_parents.iter().filter_map(|(k, v)| (*v < 1).then_some(k)).cloned().collect();
+            let keys: Vec<_> = resolved_references_parents.iter().filter_map(|(k, v)| (*v < 1).then_some(k)).cloned().collect();
 
             for key in keys {
                 references.remove(&key);
@@ -186,8 +184,7 @@ where
             resolved_references_parents.entry(resource_key).and_modify(|f| *f -= 1);
         }
 
-        let keys: Vec<_> =
-            resolved_references_parents.iter().filter_map(|(k, v)| (*v < 1).then_some(k)).cloned().collect();
+        let keys: Vec<_> = resolved_references_parents.iter().filter_map(|(k, v)| (*v < 1).then_some(k)).cloned().collect();
 
         for key in keys {
             references.remove(&key);
@@ -250,9 +247,7 @@ where
 
         let (gateways, routes): (BTreeSet<_>, BTreeSet<_>) = gateway_route_reference_mapping
             .iter()
-            .filter(|&(_gateway, route_reference)| {
-                route_reference.iter().any(|(_, references)| references.contains(key))
-            })
+            .filter(|&(_gateway, route_reference)| route_reference.iter().any(|(_, references)| references.contains(key)))
             .map(|(gateway, route_reference)| (gateway.clone(), route_reference.keys().collect::<BTreeSet<_>>()))
             .unzip();
         let changed_routes = routes.into_iter().flatten().collect::<BTreeSet<_>>();
@@ -295,10 +290,8 @@ mod tests {
         let client = Client::new(mock_service, "dummy");
 
         let (sender, _receiver) = mpsc::channel(100);
-        let multi_refernces_resolver = MultiReferencesResolver::<Service>::builder()
-            .client(client)
-            .reference_validate_channel_sender(sender)
-            .build();
+        let multi_refernces_resolver =
+            MultiReferencesResolver::<Service>::builder().client(client).reference_validate_channel_sender(sender).build();
 
         let g1 = ResourceKey::new("g1");
         let g2 = ResourceKey::new("g2");

@@ -21,12 +21,9 @@ fn init_logging(configuration: &Configuration) -> Guard {
     let controller_name = configuration.controller_name.clone();
     let file_appender = tracing_appender::rolling::never(".", "kubvernor.log");
     let (non_blocking_appender, guard) = tracing_appender::non_blocking(file_appender);
-    let file_filter =
-        tracing_subscriber::EnvFilter::new(std::env::var("RUST_FILE_LOG").unwrap_or_else(|_| "debug".to_owned()));
-    let console_filter =
-        tracing_subscriber::EnvFilter::new(std::env::var("RUST_LOG").unwrap_or_else(|_| "debug".to_owned()));
-    let tracing_filter =
-        tracing_subscriber::EnvFilter::new(std::env::var("RUST_TRACE_LOG").unwrap_or_else(|_| "info".to_owned()));
+    let file_filter = tracing_subscriber::EnvFilter::new(std::env::var("RUST_FILE_LOG").unwrap_or_else(|_| "debug".to_owned()));
+    let console_filter = tracing_subscriber::EnvFilter::new(std::env::var("RUST_LOG").unwrap_or_else(|_| "debug".to_owned()));
+    let tracing_filter = tracing_subscriber::EnvFilter::new(std::env::var("RUST_TRACE_LOG").unwrap_or_else(|_| "info".to_owned()));
 
     if let Some(true) = configuration.enable_open_telemetry {
         if let Ok(exporter) = opentelemetry_otlp::SpanExporter::builder()

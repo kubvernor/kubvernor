@@ -53,11 +53,7 @@ impl State {
         Ok(())
     }
 
-    pub fn maybe_save_inference_pool(
-        &self,
-        id: ResourceKey,
-        inference_pool: &Arc<InferencePool>,
-    ) -> Result<(), StorageError> {
+    pub fn maybe_save_inference_pool(&self, id: ResourceKey, inference_pool: &Arc<InferencePool>) -> Result<(), StorageError> {
         let mut lock = self.inference_pools.lock().map_err(|_| StorageError::LockingError)?;
         if lock.contains_key(&id) {
             lock.insert(id, Arc::clone(inference_pool));
@@ -75,11 +71,7 @@ impl State {
         Ok(lock.get(id).cloned())
     }
 
-    pub fn attach_http_route_to_gateway(
-        &self,
-        gateway_id: ResourceKey,
-        route_id: ResourceKey,
-    ) -> Result<(), StorageError> {
+    pub fn attach_http_route_to_gateway(&self, gateway_id: ResourceKey, route_id: ResourceKey) -> Result<(), StorageError> {
         let mut gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
         if let Some(routes) = gateways_with_routes.get_mut(&gateway_id) {
             routes.insert(route_id);
@@ -91,11 +83,7 @@ impl State {
         Ok(())
     }
 
-    pub fn attach_grpc_route_to_gateway(
-        &self,
-        gateway_id: ResourceKey,
-        route_id: ResourceKey,
-    ) -> Result<(), StorageError> {
+    pub fn attach_grpc_route_to_gateway(&self, gateway_id: ResourceKey, route_id: ResourceKey) -> Result<(), StorageError> {
         let mut gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
         if let Some(routes) = gateways_with_routes.get_mut(&gateway_id) {
             routes.insert(route_id);
@@ -107,11 +95,7 @@ impl State {
         Ok(())
     }
 
-    pub fn detach_http_route_from_gateway(
-        &self,
-        gateway_id: &ResourceKey,
-        route_id: &ResourceKey,
-    ) -> Result<(), StorageError> {
+    pub fn detach_http_route_from_gateway(&self, gateway_id: &ResourceKey, route_id: &ResourceKey) -> Result<(), StorageError> {
         let mut gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
         if let Some(routes) = gateways_with_routes.get_mut(gateway_id) {
             routes.retain(|key| key != route_id);
@@ -119,11 +103,7 @@ impl State {
         Ok(())
     }
 
-    pub fn detach_grpc_route_from_gateway(
-        &self,
-        gateway_id: &ResourceKey,
-        route_id: &ResourceKey,
-    ) -> Result<(), StorageError> {
+    pub fn detach_grpc_route_from_gateway(&self, gateway_id: &ResourceKey, route_id: &ResourceKey) -> Result<(), StorageError> {
         let mut gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
         if let Some(routes) = gateways_with_routes.get_mut(gateway_id) {
             routes.retain(|key| key != route_id);
@@ -131,10 +111,7 @@ impl State {
         Ok(())
     }
 
-    pub fn get_http_routes_attached_to_gateway(
-        &self,
-        gateway_key: &ResourceKey,
-    ) -> Result<Option<Vec<Arc<HTTPRoute>>>, StorageError> {
+    pub fn get_http_routes_attached_to_gateway(&self, gateway_key: &ResourceKey) -> Result<Option<Vec<Arc<HTTPRoute>>>, StorageError> {
         let gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
         let http_routes = self.http_routes.lock().map_err(|_| StorageError::LockingError)?;
         Ok(gateways_with_routes
@@ -143,10 +120,7 @@ impl State {
             .map(|keys| keys.iter().filter_map(|k| http_routes.get(k).cloned()).collect::<Vec<_>>()))
     }
 
-    pub fn get_grpc_routes_attached_to_gateway(
-        &self,
-        gateway_key: &ResourceKey,
-    ) -> Result<Option<Vec<Arc<GRPCRoute>>>, StorageError> {
+    pub fn get_grpc_routes_attached_to_gateway(&self, gateway_key: &ResourceKey) -> Result<Option<Vec<Arc<GRPCRoute>>>, StorageError> {
         let gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
         let grpc_routes = self.grpc_routes.lock().map_err(|_| StorageError::LockingError)?;
         Ok(gateways_with_routes
@@ -230,17 +204,11 @@ impl State {
         Ok(lock.values().cloned().collect())
     }
 
-    pub fn gateways_with_routes(
-        &self,
-    ) -> Result<MutexGuard<'_, HashMap<ResourceKey, BTreeSet<ResourceKey>>>, StorageError> {
+    pub fn gateways_with_routes(&self) -> Result<MutexGuard<'_, HashMap<ResourceKey, BTreeSet<ResourceKey>>>, StorageError> {
         self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)
     }
 
-    pub fn save_inference_pool(
-        &self,
-        id: ResourceKey,
-        inference_pool: &Arc<InferencePool>,
-    ) -> Result<(), StorageError> {
+    pub fn save_inference_pool(&self, id: ResourceKey, inference_pool: &Arc<InferencePool>) -> Result<(), StorageError> {
         let mut lock = self.inference_pools.lock().map_err(|_| StorageError::LockingError)?;
         lock.insert(id, Arc::clone(inference_pool));
         Ok(())
@@ -261,10 +229,7 @@ impl State {
         Ok(lock.values().cloned().collect())
     }
 
-    pub fn get_gateways_with_http_routes(
-        &self,
-        routes: &BTreeSet<ResourceKey>,
-    ) -> Result<BTreeSet<ResourceKey>, StorageError> {
+    pub fn get_gateways_with_http_routes(&self, routes: &BTreeSet<ResourceKey>) -> Result<BTreeSet<ResourceKey>, StorageError> {
         let mut owned_gateways = BTreeSet::new();
         let gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
         for (gateway_id, stored_routes) in gateways_with_routes.iter() {

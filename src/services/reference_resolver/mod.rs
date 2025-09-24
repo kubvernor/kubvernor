@@ -9,8 +9,8 @@ use typed_builder::TypedBuilder;
 
 use crate::{
     common::{
-        self, BackendReferenceResolver, GatewayDeployRequest, ReferenceGrantsResolver, ReferenceValidateRequest,
-        RequestContext, SecretsResolver,
+        self, BackendReferenceResolver, GatewayDeployRequest, ReferenceGrantsResolver, ReferenceValidateRequest, RequestContext,
+        SecretsResolver,
     },
     controllers::{ListenerTlsConfigValidator, RoutesResolver, inference_pool::clear_all_conditions},
     services::patchers::{Operation, PatchContext},
@@ -107,17 +107,15 @@ impl ReferenceResolverHandler {
             },
             ReferenceValidateRequest::DeleteRoute { route_key, references } => {
                 info!("ReferenceResolverService action = DeleteRouteAndValidateRequest {route_key:?} {references:?}");
-                let affected_gateways =
-                    self.backend_references_resolver.delete_route_references(&route_key, &references).await;
+                let affected_gateways = self.backend_references_resolver.delete_route_references(&route_key, &references).await;
 
                 self.update_inference_pools(route_key, references, &affected_gateways).await;
 
                 info!("Update gateways affected gateways  {affected_gateways:?}");
                 for gateway_id in affected_gateways {
-                    if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work")
-                    {
-                        let gateway = common::Gateway::try_from(&*kube_gateway)
-                            .expect("We expect this to work since KubeGateway was validated");
+                    if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
+                        let gateway =
+                            common::Gateway::try_from(&*kube_gateway).expect("We expect this to work since KubeGateway was validated");
                         let gateway_class_name = kube_gateway.spec.gateway_class_name.clone();
                         let backend_gateway = self.process(gateway, &kube_gateway).await;
 
@@ -142,10 +140,9 @@ impl ReferenceResolverHandler {
             ReferenceValidateRequest::UpdatedGateways { reference, gateways } => {
                 info!("ReferenceResolverService action = UpdatedGateways {reference} {gateways:?}");
                 for gateway_id in gateways {
-                    if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work")
-                    {
-                        let gateway = common::Gateway::try_from(&*kube_gateway)
-                            .expect("We expect this to work since KubeGateway was validated");
+                    if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
+                        let gateway =
+                            common::Gateway::try_from(&*kube_gateway).expect("We expect this to work since KubeGateway was validated");
                         let key = gateway.key().clone();
                         let gateway_class_name = kube_gateway.spec.gateway_class_name.clone();
                         let backend_gateway = self.process(gateway, &kube_gateway).await;
@@ -168,9 +165,7 @@ impl ReferenceResolverHandler {
     }
     async fn process(&self, gateway: common::Gateway, kube_gateway: &Gateway) -> common::Gateway {
         let backend_gateway =
-            ListenerTlsConfigValidator::new(gateway, &self.secrets_resolver, &self.reference_grants_resolver)
-                .validate()
-                .await;
+            ListenerTlsConfigValidator::new(gateway, &self.secrets_resolver, &self.reference_grants_resolver).validate().await;
         let resolver = RoutesResolver::builder()
             .gateway(backend_gateway)
             .kube_gateway(kube_gateway)

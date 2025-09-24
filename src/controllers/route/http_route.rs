@@ -60,10 +60,7 @@ impl HttpRouteController {
         Action::requeue(RECONCILE_LONG_WAIT)
     }
 
-    async fn reconcile_http_route(
-        resource: Arc<httproutes::HTTPRoute>,
-        ctx: Arc<HttpRouteControllerContext>,
-    ) -> Result<Action> {
+    async fn reconcile_http_route(resource: Arc<httproutes::HTTPRoute>, ctx: Arc<HttpRouteControllerContext>) -> Result<Action> {
         let controller_name = ctx.controller_name.clone();
         let http_route_patcher = ctx.http_route_patcher.clone();
 
@@ -108,11 +105,7 @@ impl HttpRouteController {
 
     fn check_status(args: ResourceCheckerArgs<HTTPRoute>) -> ResourceState {
         let (resource, stored_resource) = args;
-        if resource.status == stored_resource.status {
-            ResourceState::StatusNotChanged
-        } else {
-            ResourceState::StatusChanged
-        }
+        if resource.status == stored_resource.status { ResourceState::StatusNotChanged } else { ResourceState::StatusChanged }
     }
 }
 
@@ -180,8 +173,7 @@ impl HTTPRouteHandler<HTTPRoute> {
                 |state: &State, route_status: Option<RouteStatus>| {
                     let mut route = (**resource).clone();
                     route.status = route_status;
-                    let () =
-                        state.save_http_route(route_key.clone(), &Arc::new(route)).expect("We expect the lock to work");
+                    let () = state.save_http_route(route_key.clone(), &Arc::new(route)).expect("We expect the lock to work");
                 },
             )
             .await

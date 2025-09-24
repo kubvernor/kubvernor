@@ -16,9 +16,7 @@ use std::{
 pub use gateway::{ChangedContext, Gateway, GatewayImplementationType};
 pub use gateway_api::gateways::Gateway as KubeGateway;
 use gateway_api::{gatewayclasses::GatewayClass, gateways::GatewayListeners};
-use gateway_api_inference_extension::inferencepools::{
-    InferencePoolExtensionRef, InferencePoolExtensionRefFailureMode, InferencePoolSpec,
-};
+use gateway_api_inference_extension::inferencepools::{InferencePoolExtensionRef, InferencePoolExtensionRefFailureMode, InferencePoolSpec};
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};
 pub use resource_key::{DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE, ResourceKey, RouteRefKey};
@@ -149,14 +147,12 @@ impl Ord for InferencePoolConfig {
         match (this_failure_mode, other_failure_mode) {
             (None, Some(_)) => return cmp::Ordering::Less,
             (Some(_), None) => return cmp::Ordering::Greater,
-            (
-                Some(InferencePoolExtensionRefFailureMode::FailOpen),
-                Some(InferencePoolExtensionRefFailureMode::FailClose),
-            ) => return cmp::Ordering::Greater,
-            (
-                Some(InferencePoolExtensionRefFailureMode::FailClose),
-                Some(InferencePoolExtensionRefFailureMode::FailOpen),
-            ) => return cmp::Ordering::Less,
+            (Some(InferencePoolExtensionRefFailureMode::FailOpen), Some(InferencePoolExtensionRefFailureMode::FailClose)) => {
+                return cmp::Ordering::Greater;
+            },
+            (Some(InferencePoolExtensionRefFailureMode::FailClose), Some(InferencePoolExtensionRefFailureMode::FailOpen)) => {
+                return cmp::Ordering::Less;
+            },
             _ => (),
         }
 
@@ -337,9 +333,7 @@ impl Display for RouteToListenersMapping {
             f,
             "route {} -> [{}]",
             self.route.name(),
-            self.listeners
-                .iter()
-                .fold(String::new(), |acc, l| { acc + &format!("  Listener(name: {} port: {}), ", &l.name, l.port) })
+            self.listeners.iter().fold(String::new(), |acc, l| { acc + &format!("  Listener(name: {} port: {}), ", &l.name, l.port) })
         )
     }
 }
@@ -446,11 +440,7 @@ pub enum GatewayDeployRequest {
     Deploy(RequestContext),
 }
 
-pub async fn add_finalizer(
-    sender: &mpsc::Sender<Operation<KubeGateway>>,
-    gateway_id: &ResourceKey,
-    controller_name: &str,
-) {
+pub async fn add_finalizer(sender: &mpsc::Sender<Operation<KubeGateway>>, gateway_id: &ResourceKey, controller_name: &str) {
     let _ = sender
         .send(Operation::PatchFinalizer(FinalizerContext {
             resource_key: gateway_id.clone(),

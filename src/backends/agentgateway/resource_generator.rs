@@ -108,9 +108,7 @@ impl<'a> ResourceGenerator<'a> {
     }
 }
 
-fn convert_route_match(
-    route_match: &gateway_api::httproutes::RouteMatch,
-) -> agentgateway_api_rs::agentgateway::dev::resource::RouteMatch {
+fn convert_route_match(route_match: &gateway_api::httproutes::RouteMatch) -> agentgateway_api_rs::agentgateway::dev::resource::RouteMatch {
     agentgateway_api_rs::agentgateway::dev::resource::RouteMatch {
         path: convert_path_match(route_match.path.as_ref()),
         headers: convert_headers(route_match.headers.as_ref()),
@@ -124,9 +122,10 @@ fn convert_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentgatewa
         Backend::Resolved(BackendType::Service(config)) => Some(RouteBackend {
             backend: Some(agentgateway_api_rs::agentgateway::dev::resource::BackendReference {
                 port: config.port as u32,
-                kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Service(
-                    format!("{}/{}", config.resource_key.namespace, config.resource_key.name),
-                )),
+                kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Service(format!(
+                    "{}/{}",
+                    config.resource_key.namespace, config.resource_key.name
+                ))),
             }),
             weight: config.weight,
             filters: vec![],
@@ -134,9 +133,10 @@ fn convert_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentgatewa
         Backend::Resolved(BackendType::InferencePool(config)) => Some(RouteBackend {
             backend: Some(agentgateway_api_rs::agentgateway::dev::resource::BackendReference {
                 port: config.port as u32,
-                kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Service(
-                    format!("{}/{}", config.resource_key.namespace, config.resource_key.name),
-                )),
+                kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Service(format!(
+                    "{}/{}",
+                    config.resource_key.namespace, config.resource_key.name
+                ))),
             }),
             weight: config.weight,
             filters: vec![],
@@ -154,23 +154,17 @@ fn convert_path_match(
             match path_match.r#type {
                 Some(gateway_api::httproutes::HTTPRouteRulesMatchesPathType::Exact) => {
                     Some(agentgateway_api_rs::agentgateway::dev::resource::PathMatch {
-                        kind: Some(agentgateway_api_rs::agentgateway::dev::resource::path_match::Kind::Exact(
-                            match_value,
-                        )),
+                        kind: Some(agentgateway_api_rs::agentgateway::dev::resource::path_match::Kind::Exact(match_value)),
                     })
                 },
                 Some(gateway_api::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix) => {
                     Some(agentgateway_api_rs::agentgateway::dev::resource::PathMatch {
-                        kind: Some(agentgateway_api_rs::agentgateway::dev::resource::path_match::Kind::PathPrefix(
-                            match_value,
-                        )),
+                        kind: Some(agentgateway_api_rs::agentgateway::dev::resource::path_match::Kind::PathPrefix(match_value)),
                     })
                 },
                 Some(gateway_api::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression) => {
                     Some(agentgateway_api_rs::agentgateway::dev::resource::PathMatch {
-                        kind: Some(agentgateway_api_rs::agentgateway::dev::resource::path_match::Kind::Regex(
-                            match_value,
-                        )),
+                        kind: Some(agentgateway_api_rs::agentgateway::dev::resource::path_match::Kind::Regex(match_value)),
                     })
                 },
                 None => None,
@@ -207,9 +201,8 @@ fn convert_headers(
 fn convert_method_match(
     method_match: Option<&gateway_api::httproutes::HTTPMethodMatch>,
 ) -> Option<agentgateway_api_rs::agentgateway::dev::resource::MethodMatch> {
-    method_match.map(|mm| agentgateway_api_rs::agentgateway::dev::resource::MethodMatch {
-        exact: serde_json::to_string(&mm).unwrap_or_default(),
-    })
+    method_match
+        .map(|mm| agentgateway_api_rs::agentgateway::dev::resource::MethodMatch { exact: serde_json::to_string(&mm).unwrap_or_default() })
 }
 
 fn convert_query_params(

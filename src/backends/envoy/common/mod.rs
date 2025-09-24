@@ -59,9 +59,7 @@ impl SocketAddressFactory {
         Address {
             address: Some(address::Address::SocketAddress(SocketAddress {
                 address: "0.0.0.0".to_owned(),
-                port_specifier: Some(PortSpecifier::PortValue(
-                    listener.port.try_into().expect("For time being we expect this to work"),
-                )),
+                port_specifier: Some(PortSpecifier::PortValue(listener.port.try_into().expect("For time being we expect this to work"))),
                 resolver_name: String::new(),
                 ipv4_compat: false,
                 ..Default::default()
@@ -85,9 +83,7 @@ impl SocketAddressFactory {
         Address {
             address: Some(address::Address::SocketAddress(SocketAddress {
                 address,
-                port_specifier: Some(PortSpecifier::PortValue(
-                    port.try_into().expect("For time being we expect this to work"),
-                )),
+                port_specifier: Some(PortSpecifier::PortValue(port.try_into().expect("For time being we expect this to work"))),
                 ..Default::default()
             })),
         }
@@ -124,10 +120,9 @@ impl HTTPEffectiveRoutingRule {
 }
 
 pub fn get_inference_pool_configurations(effective_route: &HTTPEffectiveRoutingRule) -> Option<InferenceClusterInfo> {
-    get_inference_extension_configurations(&effective_route.backends).first().map(|conf| InferenceClusterInfo {
-        cluster_name: effective_route.inference_cluster_name(),
-        config: (**conf).clone(),
-    })
+    get_inference_extension_configurations(&effective_route.backends)
+        .first()
+        .map(|conf| InferenceClusterInfo { cluster_name: effective_route.inference_cluster_name(), config: (**conf).clone() })
 }
 
 pub fn get_inference_extension_configurations(backends: &[Backend]) -> Vec<&InferencePoolTypeConfig> {

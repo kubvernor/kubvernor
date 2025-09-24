@@ -74,12 +74,7 @@ impl From<&Service> for ResourceKey {
             (None, None) => "",
             (Some(name), _) | (None, Some(name)) => name,
         };
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace,
-            name: name.to_owned(),
-            kind: DEFAULT_KIND_NAME.to_owned(),
-        }
+        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: name.to_owned(), kind: DEFAULT_KIND_NAME.to_owned() }
     }
 }
 impl From<(Option<String>, Option<String>, String, Option<String>)> for ResourceKey {
@@ -148,12 +143,7 @@ impl From<(&HTTPBackendReference, String)> for ResourceKey {
     fn from((value, gateway_namespace): (&HTTPBackendReference, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
 
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace,
-            name: value.name.clone(),
-            kind: value.kind.clone().unwrap_or_default(),
-        }
+        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name.clone(), kind: value.kind.clone().unwrap_or_default() }
     }
 }
 
@@ -161,12 +151,7 @@ impl From<(&GRPCBackendReference, String)> for ResourceKey {
     fn from((value, gateway_namespace): (&GRPCBackendReference, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
 
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace,
-            name: value.name.clone(),
-            kind: value.kind.clone().unwrap_or_default(),
-        }
+        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name.clone(), kind: value.kind.clone().unwrap_or_default() }
     }
 }
 
@@ -174,12 +159,7 @@ impl From<&HTTPBackendReference> for BackendResourceKey {
     fn from(value: &HTTPBackendReference) -> Self {
         let namespace = value.namespace.clone();
 
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace,
-            name: value.name.clone(),
-            kind: value.kind.clone().unwrap_or_default(),
-        }
+        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name.clone(), kind: value.kind.clone().unwrap_or_default() }
     }
 }
 
@@ -187,12 +167,7 @@ impl From<&GRPCBackendReference> for BackendResourceKey {
     fn from(value: &GRPCBackendReference) -> Self {
         let namespace = value.namespace.clone();
 
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace,
-            name: value.name.clone(),
-            kind: value.kind.clone().unwrap_or_default(),
-        }
+        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name.clone(), kind: value.kind.clone().unwrap_or_default() }
     }
 }
 
@@ -200,12 +175,7 @@ impl From<&InferencePool> for ResourceKey {
     fn from(value: &InferencePool) -> Self {
         let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
 
-        Self {
-            group: DEFAULT_INFERENCE_GROUP_NAME.to_owned(),
-            namespace,
-            name: value.name_any(),
-            kind: "InferencePool".to_owned(),
-        }
+        Self { group: DEFAULT_INFERENCE_GROUP_NAME.to_owned(), namespace, name: value.name_any(), kind: "InferencePool".to_owned() }
     }
 }
 

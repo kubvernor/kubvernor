@@ -141,9 +141,7 @@ impl TryFrom<&KubeGateway> for Gateway {
 impl TryFrom<(&KubeGateway, GatewayImplementationType)> for Gateway {
     type Error = GatewayError;
 
-    fn try_from(
-        (gateway, backend_type): (&KubeGateway, GatewayImplementationType),
-    ) -> std::result::Result<Self, Self::Error> {
+    fn try_from((gateway, backend_type): (&KubeGateway, GatewayImplementationType)) -> std::result::Result<Self, Self::Error> {
         let id = Uuid::parse_str(&gateway.metadata.uid.clone().unwrap_or_default())
             .map_err(|_| GatewayError::ConversionProblem("Can't parse uuid".to_owned()))?;
         let resource_key = ResourceKey::from(gateway);
@@ -180,12 +178,6 @@ pub struct ChangedContext {
 
 impl Display for ChangedContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Gateway {}.{} listeners = {} ",
-            self.gateway.name(),
-            self.gateway.namespace(),
-            self.gateway.listeners.len(),
-        )
+        write!(f, "Gateway {}.{} listeners = {} ", self.gateway.name(), self.gateway.namespace(), self.gateway.listeners.len(),)
     }
 }

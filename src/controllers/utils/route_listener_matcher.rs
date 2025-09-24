@@ -2,9 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use gateway_api::{
     common::ParentReference,
-    gateways::{
-        self, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom,
-    },
+    gateways::{self, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom},
 };
 use tracing::debug;
 
@@ -65,29 +63,21 @@ impl<'a> RouteListenerMatcher<'a> {
             for route_parent in route_parents {
                 let route_parent_key = RouteRefKey::from((route_parent, route_key.namespace.clone()));
                 let gateway_key = ResourceKey::from(self.gateway);
-                if route_parent_key.as_ref().name == gateway_key.name
-                    && route_parent_key.as_ref().namespace == gateway_key.namespace
-                {
-                    let matching_gateway_listeners = self.filter_listeners_by_namespace(
-                        self.gateway.spec.listeners.clone().into_iter(),
-                        gateway_key,
-                        route_key,
-                    );
+                if route_parent_key.as_ref().name == gateway_key.name && route_parent_key.as_ref().namespace == gateway_key.namespace {
+                    let matching_gateway_listeners =
+                        self.filter_listeners_by_namespace(self.gateway.spec.listeners.clone().into_iter(), gateway_key, route_key);
                     let matching_gateway_listeners = matching_gateway_listeners.collect::<Vec<_>>();
                     debug!("Matching listeners {:?}", matching_gateway_listeners);
                     if matching_gateway_listeners.is_empty() {
-                        route_resolution_status =
-                            Some(ResolutionStatus::NotResolved(NotResolvedReason::NotAllowedByListeners));
+                        route_resolution_status = Some(ResolutionStatus::NotResolved(NotResolvedReason::NotAllowedByListeners));
                         continue;
                     }
 
-                    let matching_gateway_listeners =
-                        Self::filter_listeners_by_hostnames(matching_gateway_listeners.into_iter(), route);
+                    let matching_gateway_listeners = Self::filter_listeners_by_hostnames(matching_gateway_listeners.into_iter(), route);
                     let matching_gateway_listeners = matching_gateway_listeners.collect::<Vec<_>>();
                     debug!("Matching listeners {:?}", matching_gateway_listeners);
                     if matching_gateway_listeners.is_empty() {
-                        route_resolution_status =
-                            Some(ResolutionStatus::NotResolved(NotResolvedReason::NoMatchingListenerHostname));
+                        route_resolution_status = Some(ResolutionStatus::NotResolved(NotResolvedReason::NoMatchingListenerHostname));
                         continue;
                     }
 
@@ -98,21 +88,15 @@ impl<'a> RouteListenerMatcher<'a> {
                                 gl.port == port && gl.name == *section_name
                             });
                             if matched.is_empty() {
-                                route_resolution_status =
-                                    Some(ResolutionStatus::NotResolved(NotResolvedReason::NoMatchingParent));
+                                route_resolution_status = Some(ResolutionStatus::NotResolved(NotResolvedReason::NoMatchingParent));
                             }
                             matched
                         },
-                        (Some(port), None) => {
-                            filter_listeners_by_name_or_port(matching_gateway_listeners, |gl| gl.port == port)
-                        },
+                        (Some(port), None) => filter_listeners_by_name_or_port(matching_gateway_listeners, |gl| gl.port == port),
                         (None, Some(section_name)) => {
-                            let matched = filter_listeners_by_name_or_port(matching_gateway_listeners, |gl| {
-                                gl.name == *section_name
-                            });
+                            let matched = filter_listeners_by_name_or_port(matching_gateway_listeners, |gl| gl.name == *section_name);
                             if matched.is_empty() {
-                                route_resolution_status =
-                                    Some(ResolutionStatus::NotResolved(NotResolvedReason::NoMatchingParent));
+                                route_resolution_status = Some(ResolutionStatus::NotResolved(NotResolvedReason::NoMatchingParent));
                             }
                             matched
                         },
@@ -179,9 +163,7 @@ impl<'a> RouteListenerMatcher<'a> {
                     }
                 }
 
-                if let Some(GatewayListenersAllowedRoutesNamespaces { from: Some(selector_type), selector }) =
-                    &allowed_routes.namespaces
-                {
+                if let Some(GatewayListenersAllowedRoutesNamespaces { from: Some(selector_type), selector }) = &allowed_routes.namespaces {
                     match selector_type {
                         GatewayListenersAllowedRoutesNamespacesFrom::All => {},
                         GatewayListenersAllowedRoutesNamespacesFrom::Selector => {
@@ -214,10 +196,7 @@ impl<'a> RouteListenerMatcher<'a> {
     }
 }
 
-fn filter_listeners_by_name_or_port<F>(
-    gateway_listeners: impl Iterator<Item = GatewayListeners>,
-    filter: F,
-) -> Vec<GatewayListeners>
+fn filter_listeners_by_name_or_port<F>(gateway_listeners: impl Iterator<Item = GatewayListeners>, filter: F) -> Vec<GatewayListeners>
 where
     F: Fn(&GatewayListeners) -> bool,
 {

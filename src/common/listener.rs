@@ -190,12 +190,10 @@ impl Listener {
             | Listener::Udp(listener_data) => {
                 if !unresolved_routes.is_empty() {
                     if let Some(route) = unresolved_routes.first() {
-                        if *route.resolution_status()
-                            == ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted)
-                        {
-                            listener_data.conditions.replace(ListenerCondition::ResolvedRefs(
-                                ResolvedRefs::InvalidBackend(APPROVED_ROUTES.iter().map(|s| (*s).to_owned()).collect()),
-                            ));
+                        if *route.resolution_status() == ResolutionStatus::NotResolved(NotResolvedReason::RefNotPermitted) {
+                            listener_data.conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidBackend(
+                                APPROVED_ROUTES.iter().map(|s| (*s).to_owned()).collect(),
+                            )));
                         }
                     } else {
                         listener_data.conditions.replace(ListenerCondition::UnresolvedRouteRefs);
@@ -230,11 +228,7 @@ impl TryFrom<&GatewayListeners> for Listener {
     type Error = ListenerError;
 
     fn try_from(gateway_listener: &GatewayListeners) -> std::result::Result<Self, Self::Error> {
-        let mut config = ListenerConfig::new(
-            gateway_listener.name.clone(),
-            gateway_listener.port,
-            gateway_listener.hostname.clone(),
-        );
+        let mut config = ListenerConfig::new(gateway_listener.name.clone(), gateway_listener.port, gateway_listener.hostname.clone());
 
         let condition = validate_allowed_routes(gateway_listener);
 
@@ -357,47 +351,31 @@ impl PartialEq for ListenerCondition {
 }
 
 impl ListenerCondition {
-    pub fn resolved_type(
-        &self,
-    ) -> (&'static str, constants::ListenerConditionType, constants::ListenerConditionReason) {
+    pub fn resolved_type(&self) -> (&'static str, constants::ListenerConditionType, constants::ListenerConditionReason) {
         match self {
-            ListenerCondition::ResolvedRefs(
-                ResolvedRefs::InvalidAllowedRoutes | ResolvedRefs::ResolvedWithNotAllowedRoutes(_),
-            ) => (
-                "False",
-                constants::ListenerConditionType::ResolvedRefs,
-                constants::ListenerConditionReason::InvalidRouteKinds,
-            ),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes | ResolvedRefs::ResolvedWithNotAllowedRoutes(_)) => {
+                ("False", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::InvalidRouteKinds)
+            },
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidBackend(_)) => (
-                "True",
-                constants::ListenerConditionType::ResolvedRefs,
-                constants::ListenerConditionReason::InvalidRouteKinds,
-            ),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidBackend(_)) => {
+                ("True", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::InvalidRouteKinds)
+            },
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(_)) => (
-                "True",
-                constants::ListenerConditionType::ResolvedRefs,
-                constants::ListenerConditionReason::ResolvedRefs,
-            ),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(_)) => {
+                ("True", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::ResolvedRefs)
+            },
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(_)) => (
-                "False",
-                constants::ListenerConditionType::ResolvedRefs,
-                constants::ListenerConditionReason::InvalidCertificateRef,
-            ),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(_)) => {
+                ("False", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::InvalidCertificateRef)
+            },
 
-            ListenerCondition::ResolvedRefs(ResolvedRefs::RefNotPermitted(_)) => (
-                "False",
-                constants::ListenerConditionType::ResolvedRefs,
-                constants::ListenerConditionReason::RefNotPermitted,
-            ),
+            ListenerCondition::ResolvedRefs(ResolvedRefs::RefNotPermitted(_)) => {
+                ("False", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::RefNotPermitted)
+            },
 
-            ListenerCondition::UnresolvedRouteRefs => (
-                "False",
-                constants::ListenerConditionType::ResolvedRefs,
-                constants::ListenerConditionReason::ResolvedRefs,
-            ),
+            ListenerCondition::UnresolvedRouteRefs => {
+                ("False", constants::ListenerConditionType::ResolvedRefs, constants::ListenerConditionReason::ResolvedRefs)
+            },
 
             ListenerCondition::Accepted => {
                 ("True", constants::ListenerConditionType::Accepted, constants::ListenerConditionReason::Accepted)
@@ -432,21 +410,15 @@ fn validate_allowed_routes(gateway_listeners: &GatewayListeners) -> ListenerCond
     if let Some(ar) = gateway_listeners.allowed_routes.as_ref() {
         if let Some(kinds) = ar.kinds.as_ref() {
             let cloned_kinds = kinds.clone().into_iter().map(|k| k.kind);
-            let (supported, invalid): (Vec<_>, Vec<_>) =
-                cloned_kinds.partition(|f| APPROVED_ROUTES.contains(&f.as_str()));
+            let (supported, invalid): (Vec<_>, Vec<_>) = cloned_kinds.partition(|f| APPROVED_ROUTES.contains(&f.as_str()));
 
             match (supported.is_empty(), invalid.is_empty()) {
                 (_, true) => ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(supported)),
                 (true, false) => ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes),
-                (false, false) => {
-                    ListenerCondition::ResolvedRefs(ResolvedRefs::ResolvedWithNotAllowedRoutes(supported))
-                },
+                (false, false) => ListenerCondition::ResolvedRefs(ResolvedRefs::ResolvedWithNotAllowedRoutes(supported)),
             }
         } else if gateway_listeners.protocol == "HTTP" || gateway_listeners.protocol == "HTTPS" {
-            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec![
-                "HTTPRoute".to_owned(),
-                "GRPCRoute".to_owned(),
-            ]))
+            ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec!["HTTPRoute".to_owned(), "GRPCRoute".to_owned()]))
         } else {
             ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec![]))
         }

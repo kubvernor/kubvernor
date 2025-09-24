@@ -297,18 +297,15 @@ impl<'a> EnvoyXDSGenerator<'a> {
                     .iter()
                     .map(|er| VeraRouteConfigs {
                         path: er.route_matcher.path.clone().map(|matcher| TeraPath {
-                            path: matcher.value.clone().map_or("/".to_owned(), |v| {
-                                if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v }
-                            }),
+                            path: matcher
+                                .value
+                                .clone()
+                                .map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v }),
                             match_type: matcher.r#type.map_or(String::new(), |f| match f {
                                 httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
                                 httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
                                     if let Some(val) = matcher.value {
-                                        if val == "/" {
-                                            "prefix".to_owned()
-                                        } else {
-                                            "path_separated_prefix".to_owned()
-                                        }
+                                        if val == "/" { "prefix".to_owned() } else { "path_separated_prefix".to_owned() }
                                     } else {
                                         "prefix".to_owned()
                                     }
@@ -343,12 +340,10 @@ impl<'a> EnvoyXDSGenerator<'a> {
                             .clone()
                             .into_iter()
                             .map(TeraFilterHeader::from)
-                            .chain(er.request_headers.set.clone().into_iter().map(TeraFilterHeader::from).map(
-                                |mut th| {
-                                    th.action = FilterHeaderAction::OverwriteIfExistsOrAdd;
-                                    th
-                                },
-                            ))
+                            .chain(er.request_headers.set.clone().into_iter().map(TeraFilterHeader::from).map(|mut th| {
+                                th.action = FilterHeaderAction::OverwriteIfExistsOrAdd;
+                                th
+                            }))
                             .collect(),
                         request_headers_to_remove: er.request_headers.remove.clone(),
                         response_headers_to_add_or_set: vec![],
@@ -410,11 +405,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                             .filter(|b| b.weight() > 0)
                             .map(|r| TeraCluster {
                                 name: r.cluster_name(),
-                                endpoints: vec![TeraEndpoint {
-                                    service: r.endpoint.clone(),
-                                    port: r.effective_port,
-                                    weight: r.weight,
-                                }],
+                                endpoints: vec![TeraEndpoint { service: r.endpoint.clone(), port: r.effective_port, weight: r.weight }],
                             })
                             .collect::<Vec<_>>()
                     })

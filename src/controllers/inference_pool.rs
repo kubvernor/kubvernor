@@ -65,10 +65,7 @@ impl InferencePoolController {
         Action::requeue(RECONCILE_LONG_WAIT)
     }
 
-    async fn reconcile_inference_pool(
-        resource: Arc<InferencePool>,
-        ctx: Arc<InferencePoolControllerContext>,
-    ) -> Result<Action> {
+    async fn reconcile_inference_pool(resource: Arc<InferencePool>, ctx: Arc<InferencePoolControllerContext>) -> Result<Action> {
         let controller_name = ctx.controller_name.clone();
 
         let Some(maybe_id) = resource.metadata.uid.clone() else {
@@ -103,11 +100,7 @@ impl InferencePoolController {
 
     fn check_status_changed(args: ResourceCheckerArgs<InferencePool>) -> ResourceState {
         let (resource, stored_resource) = args;
-        if resource.status == stored_resource.status {
-            ResourceState::StatusNotChanged
-        } else {
-            ResourceState::StatusChanged
-        }
+        if resource.status == stored_resource.status { ResourceState::StatusNotChanged } else { ResourceState::StatusChanged }
     }
 }
 
@@ -140,22 +133,12 @@ impl ResourceHandler<InferencePool> for InferencePoolControllerHandler<Inference
         self.resource_key.clone()
     }
 
-    async fn on_spec_not_changed(
-        &self,
-        id: ResourceKey,
-        resource: &Arc<InferencePool>,
-        state: &State,
-    ) -> Result<Action> {
+    async fn on_spec_not_changed(&self, id: ResourceKey, resource: &Arc<InferencePool>, state: &State) -> Result<Action> {
         let () = state.save_inference_pool(id, resource).expect("We expect the lock to work");
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_status_not_changed(
-        &self,
-        id: ResourceKey,
-        resource: &Arc<InferencePool>,
-        state: &State,
-    ) -> Result<Action> {
+    async fn on_status_not_changed(&self, id: ResourceKey, resource: &Arc<InferencePool>, state: &State) -> Result<Action> {
         let () = state.maybe_save_inference_pool(id, resource).expect("We expect the lock to work");
         Err(ControllerError::AlreadyAdded)
     }
@@ -179,12 +162,7 @@ impl ResourceHandler<InferencePool> for InferencePoolControllerHandler<Inference
 }
 
 impl InferencePoolControllerHandler<InferencePool> {
-    async fn on_new_or_changed(
-        &self,
-        inference_pool_key: ResourceKey,
-        resource: &Arc<InferencePool>,
-        _state: &State,
-    ) -> Result<Action> {
+    async fn on_new_or_changed(&self, inference_pool_key: ResourceKey, resource: &Arc<InferencePool>, _state: &State) -> Result<Action> {
         let routes: Vec<_> = self
             .state
             .get_http_routes()
@@ -226,21 +204,13 @@ impl InferencePoolControllerHandler<InferencePool> {
 
             let _ = self
                 .validate_references_channel_sender
-                .send(ReferenceValidateRequest::UpdatedGateways {
-                    reference: inference_pool_key,
-                    gateways: gateways_ids,
-                })
+                .send(ReferenceValidateRequest::UpdatedGateways { reference: inference_pool_key, gateways: gateways_ids })
                 .await;
             Ok(Action::await_change())
         }
     }
 
-    async fn on_deleted(
-        &self,
-        inference_pool_key: ResourceKey,
-        resource: &Arc<InferencePool>,
-        _: &State,
-    ) -> Result<Action> {
+    async fn on_deleted(&self, inference_pool_key: ResourceKey, resource: &Arc<InferencePool>, _: &State) -> Result<Action> {
         let deleted = self.state.delete_inference_pool(&inference_pool_key).expect("We expect the lock to work");
         if deleted.is_none() {
             warn!("Unable to delete {inference_pool_key:?}");
@@ -272,10 +242,7 @@ impl InferencePoolControllerHandler<InferencePool> {
 
             let _ = self
                 .validate_references_channel_sender
-                .send(ReferenceValidateRequest::UpdatedGateways {
-                    reference: inference_pool_key,
-                    gateways: gateways_ids,
-                })
+                .send(ReferenceValidateRequest::UpdatedGateways { reference: inference_pool_key, gateways: gateways_ids })
                 .await;
         }
         Ok(Action::await_change())
@@ -297,27 +264,16 @@ fn has_inference_pool(route: &HTTPRoute, inference_pool_key: &ResourceKey) -> bo
         rr.backend_refs.as_ref().unwrap_or(&vec![]).iter().any(|br| match br.kind.as_ref() {
             Some(kind) if kind == "InferencePool" => {
                 br.name == inference_pool_key.name
-                    && if br.namespace.is_some() {
-                        br.namespace == Some(inference_pool_key.namespace.clone())
-                    } else {
-                        true
-                    }
+                    && if br.namespace.is_some() { br.namespace == Some(inference_pool_key.namespace.clone()) } else { true }
             },
             _ => false,
         })
     })
 }
 
-fn create_accepted_inference_pool_status(
-    mut inference_pool: InferencePool,
-    gateways_ids: &BTreeSet<ResourceKey>,
-) -> InferencePool {
+fn create_accepted_inference_pool_status(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
     inference_pool.status = None;
-    create_inference_pool_status_with_conditions(
-        inference_pool,
-        gateways_ids,
-        &[InferencePoolCondition::Accepted(None).get_condition()],
-    )
+    create_inference_pool_status_with_conditions(inference_pool, gateways_ids, &[InferencePoolCondition::Accepted(None).get_condition()])
 }
 
 pub fn clear_all_conditions(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
@@ -459,10 +415,7 @@ impl PartialEq for ConditionHolder {
     }
 }
 
-pub fn remove_inference_pool_parents(
-    mut inference_pool: InferencePool,
-    gateways_ids: &BTreeSet<ResourceKey>,
-) -> InferencePool {
+pub fn remove_inference_pool_parents(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
     let parents = inference_pool.status.clone().map(|s| s.parent.unwrap_or_default()).unwrap_or_default();
     let parents = parents
         .into_iter()

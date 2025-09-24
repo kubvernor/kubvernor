@@ -12,10 +12,7 @@ use typed_builder::TypedBuilder;
 
 use crate::{
     Result,
-    common::{
-        BackendGatewayEvent, BackendGatewayResponse, GatewayDeployRequest, GatewayImplementationType, KubeGateway,
-        RequestContext,
-    },
+    common::{BackendGatewayEvent, BackendGatewayResponse, GatewayDeployRequest, GatewayImplementationType, KubeGateway, RequestContext},
     services::patchers::{Operation, PatchContext},
     state::State,
 };
@@ -23,8 +20,7 @@ use crate::{
 #[derive(TypedBuilder)]
 pub struct GatewayDeployerService {
     state: State,
-    backend_deployer_channel_senders:
-        HashMap<GatewayImplementationType, tokio::sync::mpsc::Sender<BackendGatewayEvent>>,
+    backend_deployer_channel_senders: HashMap<GatewayImplementationType, tokio::sync::mpsc::Sender<BackendGatewayEvent>>,
     backend_response_channel_receiver: tokio::sync::mpsc::Receiver<BackendGatewayResponse>,
     gateway_deployer_channel_receiver: tokio::sync::mpsc::Receiver<GatewayDeployRequest>,
     gateway_patcher_channel_sender: tokio::sync::mpsc::Sender<Operation<KubeGateway>>,
@@ -41,7 +37,9 @@ impl GatewayDeployerService {
         let controller_name = self.controller_name.clone();
         loop {
             tokio::select! {
-                Some(GatewayDeployRequest::Deploy(RequestContext{ gateway, kube_gateway, gateway_class_name, })) = resolve_receiver.recv() => {
+                Some(
+                    GatewayDeployRequest::Deploy(RequestContext{ gateway, kube_gateway, gateway_class_name, })
+                ) = resolve_receiver.recv() => {
                     info!("GatewayDeployerService Deploy {}" ,gateway.key());
                     let deployer = GatewayDeployer::builder()
                         .senders(self.backend_deployer_channel_senders.clone())

@@ -26,14 +26,12 @@ impl PartialOrd for HTTPEffectiveRoutingRule {
 
 impl HTTPEffectiveRoutingRule {
     fn header_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
-        let matcher =
-            super::HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
+        let matcher = super::HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
         matcher.compare_headers()
     }
 
     fn query_matching(this: &RouteMatch, other: &RouteMatch) -> std::cmp::Ordering {
-        let matcher =
-            super::QueryComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
+        let matcher = super::QueryComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
         matcher.compare_queries()
     }
 
@@ -91,9 +89,7 @@ impl HTTPEffectiveRoutingRule {
         } else {
             query_match
         };
-        debug!(
-            "Comparing {this:#?} {other:#?} {result:?} {path_match:?} {header_match:?} {query_match:?} {method_match:?}"
-        );
+        debug!("Comparing {this:#?} {other:#?} {result:?} {path_match:?} {header_match:?} {query_match:?} {method_match:?}");
         result
     }
 }

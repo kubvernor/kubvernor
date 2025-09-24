@@ -9,10 +9,7 @@ use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{
-        Backend, Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey, TlsType,
-        resource_key::DEFAULT_GROUP_NAME,
-    },
+    common::{Backend, Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey, TlsType, resource_key::DEFAULT_GROUP_NAME},
     controllers::find_linked_routes,
     state::State,
 };
@@ -75,11 +72,7 @@ impl From<ResourceKey> for ToResourceKey {
 
 impl From<ReferenceGrantTo> for ToResourceKey {
     fn from(rk: ReferenceGrantTo) -> Self {
-        Self {
-            group: if rk.group.is_empty() { DEFAULT_GROUP_NAME.to_owned() } else { rk.group },
-            name: rk.name,
-            kind: rk.kind,
-        }
+        Self { group: if rk.group.is_empty() { DEFAULT_GROUP_NAME.to_owned() } else { rk.group }, name: rk.name, kind: rk.kind }
     }
 }
 
@@ -111,10 +104,7 @@ impl ReferenceGrantsResolver {
         for route in linked_routes {
             let from = route.resource_key();
             for backend in &route.backends() {
-                if let Backend::Maybe(
-                    crate::common::BackendType::Service(config) | crate::common::BackendType::Invalid(config),
-                ) = backend
-                {
+                if let Backend::Maybe(crate::common::BackendType::Service(config) | crate::common::BackendType::Invalid(config)) = backend {
                     let to = &config.resource_key;
                     backend_reference_keys.insert(
                         ReferenceGrantRef::builder()
@@ -129,9 +119,7 @@ impl ReferenceGrantsResolver {
         }
 
         let mut secrets_references = BTreeSet::new();
-        for listener in
-            gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls)
-        {
+        for listener in gateway.listeners().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
             let listener_data = listener.data();
             if let Some(TlsType::Terminate(certificates)) = &listener_data.config.tls_type {
                 for certificate in certificates {
@@ -258,11 +246,7 @@ impl ReferenceGrantsResolver {
             let _res = self
                 .reference_validate_channel_sender
                 .send(ReferenceValidateRequest::UpdatedGateways {
-                    reference: ResourceKey {
-                        group: "ReferenceGrant".to_owned(),
-                        kind: "ReferenceGrant".to_owned(),
-                        ..Default::default()
-                    },
+                    reference: ResourceKey { group: "ReferenceGrant".to_owned(), kind: "ReferenceGrant".to_owned(), ..Default::default() },
                     gateways: changed_gateways.iter().map(|f| f.gateway_key.clone()).collect(),
                 })
                 .await;
@@ -471,16 +455,8 @@ mod tests {
         let resolver_fn = move |_: String| {
             async move {
                 let tos: Vec<ReferenceGrantTo> = vec![
-                    ReferenceGrantTo {
-                        group: "to_group_1".to_owned(),
-                        kind: "to_kind_1".to_owned(),
-                        name: Some("to_name_1".to_owned()),
-                    },
-                    ReferenceGrantTo {
-                        group: "to_group_2".to_owned(),
-                        kind: "to_kind_2".to_owned(),
-                        name: Some("to_name_2".to_owned()),
-                    },
+                    ReferenceGrantTo { group: "to_group_1".to_owned(), kind: "to_kind_1".to_owned(), name: Some("to_name_1".to_owned()) },
+                    ReferenceGrantTo { group: "to_group_2".to_owned(), kind: "to_kind_2".to_owned(), name: Some("to_name_2".to_owned()) },
                 ];
                 let froms: Vec<ReferenceGrantFrom> = vec![
                     ReferenceGrantFrom {

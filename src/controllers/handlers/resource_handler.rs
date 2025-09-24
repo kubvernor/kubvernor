@@ -27,12 +27,8 @@ where
         let id = self.resource_key();
         let state = self.state();
 
-        let resource_state = ResourceStateChecker::check_status(
-            resource,
-            stored_resource.clone(),
-            resource_spec_checker,
-            resource_status_checker,
-        );
+        let resource_state =
+            ResourceStateChecker::check_status(resource, stored_resource.clone(), resource_spec_checker, resource_status_checker);
 
         info!(
             "ResourceHandler {} {} version = {} Resource state {resource_state:?}",

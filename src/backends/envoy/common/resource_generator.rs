@@ -12,9 +12,7 @@ use envoy_api_rs::{
                 cluster::{ClusterDiscoveryType, DiscoveryType, LbPolicy},
             },
             core::v3::{Http2ProtocolOptions, UpstreamHttpProtocolOptions, transport_socket::ConfigType},
-            endpoint::v3::{
-                ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints, lb_endpoint::HostIdentifier,
-            },
+            endpoint::v3::{ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints, lb_endpoint::HostIdentifier},
             route::v3::Route as EnvoyRoute,
         },
         extensions::{
@@ -22,9 +20,7 @@ use envoy_api_rs::{
                 override_host::v3::{OverrideHost, override_host::OverrideHostSource},
                 round_robin::v3::RoundRobin,
             },
-            transport_sockets::tls::v3::{
-                CommonTlsContext, TlsParameters, UpstreamTlsContext, tls_parameters::TlsProtocol,
-            },
+            transport_sockets::tls::v3::{CommonTlsContext, TlsParameters, UpstreamTlsContext, tls_parameters::TlsProtocol},
             upstreams::http::v3::http_protocol_options::{
                 ExplicitHttpConfig, UpstreamProtocolOptions, explicit_http_config::ProtocolConfig,
             },
@@ -41,14 +37,13 @@ use tracing::debug;
 
 use crate::{
     backends::envoy::common::{
-        ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory, converters,
-        get_inference_pool_configurations,
+        ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory, converters, get_inference_pool_configurations,
         route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule},
     },
     common::{
-        self, Backend, BackendType, BackendTypeConfig, DEFAULT_ROUTE_HOSTNAME, FilterHeaders, GRPCRoutingConfiguration,
-        GRPCRoutingRule, HTTPRoutingConfiguration, HTTPRoutingRule, InferencePoolTypeConfig, Listener, ProtocolType,
-        Route, RouteType, ServiceTypeConfig, TlsType,
+        self, Backend, BackendType, BackendTypeConfig, DEFAULT_ROUTE_HOSTNAME, FilterHeaders, GRPCRoutingConfiguration, GRPCRoutingRule,
+        HTTPRoutingConfiguration, HTTPRoutingRule, InferencePoolTypeConfig, Listener, ProtocolType, Route, RouteType, ServiceTypeConfig,
+        TlsType,
     },
     controllers::HostnameMatchFilter,
 };
@@ -89,9 +84,10 @@ impl Listener {
                     hostnames: hostnames.to_vec(),
                     request_headers: rr.filter_headers(),
                     response_headers: FilterHeaders::default(),
-                    redirect_filter: rr.filters.iter().find_map(|f| {
-                        if f.r#type == HTTPFilterType::RequestRedirect { f.request_redirect.clone() } else { None }
-                    }),
+                    redirect_filter: rr
+                        .filters
+                        .iter()
+                        .find_map(|f| if f.r#type == HTTPFilterType::RequestRedirect { f.request_redirect.clone() } else { None }),
                 })
             })
             .collect()
@@ -237,8 +233,7 @@ impl<'a> ResourceGenerator<'a> {
                             .iter()
                             .filter_map(|b| {
                                 if let Backend::Resolved(
-                                    BackendType::Service(backend_service_config)
-                                    | BackendType::Invalid(backend_service_config),
+                                    BackendType::Service(backend_service_config) | BackendType::Invalid(backend_service_config),
                                 ) = b
                                 {
                                     Some(backend_service_config)
@@ -435,12 +430,11 @@ fn create_service_cluster(
             }),
             typed_extension_protocol_options: match route_type {
                 common::RouteType::Http(_) => HashMap::new(),
-                common::RouteType::Grpc(_) => vec![(
-                    "envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(),
-                    grpc_http_configuration.clone(),
-                )]
-                .into_iter()
-                .collect(),
+                common::RouteType::Grpc(_) => {
+                    vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
+                        .into_iter()
+                        .collect()
+                },
             },
 
             ..Default::default()
@@ -548,10 +542,7 @@ fn create_inference_cluster(config: &InferencePoolTypeConfig, _route_type: &Rout
     };
 
     let override_host = OverrideHost {
-        override_host_sources: vec![OverrideHostSource {
-            header: "x-gateway-destination-endpoint".to_owned(),
-            metadata: None,
-        }],
+        override_host_sources: vec![OverrideHostSource { header: "x-gateway-destination-endpoint".to_owned(), metadata: None }],
         fallback_policy: Some(LoadBalancingPolicy { policies: vec![fallback_policy] }),
     };
 
@@ -613,19 +604,10 @@ mod tests {
         let hostnames = ResourceGenerator::calculate_effective_hostnames(&routes, hostname);
         assert_eq!(hostnames, vec!["*".to_owned()]);
         let hostname = Some("host.blah".to_owned());
-        let hostnames: BTreeSet<String> =
-            ResourceGenerator::calculate_effective_hostnames(&routes, hostname).into_iter().collect();
-        assert_eq!(
-            hostnames,
-            vec!["host.blah".to_owned(), "host.blah:*".to_owned()].into_iter().collect::<BTreeSet<_>>()
-        );
+        let hostnames: BTreeSet<String> = ResourceGenerator::calculate_effective_hostnames(&routes, hostname).into_iter().collect();
+        assert_eq!(hostnames, vec!["host.blah".to_owned(), "host.blah:*".to_owned()].into_iter().collect::<BTreeSet<_>>());
         let hostname = Some("host.blah".to_owned());
-        let hostnames = calculate_hostnames_common(&routes, hostname, |h| vec![format!("{h}:*"), h])
-            .into_iter()
-            .collect::<BTreeSet<_>>();
-        assert_eq!(
-            hostnames,
-            vec!["host.blah".to_owned(), "host.blah:*".to_owned()].into_iter().collect::<BTreeSet<_>>()
-        );
+        let hostnames = calculate_hostnames_common(&routes, hostname, |h| vec![format!("{h}:*"), h]).into_iter().collect::<BTreeSet<_>>();
+        assert_eq!(hostnames, vec!["host.blah".to_owned(), "host.blah:*".to_owned()].into_iter().collect::<BTreeSet<_>>());
     }
 }
