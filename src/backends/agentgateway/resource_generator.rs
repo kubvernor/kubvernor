@@ -2,15 +2,10 @@ use std::collections::BTreeMap;
 
 use agentgateway_api_rs::agentgateway::dev::resource::{Listener, Route, RouteBackend};
 
-use crate::{
-    backends::envoy::common::InferenceClusterInfo,
-    common::{self, Backend, BackendType, ProtocolType},
-};
+use crate::common::{self, Backend, BackendType, ProtocolType};
 
 pub(crate) struct ResourceGenerator<'a> {
     effective_gateway: &'a common::Gateway,
-    resources: BTreeMap<i32, Listener>,
-    inference_clusters: Vec<InferenceClusterInfo>,
 }
 
 impl From<ProtocolType> for i32 {
@@ -38,7 +33,7 @@ pub(crate) struct Bind {
 
 impl<'a> ResourceGenerator<'a> {
     pub fn new(effective_gateway: &'a common::Gateway) -> Self {
-        Self { effective_gateway, resources: BTreeMap::new(), inference_clusters: vec![] }
+        Self { effective_gateway }
     }
 
     pub fn generate_bindings_and_listeners(&self) -> BTreeMap<Bind, Vec<Listener>> {
@@ -46,9 +41,7 @@ impl<'a> ResourceGenerator<'a> {
         let listeners = gateway.listeners().fold(BTreeMap::<Bind, Vec<Listener>>::new(), |mut acc, listener| {
             let port = listener.port();
             let listener_name = listener.name().to_owned();
-            let listener_hostname = listener.hostname().cloned();
             let gateway_name = gateway.name().to_owned();
-            let protocol_type = listener.protocol();
 
             let bind = Bind { key: create_bind_name(port), port: port as u32 };
             let maybe_added = acc.get_mut(&bind);

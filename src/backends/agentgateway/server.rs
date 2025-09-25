@@ -96,19 +96,6 @@ impl AddAssign<u32> for AckVersions {
     }
 }
 
-impl AckVersions {
-    pub fn inc(&mut self) {
-        *self += 1;
-    }
-    pub fn listener(&self) -> u32 {
-        self.listener
-    }
-
-    pub fn cluster(&self) -> u32 {
-        self.cluster
-    }
-}
-
 #[derive(Debug, Clone)]
 struct AdsClient {
     sender: mpsc::Sender<Result<DeltaDiscoveryResponse, Status>>,

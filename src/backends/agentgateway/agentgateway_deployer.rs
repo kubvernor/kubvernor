@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, sync::LazyLock};
 
+use agentgateway_api_rs::agentgateway::dev::resource::{Bind, Resource, resource::Kind};
 use futures::FutureExt;
 use itertools::Itertools;
 use k8s_openapi::{
@@ -12,11 +13,17 @@ use k8s_openapi::{
     },
     apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
 };
-use kube::{Api, Client, api::PatchParams};
+use kube::{
+    Api, Client,
+    api::{Patch, PatchParams},
+};
 use kube_core::ObjectMeta;
 use tera::Tera;
-use tokio::sync::mpsc::{self, Receiver, Sender};
-use tracing::{debug, info, warn};
+use tokio::{
+    sync::mpsc::{self, Receiver, Sender},
+    time,
+};
+use tracing::{debug, error, info, warn};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -26,7 +33,7 @@ use crate::{
         resource_generator::ResourceGenerator,
         server::{ServerAction, start_aggregate_server},
     },
-    common::{BackendGatewayEvent, BackendGatewayResponse, ControlPlaneConfig, Gateway, ResourceKey},
+    common::{BackendGatewayEvent, BackendGatewayResponse, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress, ResourceKey},
 };
 
 pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templates/**.tera") {
@@ -66,35 +73,41 @@ impl AgentgatewayDeployerChannelHandlerService {
 
 
                                     let maybe_service = deploy_agentgateway(&control_plane_config, client.clone(), gateway).await;
+                                    if let Ok(service) = maybe_service {
+                                        let resource_generator = ResourceGenerator::new(gateway);
+                                        let bindings_and_listeners = resource_generator.generate_bindings_and_listeners();
+                                        let bindings = bindings_and_listeners.keys().cloned().map(|b|
+                                            Resource{
+                                                kind: Some(Kind::Bind(Bind{ key: b.key, port: b.port}
+                                            ))}).collect::<Vec<_>>();
+                                        let listeners = bindings_and_listeners.values().cloned().flat_map(| listeners | listeners.into_iter()
+                                        .map(|listener|
+                                            Resource{kind: Some(Kind::Listener(listener))}
+                                        )).collect::<Vec<_>>();
+                                        let routes = resource_generator.generate_routes().into_iter().map(|r| Resource {
+                                            kind: Some(Kind::Route(r))
+                                        }).collect::<Vec<_>>();
 
-                                    let resource_generator = ResourceGenerator::new(gateway);
-                                    let bindings_and_listeners = resource_generator.generate_bindings_and_listeners();
-                                    let bindings = bindings_and_listeners.keys().cloned().map(|b|
-                                        Resource{
-                                            kind: Some(Kind::Bind(Bind{ key: b.key, port: b.port}
-                                        ))}).collect::<Vec<_>>();
-                                    let listeners = bindings_and_listeners.values().cloned().flat_map(| listeners | listeners.into_iter()
-                                    .map(|listener|
-                                        Resource{kind: Some(Kind::Listener(listener))}
-                                    )).collect::<Vec<_>>();
-                                    let routes = resource_generator.generate_routes().into_iter().map(|r| Resource {
-                                        kind: Some(Kind::Route(r))
-                                    }).collect::<Vec<_>>();
+                                        let _ = stream_resource_sender.send(ServerAction::UpdateBindings {
+                                            gateway_id: gateway.key().clone(),
+                                            resources: bindings,ack_version: 1
+                                        }).await;
+                                        let _ = stream_resource_sender.send(ServerAction::UpdateListeners {
+                                            gateway_id: gateway.key().clone(),
+                                            resources: listeners, ack_version: 1
+                                        }).await;
+                                        let _ = stream_resource_sender.send(ServerAction::UpdateRoutes {
+                                            gateway_id: gateway.key().clone(),
+                                            resources: routes, ack_version: 1
+                                        }).await;
+                                        self.update_address_with_polling(&service, *ctx).await;
+                                    }else{
+                                        warn!("Problem {maybe_service:?}");
+                                        let _res = self.backend_response_channel_sender
+                                            .send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
+                                    }
 
-                                    let _ = stream_resource_sender.send(ServerAction::UpdateBindings {
-                                        gateway_id: gateway.key().clone(),
-                                        resources: bindings,ack_version: 1
-                                    }).await;
-                                    let _ = stream_resource_sender.send(ServerAction::UpdateListeners {
-                                        gateway_id: gateway.key().clone(),
-                                        resources: listeners, ack_version: 1
-                                    }).await;
-                                    let _ = stream_resource_sender.send(ServerAction::UpdateRoutes {
-                                        gateway_id: gateway.key().clone(),
-                                        resources: routes, ack_version: 1
-                                    }).await;
-                                    let _res = self.backend_response_channel_sender
-                                        .send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
+
                                 }
 
                                 BackendGatewayEvent::Deleted(ctx) => {
@@ -153,25 +166,91 @@ impl AgentgatewayDeployerChannelHandlerService {
         futures::future::join_all(vec![agentgateway_deployer_service, xds_service]).await;
         Ok(())
     }
-}
+    async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext) {
+        if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
+            debug!("Got address address {attached_addresses:?}");
+            let ChangedContext { mut gateway, kube_gateway, gateway_class_name } = ctx;
+            gateway.addresses_mut().append(
+                &mut attached_addresses
+                    .into_iter()
+                    .filter_map(|a| if let Ok(addr) = a.parse() { Some(GatewayAddress::IPAddress(addr)) } else { None })
+                    .collect(),
+            );
+            let _res = self
+                .backend_response_channel_sender
+                .send(BackendGatewayResponse::ProcessedWithContext {
+                    gateway: Box::new(gateway.clone()),
+                    kube_gateway: Box::new(kube_gateway),
+                    gateway_class_name,
+                })
+                .await;
+        } else {
+            let client = self.client.clone();
+            let resource_key = ResourceKey::from(service);
 
-use agentgateway_api_rs::{
-    agentgateway::dev::resource::{Bind, Resource, resource::Kind},
-    envoy::service::discovery::v3::Resource as AgentgatewayResource,
-};
+            let backend_response_channel_sender = self.backend_response_channel_sender.clone();
+            let _handle = tokio::spawn(async move {
+                let api: Api<Service> = Api::namespaced(client, &resource_key.namespace);
+                let ChangedContext { mut gateway, kube_gateway, gateway_class_name } = ctx;
+                let mut interval = time::interval(time::Duration::from_secs(1));
+                loop {
+                    interval.tick().await;
+                    debug!("Resolving address for Service {}", resource_key);
+                    let maybe_service = api.get(&resource_key.name).await;
+                    if let Ok(service) = maybe_service {
+                        if Self::update_addresses(&mut gateway, &service) {
+                            let _res = backend_response_channel_sender
+                                .send(BackendGatewayResponse::ProcessedWithContext {
+                                    gateway: Box::new(gateway.clone()),
+                                    kube_gateway: Box::new(kube_gateway.clone()),
+                                    gateway_class_name: gateway_class_name.clone(),
+                                })
+                                .await;
+                            break;
+                        }
+                    } else {
+                        warn!("Problem {maybe_service:?}");
+                        let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
+                    }
+                }
+                debug!("Task completed for gateway {} service {}", gateway.key(), resource_key);
+            });
+        }
+    }
+    fn find_gateway_addresses(service: &Service) -> Option<Vec<String>> {
+        let mut ips = vec![];
+        if let Some(status) = &service.status {
+            if let Some(load_balancer) = &status.load_balancer {
+                if let Some(ingress) = &load_balancer.ingress {
+                    for i in ingress {
+                        ips.push(i.ip.clone());
+                    }
+                }
+            }
+        }
+        let ips = ips.into_iter().flatten().collect::<Vec<_>>();
+        if ips.is_empty() { None } else { Some(ips) }
+    }
 
-#[derive(Debug, Default)]
-struct Resources {
-    listeners: Vec<AgentgatewayResource>,
-    clusters: Vec<AgentgatewayResource>,
-    secrets: Vec<ResourceKey>,
+    fn update_addresses(gateway: &mut Gateway, service: &Service) -> bool {
+        if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
+            gateway.addresses_mut().append(
+                &mut attached_addresses
+                    .into_iter()
+                    .filter_map(|a| if let Ok(addr) = a.parse() { Some(GatewayAddress::IPAddress(addr)) } else { None })
+                    .collect(),
+            );
+            true
+        } else {
+            false
+        }
+    }
 }
 
 async fn deploy_agentgateway(
     control_plane_config: &ControlPlaneConfig,
     client: Client,
     gateway: &Gateway,
-    secrets: &[ResourceKey],
 ) -> std::result::Result<Service, kube::Error> {
     let controller_name = &control_plane_config.controller_name;
     let service_api: Api<Service> = Api::namespaced(client.clone(), gateway.namespace());
@@ -186,14 +265,10 @@ async fn deploy_agentgateway(
 
     let pp = PatchParams { field_manager: Some(controller_name.to_owned()), ..Default::default() };
 
-    let bootstrap_content = if secrets.is_empty() {
-        bootstrap_content(control_plane_config).map_err(kube::Error::Service)?
-    } else {
-        bootstrap_content_with_secrets(control_plane_config, secrets).map_err(kube::Error::Service)?
-    };
+    let bootstrap_content = bootstrap_content(control_plane_config).map_err(kube::Error::Service)?;
 
-    let envoy_boostrap_config_map = create_envoy_bootstrap_config_map(&bootstrap_cm, gateway, bootstrap_content);
-    let _res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&envoy_boostrap_config_map)).await?;
+    let boostrap_config_map = create_bootstrap_config_map(&bootstrap_cm, gateway, bootstrap_content);
+    let _res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&boostrap_config_map)).await?;
 
     debug!("Created bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
 
@@ -223,7 +298,12 @@ fn create_deployment(gateway: &Gateway) -> Deployment {
         .collect();
     labels.insert("app".to_owned(), gateway.name().to_owned());
 
-    let mut pod_spec: PodSpec = serde_json::from_str(AGENTGATEWAY_POD_SPEC).unwrap_or(PodSpec { ..Default::default() });
+    let maybe_pod_spec = serde_json::from_str(AGENTGATEWAY_POD_SPEC);
+    if maybe_pod_spec.as_ref().is_err() {
+        error!("Can't parse the pod {maybe_pod_spec:?}");
+        maybe_pod_spec.as_ref().expect("Expect this to work");
+    }
+    let mut pod_spec: PodSpec = maybe_pod_spec.expect("Expect this to work");
     if let Some(container) = pod_spec.containers.first_mut() {
         container.ports = Some(ports);
     }
@@ -299,9 +379,9 @@ fn create_service(gateway: &Gateway) -> Service {
     }
 }
 
-fn create_envoy_bootstrap_config_map(name: &str, gateway: &Gateway, boostrap_content: String) -> ConfigMap {
+fn create_bootstrap_config_map(name: &str, gateway: &Gateway, boostrap_content: String) -> ConfigMap {
     let mut map = BTreeMap::new();
-    map.insert("envoy-bootstrap.yaml".to_owned(), boostrap_content);
+    map.insert("agentgateway-bootstrap.yaml".to_owned(), boostrap_content);
     let mut annotations = BTreeMap::new();
     annotations.insert("gateway-version".to_owned(), Uuid::new_v4().to_string());
     ConfigMap {
@@ -368,13 +448,13 @@ const AGENTGATEWAY_POD_SPEC: &str = r#"
     "containers": [
         {
             "args": [
-                "-config",
-                "/agentgateway-config/agentgateway-bootstrap.yaml",
+                "--file",
+                "/agentgateway-config/agentgateway-bootstrap.yaml"
             ],
             "command": [
-                "agentgateway"
+                "/app/agentgateway"
             ],
-            "image": "docker.io/agentgateway/agentgateway:dev",
+            "image": "docker.io/agentgateway/agentgateway:local",
             "imagePullPolicy": "IfNotPresent",
             "name": "agentgateway",
             "env": [
@@ -404,6 +484,13 @@ const AGENTGATEWAY_POD_SPEC: &str = r#"
             "ports": [
 
             ],
+            "readinessProbe": {
+                "tcpSocket":{
+                    "port": 19001
+                },
+                "initialDelaySeconds": 3,
+                "periodSeconds": 20
+            },
             "volumeMounts": [
                 {
                     "name": "agentgateway-config",
