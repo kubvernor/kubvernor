@@ -1,13 +1,27 @@
-use std::sync::LazyLock;
+use std::{collections::BTreeMap, sync::LazyLock};
 
 use futures::FutureExt;
-use kube::Client;
+use itertools::Itertools;
+use k8s_openapi::{
+    api::{
+        apps::v1::{Deployment, DeploymentSpec},
+        core::v1::{
+            ConfigMap, ConfigMapVolumeSource, ContainerPort, KeyToPath, PodSpec, PodTemplateSpec, Service, ServiceAccount, ServicePort,
+            ServiceSpec, Volume,
+        },
+    },
+    apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
+};
+use kube::{Api, Client, api::PatchParams};
+use kube_core::ObjectMeta;
 use tera::Tera;
 use tokio::sync::mpsc::{self, Receiver, Sender};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
+use uuid::Uuid;
 
 use crate::{
+    Error,
     backends::agentgateway::{
         resource_generator::ResourceGenerator,
         server::{ServerAction, start_aggregate_server},
@@ -49,6 +63,10 @@ impl AgentgatewayDeployerChannelHandlerService {
                                 BackendGatewayEvent::Changed(ctx) => {
                                     let gateway = &ctx.gateway;
                                     info!("AgentgatewayDeployerChannelHandlerService GatewayChanged {}",gateway.key());
+
+
+                                    let maybe_service = deploy_agentgateway(&control_plane_config, client.clone(), gateway).await;
+
                                     let resource_generator = ResourceGenerator::new(gateway);
                                     let bindings_and_listeners = resource_generator.generate_bindings_and_listeners();
                                     let bindings = bindings_and_listeners.keys().cloned().map(|b|
@@ -149,12 +167,251 @@ struct Resources {
     secrets: Vec<ResourceKey>,
 }
 
-fn create_resources(gateway: &Gateway) -> Resources {
-    let mut listener_resources = vec![];
-    let mut secret_resources = vec![];
-    let mut resource_generator = super::resource_generator::ResourceGenerator::new(gateway);
+async fn deploy_agentgateway(
+    control_plane_config: &ControlPlaneConfig,
+    client: Client,
+    gateway: &Gateway,
+    secrets: &[ResourceKey],
+) -> std::result::Result<Service, kube::Error> {
+    let controller_name = &control_plane_config.controller_name;
+    let service_api: Api<Service> = Api::namespaced(client.clone(), gateway.namespace());
+    let service_account_api: Api<ServiceAccount> = Api::namespaced(client.clone(), gateway.namespace());
+    let deployment_api: Api<Deployment> = Api::namespaced(client.clone(), gateway.namespace());
+    let config_map_api: Api<ConfigMap> = Api::namespaced(client.clone(), gateway.namespace());
+    let (_, bootstrap_cm) = config_map_names(gateway);
 
-    //let listeners = resource_generator.generate_listeners().values();
+    let deployment = create_deployment(gateway);
+    let service = create_service(gateway);
+    let service_account = create_service_account(gateway);
 
-    Resources { listeners: listener_resources, clusters: vec![], secrets: secret_resources }
+    let pp = PatchParams { field_manager: Some(controller_name.to_owned()), ..Default::default() };
+
+    let bootstrap_content = if secrets.is_empty() {
+        bootstrap_content(control_plane_config).map_err(kube::Error::Service)?
+    } else {
+        bootstrap_content_with_secrets(control_plane_config, secrets).map_err(kube::Error::Service)?
+    };
+
+    let envoy_boostrap_config_map = create_envoy_bootstrap_config_map(&bootstrap_cm, gateway, bootstrap_content);
+    let _res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&envoy_boostrap_config_map)).await?;
+
+    debug!("Created bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
+
+    let _deployment = deployment_api.patch(gateway.name(), &pp, &Patch::Apply(&deployment)).await?;
+    debug!("Created deployment {}-{}", gateway.name(), gateway.namespace());
+
+    let service = service_api.patch(gateway.name(), &pp, &Patch::Apply(&service)).await?;
+
+    debug!("Service status {:?}", service.status);
+    debug!("Created service {}-{}", gateway.name(), gateway.namespace());
+
+    let service_account = service_account_api.patch(gateway.name(), &pp, &Patch::Apply(&service_account)).await?;
+    debug!("Service account status {:?}", service_account);
+
+    Ok(service)
 }
+
+fn create_labels(_gateway: &Gateway) -> BTreeMap<String, String> {
+    BTreeMap::new()
+}
+fn create_deployment(gateway: &Gateway) -> Deployment {
+    let mut labels = create_labels(gateway);
+    let ports = gateway
+        .listeners()
+        .map(|l| ContainerPort { name: None, container_port: l.port(), protocol: Some("TCP".to_owned()), ..Default::default() })
+        .dedup_by(|x, y| x.container_port == y.container_port && x.protocol == y.protocol)
+        .collect();
+    labels.insert("app".to_owned(), gateway.name().to_owned());
+
+    let mut pod_spec: PodSpec = serde_json::from_str(AGENTGATEWAY_POD_SPEC).unwrap_or(PodSpec { ..Default::default() });
+    if let Some(container) = pod_spec.containers.first_mut() {
+        container.ports = Some(ports);
+    }
+    let (_, boostrap_cm) = config_map_names(gateway);
+    let default_volumes = vec![Volume {
+        name: "agentgateway-config".to_owned(),
+        config_map: Some(ConfigMapVolumeSource {
+            name: boostrap_cm,
+            items: Some(vec![KeyToPath {
+                key: "agentgateway-bootstrap.yaml".to_owned(),
+                path: "agentgateway-bootstrap.yaml".to_owned(),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }];
+    pod_spec.volumes = Some(default_volumes);
+    let mut annotations = BTreeMap::new();
+
+    annotations.insert("gateway-version".to_owned(), Uuid::new_v4().to_string());
+    Deployment {
+        metadata: ObjectMeta {
+            annotations: Some(annotations.clone()),
+            name: Some(gateway.name().to_owned()),
+            namespace: Some(gateway.namespace().to_owned()),
+            labels: Some(labels.clone()),
+            ..Default::default()
+        },
+        spec: Some(DeploymentSpec {
+            replicas: Some(1),
+            selector: LabelSelector { match_expressions: None, match_labels: Some(labels.clone()) },
+            template: PodTemplateSpec {
+                metadata: Some(ObjectMeta { labels: Some(labels.clone()), ..Default::default() }),
+                spec: Some(pod_spec),
+            },
+            ..Default::default()
+        }),
+
+        ..Default::default()
+    }
+}
+
+fn create_service(gateway: &Gateway) -> Service {
+    let ports = gateway
+        .listeners()
+        .map(|l| ServicePort {
+            app_protocol: None,
+            name: Some(name(gateway.name(), l.port(), &l.protocol().to_string())),
+            node_port: None,
+            port: l.port(),
+            protocol: Some("TCP".to_owned()),
+            target_port: Some(IntOrString::Int(l.port())),
+        })
+        .dedup_by(|x, y| x.port == y.port && x.protocol == y.protocol)
+        .collect();
+    let mut selector = BTreeMap::new();
+    selector.insert("app".to_owned(), gateway.name().to_owned());
+    Service {
+        metadata: ObjectMeta {
+            name: Some(gateway.name().to_owned()),
+            namespace: Some(gateway.namespace().to_owned()),
+            labels: Some(create_labels(gateway)),
+            ..Default::default()
+        },
+        spec: Some(ServiceSpec {
+            selector: Some(selector),
+            ports: Some(ports),
+            type_: Some("LoadBalancer".to_owned()),
+            ..Default::default()
+        }),
+        status: None,
+    }
+}
+
+fn create_envoy_bootstrap_config_map(name: &str, gateway: &Gateway, boostrap_content: String) -> ConfigMap {
+    let mut map = BTreeMap::new();
+    map.insert("envoy-bootstrap.yaml".to_owned(), boostrap_content);
+    let mut annotations = BTreeMap::new();
+    annotations.insert("gateway-version".to_owned(), Uuid::new_v4().to_string());
+    ConfigMap {
+        binary_data: None,
+        data: Some(map),
+        immutable: None,
+        metadata: ObjectMeta {
+            name: Some(name.to_owned()),
+            namespace: Some(gateway.namespace().to_owned()),
+            annotations: Some(annotations),
+            ..Default::default()
+        },
+    }
+}
+
+fn name(gw: &str, port: i32, proto: &str) -> String {
+    format! {"{gw}-{port}-{}",proto.to_lowercase()}
+}
+
+fn create_service_account(gateway: &Gateway) -> ServiceAccount {
+    ServiceAccount {
+        metadata: ObjectMeta {
+            name: Some(gateway.name().to_owned()),
+            namespace: Some(gateway.namespace().to_owned()),
+            labels: Some(create_labels(gateway)),
+
+            ..Default::default()
+        },
+
+        automount_service_account_token: None,
+        image_pull_secrets: None,
+        secrets: None,
+    }
+}
+
+fn config_map_names(gateway: &Gateway) -> (String, String) {
+    (format!("{}-xds-cm", gateway.name()), format!("{}-bootstrap-cm", gateway.name()))
+}
+
+fn bootstrap_content(control_plane_config: &ControlPlaneConfig) -> Result<String, Error> {
+    let mut tera_context = tera::Context::new();
+    tera_context.insert("control_plane_host", &control_plane_config.listening_socket.ip().to_string());
+    tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port());
+
+    Ok(TEMPLATES.render("agent-gateway-bootstrap-dynamic.yaml.tera", &tera_context)?)
+}
+
+const AGENTGATEWAY_POD_SPEC: &str = r#"
+{
+    "volumes": [
+        {
+            "name": "agentgateway-config",
+            "configMap": {
+                "name": "agentgateway-cm",
+                "items": [
+                    {
+                        "key": "agentgateway-bootstrap.yaml",
+                        "path": "agentgateway-bootstrap.yaml"
+                    }
+                ]
+            }
+        }
+    ],
+    "containers": [
+        {
+            "args": [
+                "-config",
+                "/agentgateway-config/agentgateway-bootstrap.yaml",
+            ],
+            "command": [
+                "agentgateway"
+            ],
+            "image": "docker.io/agentgateway/agentgateway:dev",
+            "imagePullPolicy": "IfNotPresent",
+            "name": "agentgateway",
+            "env": [
+                {
+                    "name": "GRPC_TRACE",
+                    "value": "tcp,http,api"
+                },
+                {
+                    "name": "NAMESPACE",
+                    "valueFrom": {
+                        "fieldRef": {
+                            "apiVersion": "v1",
+                            "fieldPath": "metadata.namespace"
+                        }
+                    }
+                },
+                {
+                    "name": "GATEWAY",
+                    "valueFrom": {
+                        "fieldRef": {
+                            "apiVersion": "v1",
+                            "fieldPath": "metadata.name"
+                        }
+                    }
+                }
+            ],
+            "ports": [
+
+            ],
+            "volumeMounts": [
+                {
+                    "name": "agentgateway-config",
+                    "mountPath": "/agentgateway-config",
+                    "readOnly": true
+                }
+            ]
+        }
+    ]
+}
+"#;
