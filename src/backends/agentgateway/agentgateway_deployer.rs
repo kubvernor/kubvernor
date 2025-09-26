@@ -479,6 +479,24 @@ const AGENTGATEWAY_POD_SPEC: &str = r#"
                             "fieldPath": "metadata.name"
                         }
                     }
+                },
+                {
+                    "name": "POD_NAME",
+                    "valueFrom": {
+                        "fieldRef": {
+                            "apiVersion": "v1",
+                            "fieldPath": "metadata.name"
+                        }
+                    }
+                },
+                {
+                    "name": "POD_NAMESPACE",
+                    "valueFrom": {
+                        "fieldRef": {
+                            "apiVersion": "v1",
+                            "fieldPath": "metadata.namespace"
+                        }
+                    }
                 }
             ],
             "ports": [

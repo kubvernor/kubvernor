@@ -128,8 +128,9 @@ impl AdsClient {
 
 #[derive(Debug, Default)]
 pub struct ResourcesMapping {
-    cluster: BTreeMap<String, Vec<Resource>>,
-    listener: BTreeMap<String, Vec<Resource>>,
+    bindings: BTreeMap<String, Vec<Resource>>,
+    listeners: BTreeMap<String, Vec<Resource>>,
+    routes: BTreeMap<String, Vec<Resource>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -230,14 +231,12 @@ impl AggregateServerService {
 
                                 {
                                     let mut channels = ads_channels.lock().expect("We expect lock to work");
-                                    channels.cluster.insert(gateway_id.clone(), resources.clone());
-
+                                    channels.bindings.insert(gateway_id.clone(), resources.clone());
                                 };
 
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
                                 info!("Sending Bindings discovery response {gateway_id} clients {}", clients.len());
                                 for client in &mut clients{
-
                                     let response = DeltaDiscoveryResponse {
                                         type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
                                         resources: resources.iter().map(|resource|
@@ -260,7 +259,7 @@ impl AggregateServerService {
 
                                 {
                                     let mut channels = ads_channels.lock().expect("We expect lock to work");
-                                    channels.listener.insert(gateway_id.clone(), resources.clone());
+                                    channels.listeners.insert(gateway_id.clone(), resources.clone());
 
                                 };
 
@@ -288,7 +287,7 @@ impl AggregateServerService {
 
                                 {
                                     let mut channels = ads_channels.lock().expect("We expect lock to work");
-                                    channels.listener.insert(gateway_id.clone(), resources.clone());
+                                    channels.routes.insert(gateway_id.clone(), resources.clone());
                                 };
 
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
@@ -373,31 +372,96 @@ impl AggregatedDiscoveryService for AggregateServer {
         req: envoy_api_rs::tonic::Request<envoy_api_rs::tonic::Streaming<DeltaDiscoveryRequest>>,
     ) -> AggregatedDiscoveryServiceResult<Self::DeltaAggregatedResourcesStream> {
         info!("AggregateServer::delta_aggregated_resources client connected from: {:?}", req.remote_addr());
-        let mut incoming_stream = req.into_streaming_request().into_inner();
+        let Some(client_ip) = req.remote_addr() else {
+            return Err(Status::aborted("Invalid remote IP address"));
+        };
+
         let (tx, rx) = mpsc::channel(128);
         let nonces = Arc::clone(&self.nonces);
+        let kube_client = self.kube_client.clone();
+        let ads_channels = Arc::clone(&self.ads_channels);
+        let ads_clients = self.ads_clients.clone();
+
+        let mut incoming_stream = req.into_streaming_request().into_inner();
+
+        self.ads_clients.replace_client(AdsClient::new(client_ip, tx.clone()));
         tokio::spawn(async move {
             while let Some(item) = incoming_stream.next().await {
                 match item {
                     Ok(discovery_request) => {
-                        info!("AggregateServer::delta_aggregated_resources {discovery_request:?}");
                         if discovery_request.type_url == "type.googleapis.com/agentgateway.dev.resource.Resource" {
-                            let Ok(response_nonce) = Uuid::parse_str(&discovery_request.response_nonce) else {
+                            info!("AggregateServer::delta_aggregated_resources {discovery_request:?}");
+                            if let Some(status) = discovery_request.error_detail {
+                                warn!("Got error... skipping  {status:?}");
+                                continue;
+                            }
+                            let Some(node) = discovery_request.node.as_ref() else {
+                                warn!("Node is empty");
                                 continue;
                             };
 
-                            if nonces.lock().expect("We do expect this to work").contains_key(&response_nonce) {
-                                debug!("AggregateServer::delta_aggregated_resources Got ack/nack for {response_nonce}");
+                            let Ok(gateway_id) = fetch_gateway_id_by_node_id(kube_client.clone(), node).await else {
+                                warn!("Node id is invalid {:?}", node.id);
+                                continue;
+                            };
+                            let maybe_nonce = if discovery_request.response_nonce.is_empty() {
+                                None
                             } else {
-                                let nonce = uuid::Uuid::new_v4();
-                                nonces.lock().expect("We do expect this to work").insert(nonce, nonce);
-                                let response = DeltaDiscoveryResponse {
-                                    resources: vec![],
-                                    nonce: nonce.to_string(),
-                                    type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
-                                    ..Default::default() //, system_version_info: todo!(), removed_resources: todo!(), removed_resource_names: todo!(), control_plane: todo!(), resource_errors: todo!() }
-                                };
-                                let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                let uuid = Uuid::parse_str(&discovery_request.response_nonce);
+                                Some(uuid)
+                            };
+
+                            let Some(mut ads_client) = ads_clients.get_client_by_client_id(client_ip) else {
+                                warn!("Can't find any clients for this ip  {:?}", node.id);
+                                continue;
+                            };
+                            ads_client.set_gateway_id(&gateway_id);
+                            ads_clients.update_client(&ads_client);
+
+                            match maybe_nonce {
+                                Some(Err(_)) => {
+                                    info!("Nonce set but we can't parse it");
+                                },
+                                Some(Ok(nonce)) => {
+                                    debug!(
+                                        "AggregateServer::delta_aggregated_resources Got ack/nack for {nonce} {:?}",
+                                        discovery_request.error_detail
+                                    );
+                                },
+                                None => {
+                                    let nonce = uuid::Uuid::new_v4();
+                                    nonces.lock().expect("We do expect this to work").insert(nonce, nonce);
+                                    let resources = {
+                                        let resource_mappings = ads_channels.lock().expect("We expect the lock to work");
+                                        let bindings = resource_mappings.bindings.get(&gateway_id).cloned().unwrap_or_default();
+                                        let listeners = resource_mappings.listeners.get(&gateway_id).cloned().unwrap_or_default();
+                                        let routes = resource_mappings.listeners.get(&gateway_id).cloned().unwrap_or_default();
+                                        bindings.into_iter().chain(listeners.into_iter()).chain(routes.into_iter()).collect::<Vec<_>>()
+                                    };
+
+                                    if resources.is_empty() {
+                                        let response = DeltaDiscoveryResponse {
+                                            type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                            resources: resources
+                                                .iter()
+                                                .map(|resource| agentgateway_api_rs::envoy::service::discovery::v3::Resource {
+                                                    name: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                                    resource: Some(AnyTypeConverter::from((
+                                                        "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                                        resource,
+                                                    ))),
+                                                    ..Default::default()
+                                                })
+                                                .collect(),
+                                            nonce: uuid::Uuid::new_v4().to_string(),
+
+                                            ..Default::default()
+                                        };
+                                        let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                    } else {
+                                        ads_clients.update_client(&ads_client);
+                                    }
+                                },
                             }
                         }
                     },
@@ -440,19 +504,34 @@ pub async fn start_aggregate_server(
     Ok(())
 }
 
-async fn fetch_gateway_id_by_node_id(client: kube::Client, node: &Node) -> Option<String> {
-    let id = &node.id;
-    let namespace = &node.cluster;
+fn parse_agengateway_id(id: &str) -> crate::Result<(&str, &str)> {
+    //agentgateway~1.1.1.1~agentgateway-one-6776fc578f-n2mms.default~default.svc.cluster.local
+    //
+    //
+    let mut tokens = id.split('~');
+    _ = tokens.next();
+    let node_id = tokens.next();
+    if let Some(node_id) = node_id {
+        tokens = node_id.split('.');
+        let id = tokens.next().ok_or("No id provided")?;
+        let namespace = tokens.next().ok_or("No namespace provided")?;
+        Ok((id, namespace))
+    } else {
+        Err("Invalid node id format".into())
+    }
+}
+async fn fetch_gateway_id_by_node_id(client: kube::Client, node: &Node) -> crate::Result<String> {
+    let (id, namespace) = parse_agengateway_id(&node.id)?;
     let api_client: kube::api::Api<Pod> = Api::namespaced(client, namespace);
     if let Ok(pod) = api_client.get(id).await {
         if let Some(labels) = pod.metadata.labels {
             if let Some(gateway_id) = labels.get("app") {
                 debug!("create_gateway_id_from_node_id:: Node id {id} {gateway_id:?}");
-                return Some(create_id(gateway_id, namespace));
+                return Ok(create_id(gateway_id, namespace));
             }
         }
     }
-    None
+    Err("Can't get pod with id".into())
 }
 
 fn create_gateway_id(gateway_id: &ResourceKey) -> String {

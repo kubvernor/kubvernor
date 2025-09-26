@@ -209,7 +209,6 @@ impl AggregateServerService {
                                 {
                                     let mut channels = ads_channels.lock().expect("We expect lock to work");
                                     channels.cluster.insert(gateway_id.clone(), resources.clone());
-
                                 };
 
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
