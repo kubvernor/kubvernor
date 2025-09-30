@@ -10,12 +10,14 @@ use super::{Certificate, NotResolvedReason, ResolutionStatus, ResolvedRefs, Reso
 use crate::controllers::ControllerError;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Hash, Eq)]
+#[repr(i32)]
 pub enum ProtocolType {
-    Http,
-    Https,
-    Tcp,
-    Tls,
-    Udp,
+    Unknown = 0,
+    Http = 1,
+    Https = 2,
+    Tls = 3,
+    Tcp = 4,
+    Udp = 5,
 }
 
 impl TryFrom<&String> for ProtocolType {

@@ -149,7 +149,7 @@ impl AdsClients {
         }
     }
 
-    fn replace_client(&self, mut client: AdsClient) {
+    fn add_or_replace_client(&self, mut client: AdsClient) {
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             let versions = local_client.versions().clone();
@@ -283,7 +283,7 @@ impl AggregatedDiscoveryService for AggregateServer {
         let (tx, rx) = mpsc::channel(128);
         let kube_client = self.kube_client.clone();
         let ads_channels = Arc::clone(&self.ads_channels);
-        self.ads_clients.replace_client(AdsClient::new(client_ip, tx.clone()));
+        self.ads_clients.add_or_replace_client(AdsClient::new(client_ip, tx.clone()));
 
         let ads_clients = self.ads_clients.clone();
         let mut incoming_stream = req.into_streaming_request().into_inner();

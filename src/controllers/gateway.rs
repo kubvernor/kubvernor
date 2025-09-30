@@ -65,9 +65,10 @@ impl GatewayController {
             | ControllerError::FinalizerPatchFailed(_)
             | ControllerError::BackendError
             | ControllerError::UnknownResource => Action::requeue(RECONCILE_LONG_WAIT),
-            ControllerError::UnknownGatewayClass(_) | ControllerError::ResourceInWrongState | ControllerError::ResourceHasWrongStatus => {
-                Action::requeue(RECONCILE_ERROR_WAIT)
-            },
+            ControllerError::UnknownGatewayClass(_)
+            | ControllerError::UnknownGatewayType
+            | ControllerError::ResourceInWrongState
+            | ControllerError::ResourceHasWrongStatus => Action::requeue(RECONCILE_ERROR_WAIT),
         }
     }
 
@@ -228,6 +229,7 @@ impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
 impl GatewayResourceHandler<Gateway> {
     async fn on_deleted(&self, id: ResourceKey, kube_gateway: &Arc<Gateway>, state: &State) -> Result<Action> {
         let _ = state.delete_gateway(&id).expect("We expect the lock to work");
+        let _ = state.delete_gateway_type(&id).expect("We expect the lock to work");
         let senders = &self.gateway_channel_senders;
         let _res = self.delete_gateway(senders, kube_gateway).await;
         let _res = self
@@ -276,6 +278,8 @@ impl GatewayResourceHandler<Gateway> {
         };
 
         let kube_gateway = (**kube_gateway).clone();
+
+        let _ = self.state.save_gateway_type(backend_gateway.key().clone(), self.gateway_backend_type.clone());
 
         let _ = self
             .validate_references_channel_sender

@@ -72,9 +72,10 @@ impl GatewayClassController {
             | ControllerError::FinalizerPatchFailed(_)
             | ControllerError::BackendError
             | ControllerError::UnknownResource => Action::requeue(RECONCILE_LONG_WAIT),
-            ControllerError::UnknownGatewayClass(_) | ControllerError::ResourceInWrongState | ControllerError::ResourceHasWrongStatus => {
-                Action::requeue(RECONCILE_ERROR_WAIT)
-            },
+            ControllerError::UnknownGatewayClass(_)
+            | ControllerError::UnknownGatewayType
+            | ControllerError::ResourceInWrongState
+            | ControllerError::ResourceHasWrongStatus => Action::requeue(RECONCILE_ERROR_WAIT),
         }
     }
 
@@ -231,7 +232,7 @@ impl ResourceHandler<GatewayClass> for GatewayClassResourceHandler<GatewayClass>
     async fn on_deleted(&self, id: ResourceKey, resource: &Arc<GatewayClass>, state: &State) -> Result<Action> {
         let controller_name = &self.controller_name;
         let _ = state.delete_gateway(&id).expect("We expect the lock to work");
-
+        let _ = state.delete_gateway_type(&id).expect("We expect the lock to work");
         let _res = self
             .gateway_class_patcher
             .send(Operation::Delete(DeleteContext {

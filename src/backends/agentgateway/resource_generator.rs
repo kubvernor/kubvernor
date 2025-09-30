@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
 
-use agentgateway_api_rs::agentgateway::dev::resource::{Listener, Route, RouteBackend};
+use agentgateway_api_rs::agentgateway::dev::resource::{
+    self, Listener, Route, RouteBackend, StaticBackend,
+    backend::{self},
+};
+use tracing::info;
 
 use crate::common::{self, Backend, BackendType, ProtocolType};
 
@@ -11,11 +15,12 @@ pub(crate) struct ResourceGenerator<'a> {
 impl From<ProtocolType> for i32 {
     fn from(value: ProtocolType) -> Self {
         match value {
+            ProtocolType::Unknown => 0,
             ProtocolType::Http => 1,
             ProtocolType::Https => 2,
-            ProtocolType::Tcp => 4,
             ProtocolType::Tls => 3,
-            ProtocolType::Udp => 0,
+            ProtocolType::Tcp => 4,
+            ProtocolType::Udp => 6,
         }
     }
 }
@@ -52,9 +57,11 @@ impl<'a> ResourceGenerator<'a> {
                 bind_key: create_bind_name(port),
                 gateway_name,
                 hostname: listener.hostname().cloned().unwrap_or_default(),
-                protocol: 0, //listener.protocol().into(),
+                protocol: listener.protocol().into(),
                 tls: None,
             };
+
+            info!("Generating agentgateway listener {agentgateway_listener:#?}");
 
             if let Some(listners) = maybe_added {
                 listners.push(agentgateway_listener);
@@ -66,9 +73,10 @@ impl<'a> ResourceGenerator<'a> {
         listeners
     }
 
-    pub fn generate_routes(&self) -> Vec<Route> {
+    pub fn generate_routes_and_backends(&self) -> (Vec<resource::Route>, Vec<resource::Backend>) {
+        let mut backends = BTreeMap::<String, resource::Backend>::new();
         let gateway = self.effective_gateway;
-        gateway
+        let routes = gateway
             .listeners()
             .flat_map(|l| {
                 let (resolved, _) = l.routes();
@@ -81,23 +89,27 @@ impl<'a> ResourceGenerator<'a> {
                     .flat_map(|(route, routing_rules)| {
                         routing_rules
                             .iter()
-                            .map(|routing_rule| Route {
-                                key: route.name().to_owned(),
-                                listener_key: l.name().to_owned(),
-                                rule_name: routing_rule.name.clone(),
-                                route_name: route.name().to_owned(),
-                                hostnames: route.hostnames().to_vec(),
-                                matches: routing_rule.matching_rules.iter().map(convert_route_match).collect(),
-                                filters: vec![],
-                                backends: routing_rule.backends.iter().filter_map(convert_backend).collect(),
-                                traffic_policy: None,
-                                inline_policies: vec![],
+                            .map(|routing_rule| {
+                                backends.extend(&mut routing_rule.backends.iter().filter_map(create_backends));
+                                Route {
+                                    key: route.name().to_owned(),
+                                    listener_key: l.name().to_owned(),
+                                    rule_name: routing_rule.name.clone(),
+                                    route_name: route.name().to_owned(),
+                                    hostnames: route.hostnames().to_vec(),
+                                    matches: routing_rule.matching_rules.iter().map(convert_route_match).collect(),
+                                    filters: vec![],
+                                    backends: routing_rule.backends.iter().filter_map(create_route_backend).collect(),
+                                    traffic_policy: None,
+                                    inline_policies: vec![],
+                                }
                             })
                             .collect::<Vec<_>>()
                     })
                     .collect::<Vec<_>>()
             })
-            .collect()
+            .collect();
+        (routes, backends.into_values().collect::<Vec<resource::Backend>>())
     }
 }
 
@@ -110,12 +122,12 @@ fn convert_route_match(route_match: &gateway_api::httproutes::RouteMatch) -> age
     }
 }
 
-fn convert_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentgateway::dev::resource::RouteBackend> {
+fn create_route_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentgateway::dev::resource::RouteBackend> {
     match backend {
         Backend::Resolved(BackendType::Service(config)) => Some(RouteBackend {
             backend: Some(agentgateway_api_rs::agentgateway::dev::resource::BackendReference {
                 port: config.port as u32,
-                kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Service(format!(
+                kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Backend(format!(
                     "{}/{}",
                     config.resource_key.namespace, config.resource_key.name
                 ))),
@@ -134,6 +146,32 @@ fn convert_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentgatewa
             weight: config.weight,
             filters: vec![],
         }),
+        _ => None,
+    }
+}
+
+fn create_backends(backend: &Backend) -> Option<(String, resource::Backend)> {
+    match backend {
+        Backend::Resolved(BackendType::Service(config)) => {
+            let name = format!("{}/{}", config.resource_key.namespace, config.resource_key.name);
+            Some((
+                name.clone(),
+                resource::Backend {
+                    name,
+                    kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.effective_port })),
+                },
+            ))
+        },
+        Backend::Resolved(BackendType::InferencePool(config)) => {
+            let name = format!("{}/{}", config.resource_key.namespace, config.resource_key.name);
+            Some((
+                name.clone(),
+                resource::Backend {
+                    name,
+                    kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.effective_port })),
+                },
+            ))
+        },
         _ => None,
     }
 }

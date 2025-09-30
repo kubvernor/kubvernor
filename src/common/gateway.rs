@@ -111,6 +111,10 @@ impl Gateway {
     pub fn backend_type(&self) -> &GatewayImplementationType {
         &self.backend_type
     }
+
+    pub fn backend_type_mut(&mut self) -> &mut GatewayImplementationType {
+        &mut self.backend_type
+    }
 }
 
 impl TryFrom<&KubeGateway> for Gateway {

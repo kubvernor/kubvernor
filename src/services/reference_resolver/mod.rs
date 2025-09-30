@@ -114,8 +114,18 @@ impl ReferenceResolverHandler {
                 info!("Update gateways affected gateways  {affected_gateways:?}");
                 for gateway_id in affected_gateways {
                     if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
-                        let gateway =
+                        let mut gateway =
                             common::Gateway::try_from(&*kube_gateway).expect("We expect this to work since KubeGateway was validated");
+                        let Some(gateway_type) = self.state.get_gateway_type(gateway.key()).expect("We expect the lock to work") else {
+                            warn!(
+                                "ReferenceResolverService: {} {:?} Unknown gateway implementation type ",
+                                &self.controller_name,
+                                gateway.key(),
+                            );
+                            continue;
+                        };
+
+                        *gateway.backend_type_mut() = gateway_type;
                         let gateway_class_name = kube_gateway.spec.gateway_class_name.clone();
                         let backend_gateway = self.process(gateway, &kube_gateway).await;
 
@@ -141,9 +151,21 @@ impl ReferenceResolverHandler {
                 info!("ReferenceResolverService action = UpdatedGateways {reference} {gateways:?}");
                 for gateway_id in gateways {
                     if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
-                        let gateway =
+                        let mut gateway =
                             common::Gateway::try_from(&*kube_gateway).expect("We expect this to work since KubeGateway was validated");
                         let key = gateway.key().clone();
+
+                        let Some(gateway_type) = self.state.get_gateway_type(&key).expect("We expect the lock to work") else {
+                            warn!(
+                                "ReferenceResolverService: {} {:?} Unknown gateway implementation type ",
+                                &self.controller_name,
+                                gateway.key(),
+                            );
+                            continue;
+                        };
+
+                        *gateway.backend_type_mut() = gateway_type;
+
                         let gateway_class_name = kube_gateway.spec.gateway_class_name.clone();
                         let backend_gateway = self.process(gateway, &kube_gateway).await;
                         let kube_gateway = (*kube_gateway).clone();
@@ -203,7 +225,7 @@ impl ReferenceResolverHandler {
                 match receiver.await {
                     Err(e) => error!("Sytem error  {e:?}"),
                     Ok(Err(e)) => {
-                        warn!("Inference Pool: Can't update the status {e:?}")
+                        warn!("Inference Pool: Can't update the status {e:?}");
                     },
                     _ => (),
                 }

@@ -26,6 +26,7 @@ pub enum ControllerError {
     BackendError,
     UnknownResource,
     UnknownGatewayClass(String),
+    UnknownGatewayType,
     ResourceInWrongState,
     ResourceHasWrongStatus,
 }

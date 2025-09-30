@@ -144,14 +144,24 @@ where
                 gateway_class_name.clone()
             };
             let kube_gateway = (*kube_gateway).clone();
+
+            let mut gateway = common::Gateway::try_from(&kube_gateway).expect("We expect the lock to work");
+            let Some(gateway_type) = self.state.get_gateway_type(gateway.key()).expect("We expect the lock to work") else {
+                warn!(
+                    "reconcile_gateway: {} {:?} Unknown gateway implementation type {gateway_class_name} {}",
+                    &self.controller_name,
+                    kube_gateway.meta().name,
+                    gateway.key(),
+                );
+                return Err(ControllerError::UnknownGatewayType);
+            };
+
+            *gateway.backend_type_mut() = gateway_type;
+
             let _ = self
                 .references_validator_sender
                 .send(ReferenceValidateRequest::AddGateway(Box::new(
-                    RequestContext::builder()
-                        .gateway(common::Gateway::try_from(&kube_gateway).expect("We expect the lock to work"))
-                        .kube_gateway(kube_gateway)
-                        .gateway_class_name(gateway_class_name)
-                        .build(),
+                    RequestContext::builder().gateway(gateway).kube_gateway(kube_gateway).gateway_class_name(gateway_class_name).build(),
                 )))
                 .await;
         }
