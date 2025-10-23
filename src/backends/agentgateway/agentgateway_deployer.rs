@@ -1,7 +1,10 @@
-use std::{collections::BTreeMap, sync::LazyLock};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::LazyLock,
+};
 
 use agentgateway_api_rs::agentgateway::dev::{
-    resource::{Bind, Resource, resource::Kind},
+    resource::{self, Bind, Resource, resource::Kind},
     workload,
 };
 use futures::FutureExt;
@@ -18,7 +21,7 @@ use k8s_openapi::{
 };
 use kube::{
     Api, Client,
-    api::{Patch, PatchParams},
+    api::{DeleteParams, Patch, PatchParams},
 };
 use kube_core::ObjectMeta;
 use tera::Tera;
@@ -47,12 +50,22 @@ pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templat
     },
 });
 
+#[derive(Clone, Default)]
+struct CachedResources {
+    bindings: Vec<resource::Bind>,
+    listeners: Vec<resource::Listener>,
+    routes: Vec<resource::Route>,
+    backends: Vec<resource::Backend>,
+}
+
 #[derive(TypedBuilder)]
 pub struct AgentgatewayDeployerChannelHandlerService {
     control_plane_config: ControlPlaneConfig,
     client: Client,
     backend_deploy_request_channel_receiver: Receiver<BackendGatewayEvent>,
     backend_response_channel_sender: Sender<BackendGatewayResponse>,
+    #[builder(default)]
+    cached_gateway_resources: HashMap<ResourceKey, CachedResources>,
 }
 
 impl AgentgatewayDeployerChannelHandlerService {
@@ -71,29 +84,53 @@ impl AgentgatewayDeployerChannelHandlerService {
                             info!("Backend got event {event}");
                             match event{
                                 BackendGatewayEvent::Changed(ctx) => {
+
+
                                     let gateway = &ctx.gateway;
                                     info!("AgentgatewayDeployerChannelHandlerService GatewayChanged {}",gateway.key());
-
 
                                     let maybe_service = deploy_agentgateway(&control_plane_config, client.clone(), gateway).await;
                                     if let Ok(service) = maybe_service {
                                         let resource_generator = ResourceGenerator::new(gateway);
                                         let bindings_and_listeners = resource_generator.generate_bindings_and_listeners();
-                                        let bindings = bindings_and_listeners.keys().cloned().map(|b|
-                                            Resource{
-                                                kind: Some(Kind::Bind(Bind{ key: b.key, port: b.port}
-                                            ))}).collect::<Vec<_>>();
-                                        let listeners = bindings_and_listeners.values().cloned()
-                                        .flat_map(| listeners | listeners.into_iter()
-                                        .map(|listener|
-                                            Resource{kind: Some(Kind::Listener(listener))}
-                                        )).collect::<Vec<_>>();
+
+
                                         let (routes, backends) = resource_generator.generate_routes_and_backends();
-                                        let route_resources =  routes.into_iter().map(|r| { info!("Generated agentgateway route {r:?}"); Resource {
+
+                                        let (resources_to_add,resources_to_delete)  = self.cache_resources_and_calculate_delta(
+                                            gateway.key().clone(),
+                                            CachedResources{
+                                                bindings: bindings_and_listeners.keys().cloned().into_iter().map(|b|
+                                                    Bind{
+                                                        key: b.key,
+                                                        port: b.port}
+                                                    ).collect::<Vec<_>>(),
+                                                listeners: bindings_and_listeners.values().cloned().flatten().collect(),
+                                                routes,
+                                                backends
+                                        });
+
+
+                                        let listeners = resources_to_add.listeners
+                                        .into_iter()
+                                        .map(|listener|
+                                            Resource{kind: Some(Kind::Listener(listener))})
+                                        .collect::<Vec<_>>();
+
+                                        let bindings = resources_to_add.bindings
+                                        .into_iter()
+                                        .map(|b| Resource{ kind: Some(Kind::Bind(b))})
+                                        .collect::<Vec<_>>();
+
+                                        let route_resources =  resources_to_add.routes
+                                        .into_iter()
+                                        .map(|r| { info!("Generated agentgateway route {r:?}"); Resource {
                                             kind: Some(Kind::Route(r))}
                                         }).collect::<Vec<_>>();
 
-                                        let backend_resources =  backends.into_iter().map(|b| { info!("Generated agentgateway backend {b:?}"); Resource {
+                                        let backend_resources =  resources_to_add.backends
+                                        .into_iter()
+                                        .map(|b| { info!("Generated agentgateway backend {b:?}"); Resource {
                                             kind: Some(Kind::Backend(b))}
                                         }).collect::<Vec<_>>();
 
@@ -122,44 +159,14 @@ impl AgentgatewayDeployerChannelHandlerService {
                                     let response_sender = ctx.response_sender;
                                     let gateway  = &ctx.gateway;
                                     info!("AgentgatewayDeployerChannelHandlerService GatewayDeleted {}",gateway.key());
+                                    if self.cached_gateway_resources.remove(gateway.key()).is_none(){
+                                        warn!("AgentgatewayDeployerChannelHandlerService GatewayDeleted attempting to delete a gateway we don't know anything about {}",gateway.key());
+                                    }
 
-                                    let resource_generator = ResourceGenerator::new(gateway);
-                                    let bindings_and_listeners = resource_generator.generate_bindings_and_listeners();
-                                    let bindings = bindings_and_listeners.keys().cloned().map(|b|
-                                            Resource{
-                                                kind: Some(Kind::Bind(
-                                                    Bind{
-                                                        key: b.key,
-                                                        port: b.port }
-                                                    ))
-                                                }).collect::<Vec<_>>();
-                                    let listeners = bindings_and_listeners.values().cloned().flat_map(| listeners | listeners.into_iter()
-                                    .map(|listener|
-                                        Resource{kind: Some(Kind::Listener(listener))}
-                                    )).collect::<Vec<_>>();
-                                    let (routes, backends) = resource_generator.generate_routes_and_backends();
-                                    let route_resources =  routes.into_iter().map(|r| { info!("Generated agentgateway route {r:?}"); Resource {
-                                        kind: Some(Kind::Route(r))}
-                                    }).collect::<Vec<_>>();
+                                    if let Err(e) = undeploy_agentgateway(client.clone(), gateway).await{
+                                        warn!("Gateway deleted with errors {e:?}");
+                                    }
 
-                                    let _backend_resources =  backends.into_iter().map(|b| { info!("Generated agentgateway backend {b:?}"); Resource {
-                                        kind: Some(Kind::Backend(b))}
-                                    }).collect::<Vec<_>>();
-
-                                    let _ = stream_resource_sender.send(ServerAction::DeleteRoutes {
-                                        gateway_id: gateway.key().clone(),
-                                        resources: route_resources
-                                    }).await;
-
-
-                                    let _ = stream_resource_sender.send(ServerAction::DeleteListeners {
-                                        gateway_id: gateway.key().clone(),
-                                        resources: listeners
-                                    }).await;
-                                    let _ = stream_resource_sender.send(ServerAction::DeleteBindings {
-                                        gateway_id: gateway.key().clone(),
-                                        resources: bindings
-                                    }).await;
                                     let _res = self.backend_response_channel_sender
                                         .send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                                     let _ = response_sender.send(BackendGatewayResponse::Deleted(vec![]));
@@ -180,6 +187,22 @@ impl AgentgatewayDeployerChannelHandlerService {
         futures::future::join_all(vec![agentgateway_deployer_service, xds_service]).await;
         Ok(())
     }
+
+    fn cache_resources_and_calculate_delta(
+        &mut self,
+        key: ResourceKey,
+        new_resources: CachedResources,
+    ) -> (CachedResources, CachedResources) {
+        let cached_resources = self.cached_gateway_resources.entry(key).or_insert(CachedResources::default());
+        let delta = Self::calculate_delta(&cached_resources, &new_resources);
+        *cached_resources = new_resources;
+        delta
+    }
+
+    fn calculate_delta(old_resources: &CachedResources, new_resources: &CachedResources) -> (CachedResources, CachedResources) {
+        (old_resources.clone(), new_resources.clone())
+    }
+
     async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext) {
         if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
             debug!("Got address address {attached_addresses:?}");
@@ -298,6 +321,30 @@ async fn deploy_agentgateway(
     debug!("Service account status {:?}", service_account);
 
     Ok(service)
+}
+
+async fn undeploy_agentgateway(client: Client, gateway: &Gateway) -> std::result::Result<(), kube::Error> {
+    let service_api: Api<Service> = Api::namespaced(client.clone(), gateway.namespace());
+    let service_account_api: Api<ServiceAccount> = Api::namespaced(client.clone(), gateway.namespace());
+    let deployment_api: Api<Deployment> = Api::namespaced(client.clone(), gateway.namespace());
+    let config_map_api: Api<ConfigMap> = Api::namespaced(client.clone(), gateway.namespace());
+    let (_, bootstrap_cm) = config_map_names(gateway);
+
+    let _res = config_map_api.delete(&bootstrap_cm, &DeleteParams::default()).await?;
+
+    debug!("Created bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
+
+    let _deployment = deployment_api.delete(gateway.name(), &DeleteParams::default()).await?;
+    debug!("Deleted deployment {}-{}", gateway.name(), gateway.namespace());
+
+    let _service = service_api.delete(gateway.name(), &DeleteParams::default()).await?;
+
+    debug!("Deleted service {}-{}", gateway.name(), gateway.namespace());
+
+    let _service_account = service_account_api.delete(gateway.name(), &DeleteParams::default()).await?;
+    debug!("Deleted service account {}-{}", gateway.name(), gateway.namespace());
+
+    Ok(())
 }
 
 fn create_labels(_gateway: &Gateway) -> BTreeMap<String, String> {
