@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::LazyLock,
 };
 
@@ -68,6 +68,17 @@ pub struct AgentgatewayDeployerChannelHandlerService {
     cached_gateway_resources: HashMap<ResourceKey, CachedResources>,
 }
 
+struct DeltaResources {
+    to_add: CachedResources,
+    to_delete: CachedResources,
+}
+
+impl From<(CachedResources, CachedResources)> for DeltaResources {
+    fn from((to_add, to_delete): (CachedResources, CachedResources)) -> Self {
+        DeltaResources { to_add, to_delete }
+    }
+}
+
 impl AgentgatewayDeployerChannelHandlerService {
     pub async fn start(mut self) -> crate::Result<()> {
         let control_plane_config = self.control_plane_config.clone();
@@ -97,7 +108,7 @@ impl AgentgatewayDeployerChannelHandlerService {
 
                                         let (routes, backends) = resource_generator.generate_routes_and_backends();
 
-                                        let (resources_to_add,resources_to_delete)  = self.cache_resources_and_calculate_delta(
+                                        let DeltaResources{ to_add: resources_to_add, to_delete: resources_to_delete }  = self.cache_resources_and_calculate_delta(
                                             gateway.key().clone(),
                                             CachedResources{
                                                 bindings: bindings_and_listeners.keys().cloned().into_iter().map(|b|
@@ -188,19 +199,21 @@ impl AgentgatewayDeployerChannelHandlerService {
         Ok(())
     }
 
-    fn cache_resources_and_calculate_delta(
-        &mut self,
-        key: ResourceKey,
-        new_resources: CachedResources,
-    ) -> (CachedResources, CachedResources) {
-        let cached_resources = self.cached_gateway_resources.entry(key).or_insert(CachedResources::default());
-        let delta = Self::calculate_delta(&cached_resources, &new_resources);
+    fn cache_resources_and_calculate_delta(&mut self, key: ResourceKey, new_resources: CachedResources) -> DeltaResources {
+        let cached_resources = self.cached_gateway_resources.entry(key).or_default();
+        let delta = Self::calculate_delta(cached_resources, &new_resources);
         *cached_resources = new_resources;
         delta
     }
 
-    fn calculate_delta(old_resources: &CachedResources, new_resources: &CachedResources) -> (CachedResources, CachedResources) {
-        (old_resources.clone(), new_resources.clone())
+    fn calculate_delta(old_resources: &CachedResources, new_resources: &CachedResources) -> DeltaResources {
+        // let to_add = CachedResources {
+        //     bindings: BTreeSet::from(new_resources.bindings.iter()).difference(BTreeSet::from(old_resources.bindings.iter())).collect(),
+        //     listeners: BTreeSet::from(new_resources.listeners.iter()).difference(BTreeSet::from(old_resources.listeners.iter())).collect(),
+        //     routes: BTreeSet::from(new_resources.routes.iter()).difference(BTreeSet::from(old_resources.routes.iter())).collect(),
+        //     backends: BTreeSet::from(new_resources.backends.iter()).difference(BTreeSet::from(old_resources.backends.iter())).collect(),
+        // };
+        DeltaResources::from((old_resources.clone(), new_resources.clone()))
     }
 
     async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext) {
