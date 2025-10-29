@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     collections::BTreeMap,
     fmt::Display,
     net::SocketAddr,
@@ -39,7 +40,7 @@ use crate::{
 };
 
 pub enum ServerAction {
-    UpdateResources { gateway_id: ResourceKey, resources: Vec<Resource> },
+    UpdateResources { gateway_id: ResourceKey, resources_to_add: Vec<Resource>, resources_to_delete: Vec<String> },
     UpdateAddresses { gateway_id: ResourceKey, addresses: Vec<Address> },
 
     DeleteBindings { gateway_id: ResourceKey, resources: Vec<Resource> },
@@ -50,8 +51,13 @@ pub enum ServerAction {
 impl Display for ServerAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ServerAction::UpdateResources { gateway_id, resources } => {
-                write!(f, "ServerAction::UpdateResources {{gateway_id: {gateway_id}, resources: {}}}", resources.len())
+            ServerAction::UpdateResources { gateway_id, resources_to_add, resources_to_delete } => {
+                write!(
+                    f,
+                    "ServerAction::UpdateResources {{gateway_id: {gateway_id}, to_add: {}, to_delete: {}}}",
+                    resources_to_add.len(),
+                    resources_to_delete.len()
+                )
             },
 
             ServerAction::UpdateAddresses { gateway_id, addresses } => {
@@ -105,9 +111,9 @@ impl AdsClient {
         &self.ack_versions
     }
 
-    // fn versions_mut(&mut self) -> &mut AckVersions {
-    //     &mut self.ack_versions
-    // }
+    fn versions_mut(&mut self) -> &mut AckVersions {
+        &mut self.ack_versions
+    }
 
     fn set_gateway_id(&mut self, gateway_id: &str) {
         self.gateway_id = Some(gateway_id.to_owned());
@@ -215,12 +221,12 @@ impl AggregateServerService {
                     Some(event) = stream_resources_rx.recv() => {
                         info!("AggregateServerService :: {event}");
                         match event{
-                            ServerAction::UpdateResources{ gateway_id: gateway_key, resources } => {
+                            ServerAction::UpdateResources{ gateway_id: gateway_key, resources_to_add, resources_to_delete } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
 
                                 {
                                     let mut channels = ads_channels.lock().expect("We expect lock to work");
-                                    channels.bindings.insert(gateway_id.clone(), resources.clone());
+                                    channels.bindings.insert(gateway_id.clone(), resources_to_add.clone());
                                 };
 
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
@@ -228,7 +234,7 @@ impl AggregateServerService {
                                 for client in &mut clients{
                                     let response = DeltaDiscoveryResponse {
                                         type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
-                                        resources: resources.iter().map(|resource|
+                                        resources: resources_to_add.iter().map(|resource|
                                             agentgateway_api_rs::envoy::service::discovery::v3::Resource{
                                                 name:"type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
                                                 resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource))),
@@ -241,10 +247,11 @@ impl AggregateServerService {
 
                                     let response = DeltaDiscoveryResponse {
                                         type_url: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
-                                        resources: resources.iter().map(|_|
+                                        resources: resources_to_add.iter().map(|_|
                                             agentgateway_api_rs::envoy::service::discovery::v3::Resource{
                                                 name:"type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
                                                 resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
+
                                                 &workload::Address {
                                                     r#type: Some(workload::address::Type::Service(workload::Service {
                                                         name: "echo-service".to_owned(),
@@ -256,6 +263,7 @@ impl AggregateServerService {
                                                 ..Default::default() }
                                             ).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
+                                        removed_resources: resources_to_delete.clone(),
                                         ..Default::default()
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;

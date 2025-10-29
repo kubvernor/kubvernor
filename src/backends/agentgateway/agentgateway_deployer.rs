@@ -108,7 +108,7 @@ impl AgentgatewayDeployerChannelHandlerService {
 
                                         let (routes, backends) = resource_generator.generate_routes_and_backends();
 
-                                        let DeltaResources{ to_add: resources_to_add, to_delete: resources_to_delete }  = self.cache_resources_and_calculate_delta(
+                                        let DeltaResources{ to_add, to_delete }  = self.cache_resources_and_calculate_delta(
                                             gateway.key().clone(),
                                             CachedResources{
                                                 bindings: bindings_and_listeners.keys().cloned().into_iter().map(|b|
@@ -122,35 +122,42 @@ impl AgentgatewayDeployerChannelHandlerService {
                                         });
 
 
-                                        let listeners = resources_to_add.listeners
+                                        let listeners = to_add.listeners
                                         .into_iter()
                                         .map(|listener|
                                             Resource{kind: Some(Kind::Listener(listener))})
                                         .collect::<Vec<_>>();
 
-                                        let bindings = resources_to_add.bindings
+                                        let bindings = to_add.bindings
                                         .into_iter()
                                         .map(|b| Resource{ kind: Some(Kind::Bind(b))})
                                         .collect::<Vec<_>>();
 
-                                        let route_resources =  resources_to_add.routes
+                                        let route_resources =  to_add.routes
                                         .into_iter()
                                         .map(|r| { info!("Generated agentgateway route {r:?}"); Resource {
                                             kind: Some(Kind::Route(r))}
                                         }).collect::<Vec<_>>();
 
-                                        let backend_resources =  resources_to_add.backends
+                                        let backend_resources =  to_add.backends
                                         .into_iter()
                                         .map(|b| { info!("Generated agentgateway backend {b:?}"); Resource {
                                             kind: Some(Kind::Backend(b))}
                                         }).collect::<Vec<_>>();
 
                                         let _ = stream_resource_sender.send(ServerAction::UpdateResources {
-                                            gateway_id: gateway.key().clone(),
-                                            resources: bindings.into_iter()
-                                            .chain(listeners.into_iter())
-                                            .chain(route_resources.into_iter())
-                                            .chain(backend_resources.into_iter()).collect()
+                                            gateway_id:gateway.key().clone(),
+                                            resources_to_add:
+                                                bindings.into_iter()
+                                                    .chain(listeners.into_iter())
+                                                    .chain(route_resources.into_iter())
+                                                    .chain(backend_resources.into_iter())
+                                                    .collect(),
+                                            resources_to_delete:
+                                                to_delete.bindings.into_iter().map(|b| b.key)
+                                                    .chain(to_delete.listeners.into_iter().map(|l| l.key))
+                                                    .chain(to_delete.routes.into_iter().map(|r| r.key))
+                                                    .collect()
                                         }).await;
 
                                         let _ = stream_resource_sender.send(ServerAction::UpdateAddresses {
@@ -207,13 +214,19 @@ impl AgentgatewayDeployerChannelHandlerService {
     }
 
     fn calculate_delta(old_resources: &CachedResources, new_resources: &CachedResources) -> DeltaResources {
-        // let to_add = CachedResources {
-        //     bindings: BTreeSet::from(new_resources.bindings.iter()).difference(BTreeSet::from(old_resources.bindings.iter())).collect(),
-        //     listeners: BTreeSet::from(new_resources.listeners.iter()).difference(BTreeSet::from(old_resources.listeners.iter())).collect(),
-        //     routes: BTreeSet::from(new_resources.routes.iter()).difference(BTreeSet::from(old_resources.routes.iter())).collect(),
-        //     backends: BTreeSet::from(new_resources.backends.iter()).difference(BTreeSet::from(old_resources.backends.iter())).collect(),
-        // };
-        DeltaResources::from((old_resources.clone(), new_resources.clone()))
+        let to_add = CachedResources {
+            bindings: difference(&new_resources.bindings, &old_resources.bindings),
+            listeners: difference(&new_resources.listeners, &old_resources.listeners),
+            routes: difference(&new_resources.routes, &old_resources.routes),
+            backends: difference(&new_resources.backends, &old_resources.backends),
+        };
+        let to_delete = CachedResources {
+            bindings: difference(&old_resources.bindings, &new_resources.bindings),
+            listeners: difference(&old_resources.listeners, &new_resources.listeners),
+            routes: difference(&old_resources.routes, &new_resources.routes),
+            backends: difference(&old_resources.backends, &new_resources.backends),
+        };
+        DeltaResources { to_add, to_delete }
     }
 
     async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext) {
@@ -501,6 +514,20 @@ fn bootstrap_content(control_plane_config: &ControlPlaneConfig) -> Result<String
     tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port());
 
     Ok(TEMPLATES.render("agent-gateway-bootstrap-dynamic.yaml.tera", &tera_context)?)
+}
+
+/// Visits the values representing the difference, i.e., the values that are in self but not in other.
+fn difference<T>(this: &[T], other: &[T]) -> Vec<T>
+where
+    T: PartialEq + Clone,
+{
+    let mut out = vec![];
+    for t in this {
+        if !other.contains(t) {
+            out.push(t.clone())
+        }
+    }
+    out
 }
 
 const AGENTGATEWAY_POD_SPEC: &str = r#"
