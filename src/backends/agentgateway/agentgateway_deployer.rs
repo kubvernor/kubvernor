@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     sync::LazyLock,
 };
 
@@ -154,9 +154,10 @@ impl AgentgatewayDeployerChannelHandlerService {
                                                     .chain(backend_resources.into_iter())
                                                     .collect(),
                                             resources_to_delete:
-                                                to_delete.bindings.into_iter().map(|b| b.key)
-                                                    .chain(to_delete.listeners.into_iter().map(|l| l.key))
-                                                    .chain(to_delete.routes.into_iter().map(|r| r.key))
+                                                to_delete.bindings.into_iter().map(|b| "bind/".to_owned()+&b.key)
+                                                    .chain(to_delete.listeners.into_iter().map(|l| "listener/".to_owned()+&l.key))
+                                                    .chain(to_delete.routes.into_iter().map(|r| "route/".to_owned()+&r.key))
+                                                    .chain(to_delete.backends.into_iter().map(|b| "backend/".to_owned()+&b.name))
                                                     .collect()
                                         }).await;
 
