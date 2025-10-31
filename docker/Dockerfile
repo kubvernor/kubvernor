@@ -1,0 +1,33 @@
+
+FROM rust:1.90 AS builder
+WORKDIR /tmp/
+
+RUN <<EOF
+apt update
+apt install -y git ca-certificates protobuf-compiler
+git config --global http.sslVerify false
+git clone https://github.com/kubvernor/kubvernor
+EOF
+WORKDIR /tmp/kubvernor
+COPY .cargo/config.toml ./.cargo/config.toml
+COPY .cargo/crates-io.pem ./.cargo/crates-io.pem
+RUN \
+    --mount=type=cache,id=cargo,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
+    cargo fetch --locked
+RUN --mount=type=cache,target=/app/target \
+    --mount=type=cache,id=cargo,target=/usr/local/cargo/registry  \
+    --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
+    cargo build  --release
+
+FROM debian:bookworm-slim
+RUN <<EOF
+apt update
+apt upgrade -y
+EOF
+
+WORKDIR /
+COPY --from=builder /tmp/kubvernor/target/release/kubvernor /kubvernor
+LABEL org.opencontainers.image.source=https://github.com/kubvernor/kubvernor
+LABEL org.opencontainers.image.description="Kubvernor - open source highly experimental Gateway API and Inference Extension implementation in Rust."
+ENTRYPOINT ["/kubvernor"]
