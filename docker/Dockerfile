@@ -10,7 +10,6 @@ git clone https://github.com/kubvernor/kubvernor
 EOF
 WORKDIR /tmp/kubvernor
 COPY .cargo/config.toml ./.cargo/config.toml
-COPY .cargo/crates-io.pem ./.cargo/crates-io.pem
 RUN \
     --mount=type=cache,id=cargo,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
