@@ -241,6 +241,7 @@ impl AggregateServerService {
                                                 ..Default::default() }
                                             ).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
+                                        removed_resources: resources_to_delete.clone(),
                                         ..Default::default()
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
@@ -263,7 +264,7 @@ impl AggregateServerService {
                                                 ..Default::default() }
                                             ).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
-                                        removed_resources: resources_to_delete.clone(),
+                                        removed_resources: vec![],
                                         ..Default::default()
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
