@@ -124,13 +124,18 @@ impl AgentgatewayDeployerChannelHandlerService {
 
                                         let listeners = to_add.listeners
                                         .into_iter()
-                                        .map(|listener|
-                                            Resource{kind: Some(Kind::Listener(listener))})
+                                        .map(|l|{
+                                            info!("Generated agentgateway listener {l:?}");
+                                            Resource{kind: Some(Kind::Listener(l))}
+                                        })
                                         .collect::<Vec<_>>();
 
                                         let bindings = to_add.bindings
                                         .into_iter()
-                                        .map(|b| Resource{ kind: Some(Kind::Bind(b))})
+                                        .map(|b| {
+                                            info!("Generated agentgateway bind {b:?}");
+                                            Resource{ kind: Some(Kind::Bind(b))}
+                                        })
                                         .collect::<Vec<_>>();
 
                                         let route_resources =  to_add.routes
