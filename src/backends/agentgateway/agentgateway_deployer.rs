@@ -111,12 +111,12 @@ impl AgentgatewayDeployerChannelHandlerService {
                                         let DeltaResources{ to_add, to_delete }  = self.cache_resources_and_calculate_delta(
                                             gateway.key().clone(),
                                             CachedResources{
-                                                bindings: bindings_and_listeners.keys().cloned().into_iter().map(|b|
+                                                bindings: bindings_and_listeners.keys().cloned().map(|b|
                                                     Bind{
                                                         key: b.key,
                                                         port: b.port}
                                                     ).collect::<Vec<_>>(),
-                                                listeners: bindings_and_listeners.values().cloned().flatten().collect(),
+                                                listeners: bindings_and_listeners.values().flatten().cloned().collect(),
                                                 routes,
                                                 backends
                                         });
@@ -525,7 +525,7 @@ where
     let mut out = vec![];
     for t in this {
         if !other.contains(t) {
-            out.push(t.clone())
+            out.push(t.clone());
         }
     }
     out

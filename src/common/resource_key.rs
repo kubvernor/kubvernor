@@ -29,14 +29,6 @@ pub struct ResourceKey {
     pub kind: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct BackendResourceKey {
-    pub group: String,
-    namespace: Option<String>,
-    pub name: String,
-    pub kind: String,
-}
-
 #[allow(dead_code)]
 impl ResourceKey {
     pub fn new(name: &str) -> Self {
@@ -150,22 +142,6 @@ impl From<(&HTTPBackendReference, String)> for ResourceKey {
 impl From<(&GRPCBackendReference, String)> for ResourceKey {
     fn from((value, gateway_namespace): (&GRPCBackendReference, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
-
-        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name.clone(), kind: value.kind.clone().unwrap_or_default() }
-    }
-}
-
-impl From<&HTTPBackendReference> for BackendResourceKey {
-    fn from(value: &HTTPBackendReference) -> Self {
-        let namespace = value.namespace.clone();
-
-        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name.clone(), kind: value.kind.clone().unwrap_or_default() }
-    }
-}
-
-impl From<&GRPCBackendReference> for BackendResourceKey {
-    fn from(value: &GRPCBackendReference) -> Self {
-        let namespace = value.namespace.clone();
 
         Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name.clone(), kind: value.kind.clone().unwrap_or_default() }
     }

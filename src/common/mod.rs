@@ -27,7 +27,6 @@ pub use route::{
 };
 use tokio::sync::{mpsc, oneshot};
 use typed_builder::TypedBuilder;
-use uuid::Uuid;
 
 use crate::services::patchers::{FinalizerContext, Operation};
 
@@ -183,30 +182,12 @@ impl Ord for InferencePoolConfig {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
-pub struct InvalidTypeConfig {
-    pub resource_key: ResourceKey,
-}
-
 impl BackendTypeConfig for ServiceTypeConfig {
     fn cluster_name(&self) -> String {
         self.resource_key.name.clone() + "." + &self.resource_key.namespace
     }
     fn weight(&self) -> i32 {
         self.weight
-    }
-
-    fn resource_key(&self) -> ResourceKey {
-        self.resource_key.clone()
-    }
-}
-
-impl BackendTypeConfig for InvalidTypeConfig {
-    fn cluster_name(&self) -> String {
-        self.resource_key.name.clone() + "." + &self.resource_key.namespace
-    }
-    fn weight(&self) -> i32 {
-        1
     }
 
     fn resource_key(&self) -> ResourceKey {
@@ -285,26 +266,6 @@ pub enum GatewayAddress {
     Hostname(String),
     IPAddress(IpAddr),
     NamedAddress(String),
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct Label {
-    label: String,
-    value: String,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct Annotation {
-    label: String,
-    value: String,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct DeployedGatewayStatus {
-    pub id: Uuid,
-    pub name: String,
-    pub namespace: String,
-    pub attached_addresses: Vec<String>,
 }
 
 #[derive(Debug)]
