@@ -8,7 +8,10 @@ use std::{
 };
 
 use agentgateway_api_rs::{
-    agentgateway::dev::{resource::Resource, workload::Address},
+    agentgateway::dev::{
+        resource::{self, Backend, Resource, backend, resource::Kind},
+        workload::Address,
+    },
     envoy::service::discovery::v3::{
         DeltaDiscoveryRequest, DeltaDiscoveryResponse, DiscoveryRequest, DiscoveryResponse, Node,
         aggregated_discovery_service_server::{AggregatedDiscoveryService, AggregatedDiscoveryServiceServer},
@@ -40,15 +43,42 @@ pub enum ServerAction {
     UpdateAddresses { gateway_id: ResourceKey, addresses: Vec<Address> },
 }
 
+fn print_resource(res: &Resource) -> String {
+    match res.kind.as_ref() {
+        Some(kind) => match kind {
+            Kind::Bind(bind) => format!("Resource: Bind key={}", bind.key),
+            Kind::Listener(listener) => format!("Resource: Listener bind_key={} listener_key={} ", listener.bind_key, listener.key),
+            Kind::Route(route) => format!("Resource: Route listener_key={} route_key={} {route:?}", route.listener_key, route.key),
+            Kind::Backend(backend) => format!("Resource: Backend backend_name={} {backend:?}", backend.name),
+            Kind::Policy(policy) => format!("Resource: Policy policy_name={}", policy.name),
+            Kind::TcpRoute(tcp_route) => {
+                format!("Resource: TCPRoute listener_name={} tcp_route_key={}", tcp_route.listener_key, tcp_route.key)
+            },
+        },
+        None => "Unknown".to_owned(),
+    }
+}
+
+// fn print_backend(res: &Backend) -> String {
+//     match res.kind.as_ref() {
+//         Some(backend) => match backend {
+//             backend::Kind::Static(static_backend) => format!("Static {static_backend:?}"),
+//             backend::Kind::Ai(_) => "Ai".to_owned(),
+//             backend::Kind::Mcp(_) => "MCP".to_owned(),
+//         },
+//         None => "Unknown".to_owned(),
+//     }
+// }
+
 impl Display for ServerAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ServerAction::UpdateResources { gateway_id, resources_to_add, resources_to_delete } => {
                 write!(
                     f,
-                    "ServerAction::UpdateResources {{gateway_id: {gateway_id}, to_add: {}, to_delete: {}}}",
-                    resources_to_add.len(),
-                    resources_to_delete.len()
+                    "ServerAction::UpdateResources {{gateway_id: {gateway_id}, to_add: {:?}, to_delete: {:?}}}",
+                    resources_to_add.iter().map(print_resource).collect::<Vec<_>>(),
+                    resources_to_delete
                 )
             },
 

@@ -221,7 +221,7 @@ where
                             resolved_references.add_resolved_reference(&key, reference)
                         };
 
-                        debug!("Resolved reference {key} {update_gateway}");
+                        debug!("Resolved reference {key} gateway needs an update {update_gateway}");
 
                         if update_gateway {
                             myself.update_gateways(&key).await;

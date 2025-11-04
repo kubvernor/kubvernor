@@ -95,8 +95,6 @@ impl AgentgatewayDeployerChannelHandlerService {
                             info!("Backend got event {event}");
                             match event{
                                 BackendGatewayEvent::Changed(ctx) => {
-
-
                                     let gateway = &ctx.gateway;
                                     info!("AgentgatewayDeployerChannelHandlerService GatewayChanged {}",gateway.key());
 
