@@ -9,7 +9,7 @@ use std::{
 
 use agentgateway_api_rs::{
     agentgateway::dev::{
-        resource::{self, Backend, Resource, backend, resource::Kind},
+        resource::{Resource, resource::Kind},
         workload::Address,
     },
     envoy::service::discovery::v3::{
@@ -40,7 +40,7 @@ use crate::{
 
 pub enum ServerAction {
     UpdateResources { gateway_id: ResourceKey, resources_to_add: Vec<Resource>, resources_to_delete: Vec<String> },
-    UpdateAddresses { gateway_id: ResourceKey, addresses: Vec<Address> },
+    UpdateWorkloads { gateway_id: ResourceKey, workloads_to_add: Vec<Address>, workloads_to_delete: Vec<String> },
 }
 
 fn print_resource(res: &Resource) -> String {
@@ -59,17 +59,6 @@ fn print_resource(res: &Resource) -> String {
     }
 }
 
-// fn print_backend(res: &Backend) -> String {
-//     match res.kind.as_ref() {
-//         Some(backend) => match backend {
-//             backend::Kind::Static(static_backend) => format!("Static {static_backend:?}"),
-//             backend::Kind::Ai(_) => "Ai".to_owned(),
-//             backend::Kind::Mcp(_) => "MCP".to_owned(),
-//         },
-//         None => "Unknown".to_owned(),
-//     }
-// }
-
 impl Display for ServerAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -82,8 +71,13 @@ impl Display for ServerAction {
                 )
             },
 
-            ServerAction::UpdateAddresses { gateway_id, addresses } => {
-                write!(f, "ServerAction::UpdateAddresses {{gateway_id: {gateway_id}, addresses: {}}}", addresses.len())
+            ServerAction::UpdateWorkloads { gateway_id, workloads_to_add, workloads_to_delete } => {
+                write!(
+                    f,
+                    "ServerAction::UpdateAddresses {{gateway_id: {gateway_id}, workloads_to_add: {}, workloads_to_delete: {}",
+                    workloads_to_add.len(),
+                    workloads_to_delete.len()
+                )
             },
         }
     }
@@ -239,10 +233,11 @@ impl AggregateServerService {
                                 {
                                     let mut channels = ads_channels.lock().expect("We expect lock to work");
                                     channels.bindings.insert(gateway_id.clone(), resources_to_add.clone());
+                                    //TODO: need to fix this logic for when resources are removed
                                 };
 
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
-                                info!("Sending All resources discovery response {gateway_id} clients {}", clients.len());
+                                info!("Sending resources discovery response {gateway_id} clients {}", clients.len());
                                 for client in &mut clients{
                                     let response = DeltaDiscoveryResponse {
                                         type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
@@ -262,21 +257,22 @@ impl AggregateServerService {
                                 }
                             },
 
-                            ServerAction::UpdateAddresses{ gateway_id: gateway_key, addresses } => {
+                            ServerAction::UpdateWorkloads{ gateway_id: gateway_key, workloads_to_add, workloads_to_delete:_ } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
 
                                 {
+                                    //TODO: need to fix this logic for when resources are removed
                                     let mut channels = ads_channels.lock().expect("We expect lock to work");
-                                    channels.addresses.insert(gateway_id.clone(), addresses.clone());
+                                    channels.addresses.insert(gateway_id.clone(), workloads_to_add.clone());
                                 };
 
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
-                                info!("Sending All addresses discovery response {gateway_id} clients {}", clients.len());
+                                info!("Sending addresses discovery response {gateway_id} clients {}", clients.len());
                                 for client in &mut clients{
 
                                     let response = DeltaDiscoveryResponse {
                                         type_url: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
-                                        resources: addresses.iter().map(|address|
+                                        resources: workloads_to_add.iter().map(|address|
                                             agentgateway_api_rs::envoy::service::discovery::v3::Resource{
                                                 name:"type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
                                                 resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),

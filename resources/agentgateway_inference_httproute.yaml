@@ -7,6 +7,8 @@ spec:
     - group: gateway.networking.k8s.io
       kind: Gateway
       name: agentgateway-one
+  hostnames:
+    - "www.inference-one.com"
   rules:
     - backendRefs:
         - group: inference.networking.x-k8s.io
@@ -15,4 +17,4 @@ spec:
       matches:
         - path:
             type: PathPrefix
-            value: /
+            value: /inference

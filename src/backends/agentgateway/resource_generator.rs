@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 
 use agentgateway_api_rs::agentgateway::dev::resource::{
-    self, Listener, Route, RouteBackend, StaticBackend,
+    self, BackendReference, Listener, Policy, PolicySpec, PolicyTarget, Route, RouteBackend, StaticBackend,
+    ai_backend::Provider,
     backend::{self},
+    policy_spec::InferenceRouting,
 };
-use tracing::info;
+use tracing::{info, warn};
 
-use crate::common::{self, Backend, BackendType, ProtocolType};
+use crate::common::{self, Backend, BackendType, InferencePoolTypeConfig, ProtocolType, ResourceKey};
 
 pub(crate) struct ResourceGenerator<'a> {
     effective_gateway: &'a common::Gateway,
@@ -73,8 +75,9 @@ impl<'a> ResourceGenerator<'a> {
         listeners
     }
 
-    pub fn generate_routes_and_backends(&self) -> (Vec<resource::Route>, Vec<resource::Backend>) {
+    pub fn generate_routes_and_backends_and_policies(&self) -> (Vec<resource::Route>, Vec<resource::Backend>, Vec<resource::Policy>) {
         let mut backends = BTreeMap::<String, resource::Backend>::new();
+        let mut backend_policies = BTreeMap::<String, Policy>::new();
         let gateway = self.effective_gateway;
         let routes = gateway
             .listeners()
@@ -90,6 +93,34 @@ impl<'a> ResourceGenerator<'a> {
                         routing_rules
                             .iter()
                             .map(|routing_rule| {
+                                let inference_extension_configurations: Vec<(String, ResourceKey, &InferencePoolTypeConfig)> =
+                                    routing_rules
+                                        .iter()
+                                        .flat_map(|r| {
+                                            r.backends
+                                                .iter()
+                                                .filter_map(|b| match b.backend_type() {
+                                                    crate::common::BackendType::InferencePool(inference_type_config) => Some((
+                                                        format!("Policy-{}-{}", routing_rule.name, b.resource_key()),
+                                                        b.resource_key(),
+                                                        inference_type_config,
+                                                    )),
+                                                    _ => None,
+                                                })
+                                                .collect::<Vec<_>>()
+                                        })
+                                        .collect();
+                                if inference_extension_configurations.len() > 1 {
+                                    warn!("Multiple external processing filter configuration per route {:?} ", route);
+                                }
+
+                                let policies = inference_extension_configurations
+                                    .into_iter()
+                                    .map(|(name, backend, conf)| (name.clone(), create_inference_policies(name, backend, conf)))
+                                    .collect::<Vec<_>>();
+                                info!("(Inference policies routing rule {}  {backend_policies:#?}", routing_rule.name);
+
+                                backend_policies.extend(policies);
                                 backends.extend(&mut routing_rule.backends.iter().filter_map(create_backends));
                                 Route {
                                     key: route.name().to_owned(),
@@ -109,7 +140,11 @@ impl<'a> ResourceGenerator<'a> {
                     .collect::<Vec<_>>()
             })
             .collect();
-        (routes, backends.into_values().collect::<Vec<resource::Backend>>())
+        (
+            routes,
+            backends.into_values().collect::<Vec<resource::Backend>>(),
+            backend_policies.into_values().collect::<Vec<resource::Policy>>(),
+        )
     }
 }
 
@@ -138,7 +173,7 @@ fn create_route_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentg
         Backend::Resolved(BackendType::InferencePool(config)) => Some(RouteBackend {
             backend: Some(agentgateway_api_rs::agentgateway::dev::resource::BackendReference {
                 port: config.port as u32,
-                kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Service(format!(
+                kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Backend(format!(
                     "{}/{}",
                     config.resource_key.namespace, config.resource_key.name
                 ))),
@@ -173,6 +208,24 @@ fn create_backends(backend: &Backend) -> Option<(String, resource::Backend)> {
             ))
         },
         _ => None,
+    }
+}
+
+fn create_inference_policies(policy_name: String, backend: ResourceKey, conf: &InferencePoolTypeConfig) -> Policy {
+    Policy {
+        spec: Some(PolicySpec {
+            kind: Some(resource::policy_spec::Kind::InferenceRouting(InferenceRouting {
+                endpoint_picker: conf.inference_config.as_ref().map(|inference_config| BackendReference {
+                    port: inference_config.extension_ref().port_number.unwrap_or(9002) as u32,
+                    kind: Some(resource::backend_reference::Kind::Backend(inference_config.extension_ref().name.clone())),
+                }),
+                failure_mode: 0,
+            })),
+        }),
+        name: policy_name,
+        target: Some(PolicyTarget {
+            kind: Some(resource::policy_target::Kind::Backend(format!("{}/{}", backend.namespace, backend.name))),
+        }),
     }
 }
 
