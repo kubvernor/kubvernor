@@ -39,8 +39,8 @@ use crate::{
 };
 
 pub enum ServerAction {
-    UpdateResources { gateway_id: ResourceKey, resources_to_add: Vec<Resource>, resources_to_delete: Vec<String> },
-    UpdateWorkloads { gateway_id: ResourceKey, workloads_to_add: Vec<Address>, workloads_to_delete: Vec<String> },
+    UpdateResources { gateway_id: ResourceKey, resources: Vec<Resource> },
+    UpdateWorkloads { gateway_id: ResourceKey, workloads: Vec<Address> },
 }
 
 fn print_resource(res: &Resource) -> String {
@@ -62,22 +62,16 @@ fn print_resource(res: &Resource) -> String {
 impl Display for ServerAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ServerAction::UpdateResources { gateway_id, resources_to_add, resources_to_delete } => {
+            ServerAction::UpdateResources { gateway_id, resources } => {
                 write!(
                     f,
-                    "ServerAction::UpdateResources {{gateway_id: {gateway_id}, to_add: {:?}, to_delete: {:?}}}",
-                    resources_to_add.iter().map(print_resource).collect::<Vec<_>>(),
-                    resources_to_delete
+                    "ServerAction::UpdateResources {{gateway_id: {gateway_id}, resources: {:?} }}",
+                    resources.iter().map(print_resource).collect::<Vec<_>>(),
                 )
             },
 
-            ServerAction::UpdateWorkloads { gateway_id, workloads_to_add, workloads_to_delete } => {
-                write!(
-                    f,
-                    "ServerAction::UpdateAddresses {{gateway_id: {gateway_id}, workloads_to_add: {}, workloads_to_delete: {}",
-                    workloads_to_add.len(),
-                    workloads_to_delete.len()
-                )
+            ServerAction::UpdateWorkloads { gateway_id, workloads } => {
+                write!(f, "ServerAction::UpdateAddresses {{gateway_id: {gateway_id}, workloads: {} }}", workloads.len(),)
             },
         }
     }
@@ -102,16 +96,31 @@ struct AdsClient {
     ack_versions: AckVersions,
     client_id: SocketAddr,
     gateway_id: Option<String>,
+    resources: Vec<Resource>,
+    workloads: Vec<Address>,
+}
+
+struct Delta<T> {
+    to_add: Vec<T>,
+    to_remove: Vec<String>,
+}
+
+impl<T> From<(Vec<T>, Vec<String>)> for Delta<T> {
+    fn from((to_add, to_remove): (Vec<T>, Vec<String>)) -> Self {
+        Delta { to_add, to_remove }
+    }
 }
 
 impl AdsClient {
     fn new(client_id: SocketAddr, sender: mpsc::Sender<Result<DeltaDiscoveryResponse, Status>>) -> Self {
-        Self { sender, client_id, gateway_id: None, ack_versions: AckVersions::default() }
+        Self { sender, client_id, gateway_id: None, ack_versions: AckVersions::default(), resources: vec![], workloads: vec![] }
     }
 
     fn update_from(&mut self, value: &AdsClient) {
         self.ack_versions = value.ack_versions.clone();
         self.gateway_id.clone_from(&value.gateway_id);
+        self.resources.clone_from(&value.resources);
+        self.workloads.clone_from(&value.workloads);
     }
     fn versions(&self) -> &AckVersions {
         &self.ack_versions
@@ -124,14 +133,74 @@ impl AdsClient {
     fn set_gateway_id(&mut self, gateway_id: &str) {
         self.gateway_id = Some(gateway_id.to_owned());
     }
+
+    fn cache_resources_and_calculate_delta(&mut self, new_resources: Vec<Resource>) -> Delta<Resource> {
+        let cached_resources = &self.resources;
+        let to_add = difference(&new_resources, cached_resources);
+        let to_remove = difference(&cached_resources, &new_resources);
+
+        let to_remove = to_remove
+            .into_iter()
+            .filter_map(|r| {
+                if let Some(kind) = r.kind {
+                    Some(match kind {
+                        Kind::Bind(bind) => "bind/".to_owned() + &bind.key,
+                        Kind::Listener(listener) => "listener/".to_owned() + &listener.key,
+                        Kind::Route(route) => "route/".to_owned() + &route.key,
+                        Kind::Backend(backend) => "backend/".to_owned() + &backend.name,
+                        Kind::Policy(policy) => "policy/".to_owned() + &policy.name,
+                        Kind::TcpRoute(tcp_route) => "tcproute/".to_owned() + &tcp_route.key,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        self.resources = new_resources;
+        Delta { to_add, to_remove }
+    }
+
+    fn cache_workloads_and_calculate_delta(&mut self, new_workloads: Vec<Address>) -> Delta<Address> {
+        let cached_workloads = &self.workloads;
+        let to_add = difference(&new_workloads, cached_workloads);
+        let to_remove = difference(&cached_workloads, &new_workloads);
+
+        let to_remove = to_remove
+            .into_iter()
+            .filter_map(|r| {
+                if let Some(workloads_type) = r.r#type {
+                    Some(match workloads_type {
+                        agentgateway_api_rs::agentgateway::dev::workload::address::Type::Workload(workload) => {
+                            "workload/".to_owned() + &workload.uid
+                        },
+                        agentgateway_api_rs::agentgateway::dev::workload::address::Type::Service(service) => {
+                            format!("service/{}/{}", service.name, service.namespace)
+                        },
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        self.workloads = new_workloads;
+        Delta { to_add, to_remove }
+    }
 }
 
-#[derive(Debug, Default)]
-pub struct ResourcesMapping {
-    bindings: BTreeMap<String, Vec<Resource>>,
-    listeners: BTreeMap<String, Vec<Resource>>,
-    routes: BTreeMap<String, Vec<Resource>>,
-    addresses: BTreeMap<String, Vec<Address>>,
+/// Visits the values representing the difference, i.e., the values that are in self but not in other.
+fn difference<T>(this: &[T], other: &[T]) -> Vec<T>
+where
+    T: PartialEq + Clone,
+{
+    let mut out = vec![];
+    for t in this {
+        if !other.contains(t) {
+            out.push(t.clone());
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Default)]
@@ -187,23 +256,20 @@ pub type ResourceAction = ServerAction;
 
 pub struct AggregateServer {
     kube_client: kube::Client,
-    ads_channels: Arc<Mutex<ResourcesMapping>>,
     ads_clients: AdsClients,
     nonces: Arc<Mutex<lru_time_cache::LruCache<Uuid, Uuid>>>,
 }
 
 #[derive(Debug)]
 pub struct AggregateServerService {
-    ads_channels: Arc<Mutex<ResourcesMapping>>,
     ads_clients: AdsClients,
     stream_resources_rx: Receiver<ServerAction>,
 }
 
 impl AggregateServer {
-    fn new(kube_client: kube::Client, ads_channels: Arc<Mutex<ResourcesMapping>>, ads_clients: AdsClients) -> Self {
+    fn new(kube_client: kube::Client, ads_clients: AdsClients) -> Self {
         Self {
             kube_client,
-            ads_channels,
             ads_clients,
             nonces: Arc::new(Mutex::new(lru_time_cache::LruCache::<Uuid, Uuid>::with_expiry_duration_and_capacity(
                 std::time::Duration::from_secs(30),
@@ -213,66 +279,53 @@ impl AggregateServer {
     }
 }
 impl AggregateServerService {
-    fn new(stream_resources_rx: Receiver<ServerAction>, ads_channels: Arc<Mutex<ResourcesMapping>>, ads_clients: AdsClients) -> Self {
-        Self { ads_channels, ads_clients, stream_resources_rx }
+    fn new(stream_resources_rx: Receiver<ServerAction>, ads_clients: AdsClients) -> Self {
+        Self { ads_clients, stream_resources_rx }
     }
 
     #[allow(clippy::too_many_lines)]
     pub async fn start(self) {
         let mut stream_resources_rx = self.stream_resources_rx;
-        let ads_channels = self.ads_channels;
         let ads_clients = self.ads_clients;
         loop {
             tokio::select! {
                     Some(event) = stream_resources_rx.recv() => {
                         info!("AggregateServerService :: {event}");
                         match event{
-                            ServerAction::UpdateResources{ gateway_id: gateway_key, resources_to_add, resources_to_delete } => {
+                            ServerAction::UpdateResources{ gateway_id: gateway_key, resources } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
-
-                                {
-                                    let mut channels = ads_channels.lock().expect("We expect lock to work");
-                                    channels.bindings.insert(gateway_id.clone(), resources_to_add.clone());
-                                    //TODO: need to fix this logic for when resources are removed
-                                };
-
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
-                                info!("Sending resources discovery response {gateway_id} clients {}", clients.len());
+                                info!("Sending resources DELTA discovery response {gateway_id} clients {}", clients.len());
                                 for client in &mut clients{
+                                    let Delta{to_add, to_remove} = client.cache_resources_and_calculate_delta(resources.clone());
+                                    debug!("Sending resources DELTA discovery response for client {} {to_add:?} {to_remove:?}", client.client_id);
                                     let response = DeltaDiscoveryResponse {
                                         type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
-                                        resources: resources_to_add.iter().map(|resource|
+                                        resources: to_add.into_iter().map(|resource|
                                             agentgateway_api_rs::envoy::service::discovery::v3::Resource{
                                                 name:"type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
                                                 resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),resource))),
                                                 ..Default::default() }
                                             ).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
-                                        removed_resources: resources_to_delete.clone(),
+                                        removed_resources: to_remove,
                                         ..Default::default()
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
-
                                     ads_clients.update_client(client);
                                 }
                             },
 
-                            ServerAction::UpdateWorkloads{ gateway_id: gateway_key, workloads_to_add, workloads_to_delete:_ } => {
+                            ServerAction::UpdateWorkloads{ gateway_id: gateway_key, workloads } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
-
-                                {
-                                    //TODO: need to fix this logic for when resources are removed
-                                    let mut channels = ads_channels.lock().expect("We expect lock to work");
-                                    channels.addresses.insert(gateway_id.clone(), workloads_to_add.clone());
-                                };
-
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
-                                info!("Sending addresses discovery response {gateway_id} clients {}", clients.len());
+                                info!("Sending workloads DELTA discovery response {gateway_id} clients {}", clients.len());
                                 for client in &mut clients{
-
+                                    let Delta{to_add, to_remove} = client.cache_workloads_and_calculate_delta(workloads.clone());
+                                    debug!("Sending workloads DELTA discovery response for client {} {to_add:?} {to_remove:?}", client.client_id);
                                     let response = DeltaDiscoveryResponse {
                                         type_url: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
-                                        resources: workloads_to_add.iter().map(|address|
+                                        resources: to_add.into_iter().map(|address|
                                             agentgateway_api_rs::envoy::service::discovery::v3::Resource{
                                                 name:"type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
                                                 resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
@@ -281,6 +334,7 @@ impl AggregateServerService {
                                                 ..Default::default() }
                                             ).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
+                                        removed_resources: to_remove,
                                         ..Default::default()
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
@@ -326,7 +380,6 @@ impl AggregatedDiscoveryService for AggregateServer {
         let (tx, rx) = mpsc::channel(128);
         let nonces = Arc::clone(&self.nonces);
         let kube_client = self.kube_client.clone();
-        let ads_channels = Arc::clone(&self.ads_channels);
         let ads_clients = self.ads_clients.clone();
 
         let mut incoming_stream = req.into_streaming_request().into_inner();
@@ -384,37 +437,24 @@ impl AggregatedDiscoveryService for AggregateServer {
                                     let nonce = uuid::Uuid::new_v4();
                                     nonces.lock().expect("We do expect this to work").insert(nonce, nonce);
 
-                                    let resources = {
-                                        let resource_mappings = ads_channels.lock().expect("We expect the lock to work");
-                                        let bindings = resource_mappings.bindings.get(&gateway_id).cloned().unwrap_or_default();
-                                        let listeners = resource_mappings.listeners.get(&gateway_id).cloned().unwrap_or_default();
-                                        let routes = resource_mappings.routes.get(&gateway_id).cloned().unwrap_or_default();
-                                        bindings.into_iter().chain(listeners.into_iter()).chain(routes.into_iter()).collect::<Vec<_>>()
-                                    };
-
-                                    let addresses = {
-                                        let resource_mappings = ads_channels.lock().expect("We expect the lock to work");
-                                        resource_mappings.addresses.get(&gateway_id).cloned().unwrap_or_default()
-                                    };
-
-                                    info!(
-                                        "AggregateServer::delta_aggregated_resources new connection resources {} addresses {}",
-                                        resources.len(),
-                                        addresses.len()
-                                    );
-
-                                    if resources.is_empty() {
+                                    if ads_client.resources.is_empty() {
+                                        info!(
+                                            "Initial connection from {gateway_id} {} {} - no resources to send",
+                                            ads_client.client_id, client_ip
+                                        );
                                         ads_clients.update_client(&ads_client);
                                     } else {
+                                        info!("Sending resources INITIAL discovery response {gateway_id} client {}", ads_client.client_id);
                                         let response = DeltaDiscoveryResponse {
                                             type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
-                                            resources: resources
+                                            resources: ads_client
+                                                .resources
                                                 .iter()
                                                 .map(|resource| agentgateway_api_rs::envoy::service::discovery::v3::Resource {
                                                     name: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
                                                     resource: Some(AnyTypeConverter::from((
                                                         "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
-                                                        resource,
+                                                        resource.clone(),
                                                     ))),
                                                     ..Default::default()
                                                 })
@@ -425,18 +465,24 @@ impl AggregatedDiscoveryService for AggregateServer {
                                         };
                                         let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
                                     }
-                                    if addresses.is_empty() {
+                                    if ads_client.workloads.is_empty() {
+                                        info!(
+                                            "Initial connection from {gateway_id} {} {} - no workloads to send",
+                                            ads_client.client_id, client_ip
+                                        );
                                         ads_clients.update_client(&ads_client);
                                     } else {
+                                        info!("Sending workloads INITIAL discovery response {gateway_id} client {}", ads_client.client_id);
                                         let response = DeltaDiscoveryResponse {
                                             type_url: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
-                                            resources: addresses
+                                            resources: ads_client
+                                                .workloads
                                                 .iter()
                                                 .map(|address| agentgateway_api_rs::envoy::service::discovery::v3::Resource {
                                                     name: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
                                                     resource: Some(AnyTypeConverter::from((
                                                         "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
-                                                        address,
+                                                        address.clone(),
                                                     ))),
                                                     ..Default::default()
                                                 })
@@ -456,6 +502,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                 }
             }
             info!("AggregateServer::delta_aggregated_resources Server side closed... removing client");
+            ads_clients.remove_client(client_ip);
         });
 
         let output_stream = ReceiverStream::new(rx);
@@ -469,10 +516,9 @@ pub async fn start_aggregate_server(
     stream_resources_rx: Receiver<ResourceAction>,
 ) -> crate::Result<()> {
     let stream = TcpListenerStream::new(TcpListener::bind(server_address).await?);
-    let channels = Arc::new(Mutex::new(ResourcesMapping::default()));
     let ads_clients = AdsClients::new();
-    let service = AggregateServerService::new(stream_resources_rx, Arc::clone(&channels), ads_clients.clone());
-    let server = AggregateServer::new(kube_client, channels, ads_clients);
+    let service = AggregateServerService::new(stream_resources_rx, ads_clients.clone());
+    let server = AggregateServer::new(kube_client, ads_clients);
     let aggregate_server = AggregatedDiscoveryServiceServer::new(server);
     let server = Server::builder()
         .concurrency_limit_per_connection(256)

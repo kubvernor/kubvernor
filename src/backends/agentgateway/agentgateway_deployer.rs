@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
 };
 
 use agentgateway_api_rs::agentgateway::dev::{
@@ -114,7 +114,7 @@ impl AgentgatewayDeployerChannelHandlerService {
 
                                         let (routes, backends, policies) = resource_generator.generate_routes_and_backends_and_policies();
 
-                                        let Delta{ to_add, to_delete }  = self.cache_resources_and_calculate_delta(
+                                        let resources  = self.cache_resources(
                                             gateway.key().clone(),
                                             CachedResources{
                                                 bindings: bindings_and_listeners.keys().cloned().map(|b|
@@ -130,7 +130,7 @@ impl AgentgatewayDeployerChannelHandlerService {
                                         });
 
 
-                                        let listeners = to_add.listeners
+                                        let listeners = resources.listeners
                                         .into_iter()
                                         .map(|l|{
                                             info!("Generated agentgateway listener {l:?}");
@@ -138,7 +138,7 @@ impl AgentgatewayDeployerChannelHandlerService {
                                         })
                                         .collect::<Vec<_>>();
 
-                                        let bindings = to_add.bindings
+                                        let bindings = resources.bindings
                                         .into_iter()
                                         .map(|b| {
                                             info!("Generated agentgateway bind {b:?}");
@@ -146,19 +146,19 @@ impl AgentgatewayDeployerChannelHandlerService {
                                         })
                                         .collect::<Vec<_>>();
 
-                                        let route_resources =  to_add.routes
+                                        let route_resources = resources.routes
                                         .into_iter()
                                         .map(|r| { info!("Generated agentgateway route {r:?}"); Resource {
                                             kind: Some(Kind::Route(r))}
                                         }).collect::<Vec<_>>();
 
-                                        let backend_resources =  to_add.backends
+                                        let backend_resources = resources.backends
                                         .into_iter()
                                         .map(|b| { info!("Generated agentgateway backend {b:?}"); Resource {
                                             kind: Some(Kind::Backend(b))}
                                         }).collect::<Vec<_>>();
 
-                                        let policies =  to_add.policies
+                                        let policies = resources.policies
                                         .into_iter()
                                         .map(|b| { info!("Generated agentgateway policy {b:?}"); Resource {
                                             kind: Some(Kind::Policy(b))}
@@ -166,23 +166,16 @@ impl AgentgatewayDeployerChannelHandlerService {
 
                                         let _ = stream_resource_sender.send(ServerAction::UpdateResources {
                                             gateway_id:gateway.key().clone(),
-                                            resources_to_add:
+                                            resources:
                                                 bindings.into_iter()
                                                     .chain(listeners.into_iter())
                                                     .chain(route_resources.into_iter())
                                                     .chain(backend_resources.into_iter())
                                                     .chain(policies.into_iter())
                                                     .collect(),
-                                            resources_to_delete:
-                                                to_delete.bindings.into_iter().map(|b| "bind/".to_owned()+&b.key)
-                                                    .chain(to_delete.listeners.into_iter().map(|l| "listener/".to_owned()+&l.key))
-                                                    .chain(to_delete.routes.into_iter().map(|r| "route/".to_owned()+&r.key))
-                                                    .chain(to_delete.backends.into_iter().map(|b| "backend/".to_owned()+&b.name))
-                                                    .chain(to_delete.policies.into_iter().map(|b| "policy/".to_owned()+&b.name))
-                                                    .collect()
                                         }).await;
 
-                                        let Delta{ to_add, to_delete }  = self.cache_workloads_and_calculate_delta(
+                                        let workloads  = self.cache_workloads(
                                             gateway.key().clone(),
                                             CachedWorkloads{
                                                 addresses: vec![workload::Address{ r#type: Some(workload::address::Type::Service(workload::Service::default())) }]
@@ -190,8 +183,7 @@ impl AgentgatewayDeployerChannelHandlerService {
 
                                         let _ = stream_resource_sender.send(ServerAction::UpdateWorkloads {
                                             gateway_id: gateway.key().clone(),
-                                            workloads_to_add: to_add.addresses,
-                                            workloads_to_delete: to_delete.addresses.into_iter().map(address_name).collect::<Vec<_>>()
+                                            workloads: workloads.addresses,
                                         }).await;
 
                                         self.update_address_with_polling(&service, *ctx).await;
@@ -235,43 +227,55 @@ impl AgentgatewayDeployerChannelHandlerService {
         Ok(())
     }
 
-    fn cache_resources_and_calculate_delta(&mut self, key: ResourceKey, new_resources: CachedResources) -> Delta<CachedResources> {
+    // fn cache_resources_and_calculate_delta(&mut self, key: ResourceKey, new_resources: CachedResources) -> Delta<CachedResources> {
+    //     let cached_resources = self.cached_gateway_resources.entry(key).or_default();
+    //     let delta = Self::calculate_delta_resources(cached_resources, &new_resources);
+    //     *cached_resources = new_resources;
+    //     delta
+    // }
+
+    fn cache_resources(&mut self, key: ResourceKey, new_resources: CachedResources) -> CachedResources {
         let cached_resources = self.cached_gateway_resources.entry(key).or_default();
-        let delta = Self::calculate_delta_resources(cached_resources, &new_resources);
-        *cached_resources = new_resources;
-        delta
+        *cached_resources = new_resources.clone();
+        new_resources
     }
 
-    fn cache_workloads_and_calculate_delta(&mut self, key: ResourceKey, new_workloads: CachedWorkloads) -> Delta<CachedWorkloads> {
+    // fn cache_workloads_and_calculate_delta(&mut self, key: ResourceKey, new_workloads: CachedWorkloads) -> Delta<CachedWorkloads> {
+    //     let cached_workloads = self.cached_gateway_workloads.entry(key).or_default();
+    //     let delta = Self::calculate_delta_workloads(cached_workloads, &new_workloads);
+    //     *cached_workloads = new_workloads;
+    //     delta
+    // }
+
+    fn cache_workloads(&mut self, key: ResourceKey, new_workloads: CachedWorkloads) -> CachedWorkloads {
         let cached_workloads = self.cached_gateway_workloads.entry(key).or_default();
-        let delta = Self::calculate_delta_workloads(cached_workloads, &new_workloads);
-        *cached_workloads = new_workloads;
-        delta
+        *cached_workloads = new_workloads.clone();
+        new_workloads
     }
 
-    fn calculate_delta_resources(old_resources: &CachedResources, new_resources: &CachedResources) -> Delta<CachedResources> {
-        let to_add = CachedResources {
-            bindings: difference(&new_resources.bindings, &old_resources.bindings),
-            listeners: difference(&new_resources.listeners, &old_resources.listeners),
-            routes: difference(&new_resources.routes, &old_resources.routes),
-            backends: difference(&new_resources.backends, &old_resources.backends),
-            policies: difference(&new_resources.policies, &old_resources.policies),
-        };
-        let to_delete = CachedResources {
-            bindings: difference(&old_resources.bindings, &new_resources.bindings),
-            listeners: difference(&old_resources.listeners, &new_resources.listeners),
-            routes: difference(&old_resources.routes, &new_resources.routes),
-            backends: difference(&old_resources.backends, &new_resources.backends),
-            policies: difference(&old_resources.policies, &new_resources.policies),
-        };
-        Delta { to_add, to_delete }
-    }
+    // fn calculate_delta_resources(old_resources: &CachedResources, new_resources: &CachedResources) -> Delta<CachedResources> {
+    //     let to_add = CachedResources {
+    //         bindings: difference(&new_resources.bindings, &old_resources.bindings),
+    //         listeners: difference(&new_resources.listeners, &old_resources.listeners),
+    //         routes: difference(&new_resources.routes, &old_resources.routes),
+    //         backends: difference(&new_resources.backends, &old_resources.backends),
+    //         policies: difference(&new_resources.policies, &old_resources.policies),
+    //     };
+    //     let to_delete = CachedResources {
+    //         bindings: difference(&old_resources.bindings, &new_resources.bindings),
+    //         listeners: difference(&old_resources.listeners, &new_resources.listeners),
+    //         routes: difference(&old_resources.routes, &new_resources.routes),
+    //         backends: difference(&old_resources.backends, &new_resources.backends),
+    //         policies: difference(&old_resources.policies, &new_resources.policies),
+    //     };
+    //     Delta { to_add, to_delete }
+    // }
 
-    fn calculate_delta_workloads(old_workloads: &CachedWorkloads, new_workloads: &CachedWorkloads) -> Delta<CachedWorkloads> {
-        let to_add = CachedWorkloads { addresses: difference(&new_workloads.addresses, &old_workloads.addresses) };
-        let to_delete = CachedWorkloads { addresses: difference(&old_workloads.addresses, &new_workloads.addresses) };
-        Delta { to_add, to_delete }
-    }
+    // fn calculate_delta_workloads(old_workloads: &CachedWorkloads, new_workloads: &CachedWorkloads) -> Delta<CachedWorkloads> {
+    //     let to_add = CachedWorkloads { addresses: difference(&new_workloads.addresses, &old_workloads.addresses) };
+    //     let to_delete = CachedWorkloads { addresses: difference(&old_workloads.addresses, &new_workloads.addresses) };
+    //     Delta { to_add, to_delete }
+    // }
 
     async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext) {
         if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
@@ -568,20 +572,6 @@ fn bootstrap_content(control_plane_config: &ControlPlaneConfig) -> Result<String
     tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port());
 
     Ok(TEMPLATES.render("agent-gateway-bootstrap-dynamic.yaml.tera", &tera_context)?)
-}
-
-/// Visits the values representing the difference, i.e., the values that are in self but not in other.
-fn difference<T>(this: &[T], other: &[T]) -> Vec<T>
-where
-    T: PartialEq + Clone,
-{
-    let mut out = vec![];
-    for t in this {
-        if !other.contains(t) {
-            out.push(t.clone());
-        }
-    }
-    out
 }
 
 const AGENTGATEWAY_POD_SPEC: &str = r#"
