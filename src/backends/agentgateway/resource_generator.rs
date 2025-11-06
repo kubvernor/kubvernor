@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 
 use agentgateway_api_rs::agentgateway::dev::resource::{
     self, BackendReference, Listener, Policy, PolicySpec, PolicyTarget, Route, RouteBackend, StaticBackend,
-    ai_backend::Provider,
     backend::{self},
     policy_spec::InferenceRouting,
 };
+use itertools::Itertools;
 use tracing::{info, warn};
 
 use crate::common::{self, Backend, BackendType, InferencePoolTypeConfig, ProtocolType, ResourceKey};
@@ -114,14 +114,20 @@ impl<'a> ResourceGenerator<'a> {
                                     warn!("Multiple external processing filter configuration per route {:?} ", route);
                                 }
 
-                                let policies = inference_extension_configurations
+                                let (policies, epp_backends): (Vec<_>, Vec<_>) = inference_extension_configurations
                                     .into_iter()
-                                    .map(|(name, backend, conf)| (name.clone(), create_inference_policies(name, backend, conf)))
-                                    .collect::<Vec<_>>();
+                                    .map(|(name, backend, conf)| {
+                                        let (policy, backend) = create_inference_policies(&name, backend, conf);
+
+                                        ((name.clone(), policy), backend)
+                                    })
+                                    .unzip();
                                 info!("(Inference policies routing rule {}  {backend_policies:#?}", routing_rule.name);
 
                                 backend_policies.extend(policies);
                                 backends.extend(&mut routing_rule.backends.iter().filter_map(create_backends));
+                                let epp_backends = epp_backends.into_iter().flatten().collect::<Vec<_>>();
+                                backends.extend(epp_backends);
                                 Route {
                                     key: route.name().to_owned(),
                                     listener_key: l.name().to_owned(),
@@ -211,22 +217,41 @@ fn create_backends(backend: &Backend) -> Option<(String, resource::Backend)> {
     }
 }
 
-fn create_inference_policies(policy_name: String, backend: ResourceKey, conf: &InferencePoolTypeConfig) -> Policy {
-    Policy {
-        spec: Some(PolicySpec {
-            kind: Some(resource::policy_spec::Kind::InferenceRouting(InferenceRouting {
-                endpoint_picker: conf.inference_config.as_ref().map(|inference_config| BackendReference {
-                    port: inference_config.extension_ref().port_number.unwrap_or(9002) as u32,
-                    kind: Some(resource::backend_reference::Kind::Backend(inference_config.extension_ref().name.clone())),
-                }),
-                failure_mode: 0,
-            })),
+fn create_inference_policies(
+    policy_name: &str,
+    backend: ResourceKey,
+    conf: &InferencePoolTypeConfig,
+) -> (Policy, Option<(String, resource::Backend)>) {
+    let epp_backend_name = format!("epp-backend-{policy_name}");
+    (
+        Policy {
+            spec: Some(PolicySpec {
+                kind: Some(resource::policy_spec::Kind::InferenceRouting(InferenceRouting {
+                    endpoint_picker: conf.inference_config.as_ref().map(|inference_config| BackendReference {
+                        port: inference_config.extension_ref().port_number.unwrap_or(9002) as u32,
+                        kind: Some(resource::backend_reference::Kind::Backend(epp_backend_name.clone())),
+                    }),
+                    failure_mode: 0,
+                })),
+            }),
+            name: policy_name.to_owned(),
+            target: Some(PolicyTarget {
+                kind: Some(resource::policy_target::Kind::Backend(format!("{}/{}", backend.namespace, backend.name))),
+            }),
+        },
+        conf.inference_config.as_ref().map(|inference_config| {
+            (
+                epp_backend_name.clone(),
+                resource::Backend {
+                    name: epp_backend_name,
+                    kind: Some(backend::Kind::Static(StaticBackend {
+                        host: inference_config.extension_ref().name.to_owned(),
+                        port: inference_config.extension_ref().port_number.unwrap_or(9002),
+                    })),
+                },
+            )
         }),
-        name: policy_name,
-        target: Some(PolicyTarget {
-            kind: Some(resource::policy_target::Kind::Backend(format!("{}/{}", backend.namespace, backend.name))),
-        }),
-    }
+    )
 }
 
 fn convert_path_match(
