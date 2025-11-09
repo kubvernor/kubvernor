@@ -41,3 +41,13 @@ resources/
 
 
 docker run --rm -p 8080:8080 -p 9901:9901 -it -v ./resources/envoy-inference.yaml:/envoy-config.yaml envoyproxy/envoy:dev -c envoy-config.yaml -l debug --service-node sjksjdksj  --service-cluster djfkdjfkj
+
+
+
+
+## Installing EPP and SimModel
+
+Adopted from https://gateway-api-inference-extension.sigs.k8s.io/guides/
+
+https://github.com/kubvernor/gateway-api-inference-extension branch helm_updates
+helm install vllm-llama3-8b-instruct --version $IGW_CHART_VERSION --set inferencePool.modelServers.matchLabels.app=vllm-llama3-8b-instruct ./config/charts/inferencepool/ -f ./config/charts/inferencepool/values.yaml

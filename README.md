@@ -2,12 +2,12 @@
 Generic Gateway API Manager for Kubernetes
 
 >[!CAUTION]
-This project is still very unstable and not ready for use in production environments. 
+This project is still very unstable and not ready for use in production environments.
 
 Kubvernor is a Rust implementation of Kubernetes Gateway APIs. The aim of the project is to be as generic as possible so Kubvernor could be used to manage/deploy different gateways (Envoy, Nginx, HAProxy, etc.)
 
 
-## Running 
+## Running
 
 0. Install Rust, Docker and Kind
 
@@ -25,16 +25,16 @@ Kubvernor is a Rust implementation of Kubernetes Gateway APIs. The aim of the pr
 
 3. Install required CRDs for Gateway API
     ```bash
-    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml	
+    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
     ```
 
 
 
 4. Compile and run Kubvernor
 
-    ```bash         
+    ```bash
    export CONTROL_PLANE_IP=<IP>
-   ./run_kubvernor.sh    
+   ./run_kubvernor.sh
    ```
 
 5. Run Gateway API Conformance suite
@@ -45,20 +45,19 @@ Kubvernor is a Rust implementation of Kubernetes Gateway APIs. The aim of the pr
 
 > [!NOTE]
 > Experimenting with Gateway API Inference Extension
-> 
-> 6. **(Optionally)** install CRDs for Gateway API Inference Extension    
+>
+> 6. **(Optionally)** install CRDs for Gateway API Inference Extension
 >    ```bash
->    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api-inference-extension/releases/download/v0.5.1/manifests.yaml
->    ```    
+>    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api-inference-extension/releases/download/v1.1.0/manifests.yaml
+>    ```
 > 7. Run Gateway API Inference Extension Conformance tests
 >
 >    ```bash
->    git clone --depth 1 --branch v0.5.1 https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
+>    git clone --depth 1 --branch v1.1.0 https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
 >    cd gateway-api-inference-extension
->    go test -v -count=1 -timeout=3h ./conformance --debug -run TestConformance --report-output="../kubvernor-inference-conformance-output.yaml" --organization=kubvernor --project=kubvernor --url=https://github.com/kubvernor/kubvernor --version=0.1.0  --allow-crds-mismatch	
+>    go test -v -count=1 -timeout=3h ./conformance --debug -run TestConformance --report-output="../kubvernor-inference-conformance-output.yaml" --organization=kubvernor --project=kubvernor --url=https://github.com/kubvernor/kubvernor --version=0.1.0  --allow-crds-mismatch
 >    ```
 
 ## Gateway API Conformance reports
-[1.2.1](./conformance/kubvernor-conformance-output-1.2.1.yaml)  
+[1.2.1](./conformance/kubvernor-conformance-output-1.2.1.yaml)
 [1.2.0](./conformance/kubvernor-conformance-output-1.2.0.yaml)
-

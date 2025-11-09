@@ -125,9 +125,9 @@ impl AdsClient {
         &self.ack_versions
     }
 
-    fn versions_mut(&mut self) -> &mut AckVersions {
-        &mut self.ack_versions
-    }
+    // fn versions_mut(&mut self) -> &mut AckVersions {
+    //     &mut self.ack_versions
+    // }
 
     fn set_gateway_id(&mut self, gateway_id: &str) {
         self.gateway_id = Some(gateway_id.to_owned());

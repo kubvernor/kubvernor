@@ -192,11 +192,11 @@ impl RouteResolver<'_> {
 
     async fn get_inference_extension(client: Client, namespace: &str, inference_pool_spec: &InferencePoolSpec) -> bool {
         let service_api: Api<Service> = Api::namespaced(client, namespace);
-        if let Ok(service) = service_api.get(&inference_pool_spec.extension_ref.name).await {
+        if let Ok(service) = service_api.get(&inference_pool_spec.endpoint_picker_ref.name).await {
             debug!("Inference Pool: Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
             true
         } else {
-            debug!("Inference Pool: Can't get endpoint picker service {:?} ", inference_pool_spec.extension_ref);
+            debug!("Inference Pool: Can't get endpoint picker service {:?} ", inference_pool_spec.endpoint_picker_ref);
             false
         }
     }
@@ -204,7 +204,7 @@ impl RouteResolver<'_> {
     async fn get_model_endpoints(client: Client, namespace: &str, inference_pool_spec: &InferencePoolSpec) -> Vec<String> {
         let mut selector: Selector = Selector::default();
 
-        for (k, v) in &inference_pool_spec.selector {
+        for (k, v) in &inference_pool_spec.selector.match_labels {
             selector.extend(Expression::Equal(k.to_owned(), v.to_owned()));
         }
 
@@ -236,7 +236,7 @@ impl RouteResolver<'_> {
 
                         debug!("Inference Pool: got model endpoints {:?}", model_endpoints);
 
-                        let resolved_endpoint_picker = match inference_pool_spec.extension_ref.kind.as_ref() {
+                        let resolved_endpoint_picker = match inference_pool_spec.endpoint_picker_ref.kind.as_ref() {
                             None => {
                                 Self::get_inference_extension(self.client.clone(), &route_resource_key.namespace, inference_pool_spec).await
                             },
@@ -247,13 +247,14 @@ impl RouteResolver<'_> {
                         };
 
                         backend_config.inference_config = Some(InferencePoolConfig(inference_pool_spec.clone()));
-                        backend_config.effective_port = inference_pool_spec.target_port_number;
+                        backend_config.target_ports = inference_pool_spec.target_ports.iter().map(|p| p.number).collect();
                         backend_config.endpoints = Some(model_endpoints);
 
                         debug!("Inference Pool: Setting backend config {backend_resource_key:?} {inference_pool_spec:?}",);
 
                         if inference_pool.metadata.name.is_some() {
                             let mut inference_pool = inference_pool::update_inference_pool_parents(
+                                &self.controller_name,
                                 self.gateway_resource_key,
                                 inference_pool,
                                 resolved_endpoint_picker,

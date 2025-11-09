@@ -449,7 +449,7 @@ fn generate_ext_service_cluster(config: &InferenceClusterInfo) -> Option<Cluster
 
     let address_port = (
         extension_config.extension_ref().name.clone() + "." + &config.config.resource_key.namespace,
-        extension_config.extension_ref().port_number.unwrap_or(9002),
+        extension_config.extension_ref().port.as_ref().map_or_else(|| 9002, |f| f.number),
     );
     let cluster_name = config.cluster_name().to_owned();
 
@@ -552,7 +552,7 @@ fn create_inference_cluster(config: &InferencePoolTypeConfig, _route_type: &Rout
         .map(|endpoints| {
             endpoints
                 .iter()
-                .map(|e| (e.clone(), config.effective_port))
+                .map(|e| (e.clone(), config.target_ports[0]))
                 .map(|addr| LbEndpoint {
                     host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
                         address: Some(SocketAddressFactory::from_address_port(addr)),

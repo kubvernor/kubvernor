@@ -7,7 +7,7 @@ use gateway_api::{
     grpcroutes::{GRPCBackendReference, GRPCRoute},
     httproutes::{HTTPBackendReference, HTTPRoute},
 };
-use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolStatusParentParentRef};
+use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolStatusParentsParentRef};
 use k8s_openapi::api::core::v1::Service;
 use kube::{Resource, ResourceExt};
 
@@ -163,8 +163,8 @@ impl From<&GatewayClassParametersRef> for ResourceKey {
     }
 }
 
-impl From<&InferencePoolStatusParentParentRef> for ResourceKey {
-    fn from(value: &InferencePoolStatusParentParentRef) -> Self {
+impl From<&InferencePoolStatusParentsParentRef> for ResourceKey {
+    fn from(value: &InferencePoolStatusParentsParentRef) -> Self {
         Self {
             group: DEFAULT_GROUP_NAME.to_owned(),
             namespace: value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),

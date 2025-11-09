@@ -16,7 +16,9 @@ use std::{
 pub use gateway::{ChangedContext, Gateway, GatewayImplementationType};
 pub use gateway_api::gateways::Gateway as KubeGateway;
 use gateway_api::{gatewayclasses::GatewayClass, gateways::GatewayListeners};
-use gateway_api_inference_extension::inferencepools::{InferencePoolExtensionRef, InferencePoolExtensionRefFailureMode, InferencePoolSpec};
+use gateway_api_inference_extension::inferencepools::{
+    InferencePoolEndpointPickerRef, InferencePoolEndpointPickerRefFailureMode, InferencePoolSpec,
+};
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};
 pub use resource_key::{DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE, ResourceKey, RouteRefKey};
@@ -103,7 +105,7 @@ pub struct InferencePoolTypeConfig {
     pub resource_key: ResourceKey,
     pub endpoint: String,
     pub port: i32,
-    pub effective_port: i32,
+    pub target_ports: Vec<i32>,
     pub weight: i32,
     pub inference_config: Option<InferencePoolConfig>,
     pub endpoints: Option<Vec<String>>,
@@ -119,8 +121,8 @@ impl InferencePoolTypeConfig {
 pub struct InferencePoolConfig(pub InferencePoolSpec);
 
 impl InferencePoolConfig {
-    pub fn extension_ref(&self) -> &InferencePoolExtensionRef {
-        &self.0.extension_ref
+    pub fn extension_ref(&self) -> &InferencePoolEndpointPickerRef {
+        &self.0.endpoint_picker_ref
     }
 }
 
@@ -138,18 +140,18 @@ impl Ord for InferencePoolConfig {
         let this = &self.0;
         let other = &other.0;
 
-        let this_extension_ref = &this.extension_ref;
-        let other_extension_ref = &other.extension_ref;
+        let this_extension_ref = &this.endpoint_picker_ref;
+        let other_extension_ref = &other.endpoint_picker_ref;
 
         let this_failure_mode = &this_extension_ref.failure_mode;
         let other_failure_mode = &other_extension_ref.failure_mode;
         match (this_failure_mode, other_failure_mode) {
             (None, Some(_)) => return cmp::Ordering::Less,
             (Some(_), None) => return cmp::Ordering::Greater,
-            (Some(InferencePoolExtensionRefFailureMode::FailOpen), Some(InferencePoolExtensionRefFailureMode::FailClose)) => {
+            (Some(InferencePoolEndpointPickerRefFailureMode::FailOpen), Some(InferencePoolEndpointPickerRefFailureMode::FailClose)) => {
                 return cmp::Ordering::Greater;
             },
-            (Some(InferencePoolExtensionRefFailureMode::FailClose), Some(InferencePoolExtensionRefFailureMode::FailOpen)) => {
+            (Some(InferencePoolEndpointPickerRefFailureMode::FailClose), Some(InferencePoolEndpointPickerRefFailureMode::FailOpen)) => {
                 return cmp::Ordering::Less;
             },
             _ => (),
@@ -168,17 +170,25 @@ impl Ord for InferencePoolConfig {
             return order;
         }
 
-        let order = this_extension_ref.port_number.cmp(&other_extension_ref.port_number);
-        if order != cmp::Ordering::Equal {
-            return order;
+        match (this_extension_ref.port.as_ref(), other_extension_ref.port.as_ref()) {
+            (None, None) => (),
+            (None, Some(_)) => return cmp::Ordering::Less,
+            (Some(_), None) => return cmp::Ordering::Greater,
+            (Some(this_port_ref), Some(other_port_ref)) => {
+                let order = this_port_ref.number.cmp(&other_port_ref.number);
+                if order != cmp::Ordering::Equal {
+                    return order;
+                }
+            },
         }
+        cmp::Ordering::Equal
 
-        let order = this.target_port_number.cmp(&other.target_port_number);
-        if order != cmp::Ordering::Equal {
-            return order;
-        }
+        // let order = this.target_ports.cmp(&other.target_ports);
+        // if order != cmp::Ordering::Equal {
+        //     return order;
+        // }
 
-        this.selector.cmp(&other.selector)
+        // this.selector.cmp(&other.selector)
     }
 }
 

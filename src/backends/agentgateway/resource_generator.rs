@@ -5,7 +5,6 @@ use agentgateway_api_rs::agentgateway::dev::resource::{
     backend::{self},
     policy_spec::InferenceRouting,
 };
-use itertools::Itertools;
 use tracing::{info, warn};
 
 use crate::common::{self, Backend, BackendType, InferencePoolTypeConfig, ProtocolType, ResourceKey};
@@ -204,14 +203,18 @@ fn create_backends(backend: &Backend) -> Option<(String, resource::Backend)> {
             ))
         },
         Backend::Resolved(BackendType::InferencePool(config)) => {
-            let name = format!("{}/{}", config.resource_key.namespace, config.resource_key.name);
-            Some((
-                name.clone(),
-                resource::Backend {
-                    name,
-                    kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.effective_port })),
-                },
-            ))
+            if config.target_ports.is_empty() {
+                None
+            } else {
+                let name = format!("{}/{}", config.resource_key.namespace, config.resource_key.name);
+                Some((
+                    name.clone(),
+                    resource::Backend {
+                        name,
+                        kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.target_ports[0] })),
+                    },
+                ))
+            }
         },
         _ => None,
     }
@@ -228,7 +231,7 @@ fn create_inference_policies(
             spec: Some(PolicySpec {
                 kind: Some(resource::policy_spec::Kind::InferenceRouting(InferenceRouting {
                     endpoint_picker: conf.inference_config.as_ref().map(|inference_config| BackendReference {
-                        port: inference_config.extension_ref().port_number.unwrap_or(9002) as u32,
+                        port: inference_config.extension_ref().port.as_ref().map_or_else(|| 9002, |f| f.number) as u32,
                         kind: Some(resource::backend_reference::Kind::Backend(epp_backend_name.clone())),
                     }),
                     failure_mode: 0,
@@ -246,7 +249,7 @@ fn create_inference_policies(
                     name: epp_backend_name,
                     kind: Some(backend::Kind::Static(StaticBackend {
                         host: inference_config.extension_ref().name.to_owned(),
-                        port: inference_config.extension_ref().port_number.unwrap_or(9002),
+                        port: inference_config.extension_ref().port.as_ref().map_or_else(|| 9002, |f| f.number),
                     })),
                 },
             )

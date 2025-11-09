@@ -4,9 +4,9 @@ metadata:
   name: agw-llm-route
 spec:
   parentRefs:
-    - group: gateway.networking.k8s.io
+    - name: agentgateway-one
+      group: gateway.networking.k8s.io
       kind: Gateway
-      name: agentgateway-one
   hostnames:
     - "www.inference-one.com"
   rules:

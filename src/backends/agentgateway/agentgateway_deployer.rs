@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::{Arc, LazyLock},
+    sync::LazyLock,
 };
 
 use agentgateway_api_rs::agentgateway::dev::{
@@ -74,17 +74,6 @@ pub struct AgentgatewayDeployerChannelHandlerService {
     cached_gateway_resources: HashMap<ResourceKey, CachedResources>,
     #[builder(default)]
     cached_gateway_workloads: HashMap<ResourceKey, CachedWorkloads>,
-}
-
-struct Delta<T> {
-    to_add: T,
-    to_delete: T,
-}
-
-impl<T> From<(T, T)> for Delta<T> {
-    fn from((to_add, to_delete): (T, T)) -> Self {
-        Delta { to_add, to_delete }
-    }
 }
 
 impl AgentgatewayDeployerChannelHandlerService {
@@ -498,15 +487,15 @@ fn name(gw: &str, port: i32, proto: &str) -> String {
     format! {"{gw}-{port}-{}",proto.to_lowercase()}
 }
 
-fn address_name(address: workload::Address) -> String {
-    match address.r#type {
-        Some(address) => match address {
-            workload::address::Type::Workload(workload) => workload.name.clone(),
-            workload::address::Type::Service(service) => service.name.clone(),
-        },
-        None => "Unknown".to_owned(),
-    }
-}
+// fn address_name(address: workload::Address) -> String {
+//     match address.r#type {
+//         Some(address) => match address {
+//             workload::address::Type::Workload(workload) => workload.name.clone(),
+//             workload::address::Type::Service(service) => service.name.clone(),
+//         },
+//         None => "Unknown".to_owned(),
+//     }
+// }
 
 fn create_service_account(gateway: &Gateway) -> ServiceAccount {
     ServiceAccount {
@@ -571,7 +560,7 @@ const AGENTGATEWAY_POD_SPEC: &str = r#"
                 },
                 {
                     "name": "RUST_LOG",
-                    "value": "trace"
+                    "value": "mio=warn,hyper_util_fork=warn,notify=info,notify_debounce_full=info,h2=warn,trace"
                 },
                 {
                     "name": "NAMESPACE",

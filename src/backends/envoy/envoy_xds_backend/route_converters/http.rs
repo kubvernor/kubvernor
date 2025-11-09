@@ -24,6 +24,7 @@ use envoy_api_rs::{
     google::protobuf::BoolValue,
 };
 use gateway_api::httproutes;
+use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
 use tracing::{debug, warn};
 
 use crate::backends::envoy::common::{
@@ -62,13 +63,8 @@ impl HTTPEffectiveRoutingRule {
                                     ..Default::default()
                                 }),
                                 failure_mode_allow: match conf.extension_ref().failure_mode.as_ref() {
-                                    Some(
-                                        gateway_api_inference_extension::inferencepools::InferencePoolExtensionRefFailureMode::FailOpen,
-                                    ) => Some(BoolValue { value: true }),
-                                    Some(
-                                        gateway_api_inference_extension::inferencepools::InferencePoolExtensionRefFailureMode::FailClose,
-                                    )
-                                    | None => Some(BoolValue { value: false }),
+                                    Some(InferencePoolEndpointPickerRefFailureMode::FailOpen) => Some(BoolValue { value: true }),
+                                    Some(InferencePoolEndpointPickerRefFailureMode::FailClose) | None => Some(BoolValue { value: false }),
                                 },
                                 ..Default::default()
                             })),

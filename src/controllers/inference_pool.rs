@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gateway_api::httproutes::{HTTPRoute, HTTPRouteRule};
 use gateway_api_inference_extension::inferencepools::{
-    InferencePool, InferencePoolStatus, InferencePoolStatusParent, InferencePoolStatusParentParentRef,
+    InferencePool, InferencePoolStatus, InferencePoolStatusParents, InferencePoolStatusParentsParentRef,
 };
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
@@ -178,7 +178,7 @@ impl InferencePoolControllerHandler<InferencePool> {
                 .get_gateways_with_http_routes(&routes.iter().map(|r| ResourceKey::from(r.as_ref())).collect())
                 .expect("We expect the lock to work");
 
-            let mut inference_pool = create_accepted_inference_pool_status((**resource).clone(), &gateways_ids);
+            let mut inference_pool = create_accepted_inference_pool_status(&self.controller_name, (**resource).clone(), &gateways_ids);
 
             self.state
                 .save_inference_pool(inference_pool_key.clone(), &Arc::new(inference_pool.clone()))
@@ -271,42 +271,53 @@ fn has_inference_pool(route: &HTTPRoute, inference_pool_key: &ResourceKey) -> bo
     })
 }
 
-fn create_accepted_inference_pool_status(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
+fn create_accepted_inference_pool_status(
+    controller_name: &str,
+    mut inference_pool: InferencePool,
+    gateways_ids: &BTreeSet<ResourceKey>,
+) -> InferencePool {
     inference_pool.status = None;
-    create_inference_pool_status_with_conditions(inference_pool, gateways_ids, &[InferencePoolCondition::Accepted(None).get_condition()])
+    create_inference_pool_status_with_conditions(
+        controller_name,
+        inference_pool,
+        gateways_ids,
+        &[InferencePoolCondition::Accepted(None).get_condition()],
+    )
 }
 
 pub fn clear_all_conditions(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
     if let Some(status) = inference_pool.status.as_mut() {
-        if let Some(parents) = status.parent.as_ref() {
+        if let Some(parents) = status.parents.as_ref() {
             let new_parents = parents.iter().filter(|parent| {
                 let key = ResourceKey::from(&parent.parent_ref);
                 gateways_ids.contains(&key)
             });
 
-            status.parent = Some(new_parents.cloned().collect());
+            status.parents = Some(new_parents.cloned().collect());
         }
     }
     inference_pool
 }
 
 fn create_inference_pool_status_with_conditions(
+    controller_name: &str,
     mut inference_pool: InferencePool,
     gateways_ids: &BTreeSet<ResourceKey>,
     conditions: &[Condition],
 ) -> InferencePool {
     let mut inference_pool_status = inference_pool.status.clone().unwrap_or_default();
-    inference_pool_status.parent = Some(
+    inference_pool_status.parents = Some(
         gateways_ids
             .iter()
-            .map(|id| InferencePoolStatusParent {
+            .map(|id| InferencePoolStatusParents {
                 conditions: Some(conditions.to_vec()),
-                parent_ref: InferencePoolStatusParentParentRef {
+                parent_ref: InferencePoolStatusParentsParentRef {
                     kind: Some(id.kind.clone()),
                     name: id.name.clone(),
                     namespace: Some(id.namespace.clone()),
                     ..Default::default()
                 },
+                controller_name: Some(controller_name.to_owned()),
             })
             .collect(),
     );
@@ -316,6 +327,7 @@ fn create_inference_pool_status_with_conditions(
 }
 
 pub fn update_inference_pool_parents(
+    controller_name: &str,
     gateway: &ResourceKey,
     mut inference_pool: InferencePool,
     resolved_endpoint_picker: bool,
@@ -323,7 +335,7 @@ pub fn update_inference_pool_parents(
     let gateway_name = gateway.name.clone();
     let gateway_namespace = gateway.namespace.clone();
 
-    let mut parents = inference_pool.status.clone().map(|s| s.parent.unwrap_or_default()).unwrap_or_default();
+    let mut parents = inference_pool.status.clone().map(|s| s.parents.unwrap_or_default()).unwrap_or_default();
 
     let conditions = if resolved_endpoint_picker {
         vec![
@@ -345,26 +357,27 @@ pub fn update_inference_pool_parents(
         update_conditions(parent, conditions);
         info!("Updating conditions {gateway} {parent:?}");
     } else {
-        let new_parent = InferencePoolStatusParent {
+        let new_parent = InferencePoolStatusParents {
             conditions: Some(conditions),
-            parent_ref: InferencePoolStatusParentParentRef {
+            parent_ref: InferencePoolStatusParentsParentRef {
                 name: gateway_name.clone(),
                 namespace: Some(gateway_namespace.clone()),
                 kind: Some("Gateway".to_owned()),
                 ..Default::default()
             },
+            controller_name: Some(controller_name.to_owned()),
         };
         parents.push(new_parent);
     }
 
     let parents = parents.into_iter().filter(|p| p.parent_ref.kind == Some("Gateway".to_owned())).collect();
 
-    inference_pool.status = Some(InferencePoolStatus { parent: Some(parents) });
+    inference_pool.status = Some(InferencePoolStatus { parents: Some(parents) });
     inference_pool
 }
 
-fn update_conditions(parent: &mut InferencePoolStatusParent, new_conditions: Vec<Condition>) {
-    if let Some(conditions) = &parent.conditions {
+fn update_conditions(parents: &mut InferencePoolStatusParents, new_conditions: Vec<Condition>) {
+    if let Some(conditions) = &parents.conditions {
         let conditions: BTreeSet<_> = conditions.clone().into_iter().map(ConditionHolder).collect();
         let new_conditions: BTreeSet<_> = new_conditions.into_iter().map(ConditionHolder).collect();
 
@@ -376,9 +389,9 @@ fn update_conditions(parent: &mut InferencePoolStatusParent, new_conditions: Vec
 
         let conditions = same_conditions.union(&new_conditions).cloned().map(std::convert::Into::into).collect();
 
-        parent.conditions = Some(conditions);
+        parents.conditions = Some(conditions);
     } else {
-        parent.conditions = Some(new_conditions);
+        parents.conditions = Some(new_conditions);
     }
 }
 #[derive(Debug, Clone)]
@@ -416,7 +429,7 @@ impl PartialEq for ConditionHolder {
 }
 
 pub fn remove_inference_pool_parents(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
-    let parents = inference_pool.status.clone().map(|s| s.parent.unwrap_or_default()).unwrap_or_default();
+    let parents = inference_pool.status.clone().map(|s| s.parents.unwrap_or_default()).unwrap_or_default();
     let parents = parents
         .into_iter()
         .filter(|p| {
@@ -427,7 +440,7 @@ pub fn remove_inference_pool_parents(mut inference_pool: InferencePool, gateways
         })
         .collect();
 
-    inference_pool.status = Some(InferencePoolStatus { parent: Some(parents) });
+    inference_pool.status = Some(InferencePoolStatus { parents: Some(parents) });
     inference_pool
 }
 

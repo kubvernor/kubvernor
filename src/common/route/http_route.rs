@@ -128,7 +128,7 @@ impl From<(&HTTPBackendReference, &str)> for InferencePoolTypeConfig {
                 format!("{}.{local_namespace}", br.name)
             },
             port: br.port.unwrap_or(0),
-            effective_port: br.port.unwrap_or(0),
+            target_ports: vec![br.port.unwrap_or(0)],
             weight: br.weight.unwrap_or(1),
             inference_config: None,
             endpoints: None,
