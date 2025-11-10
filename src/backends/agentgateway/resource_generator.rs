@@ -124,7 +124,7 @@ impl<'a> ResourceGenerator<'a> {
                                 info!("(Inference policies routing rule {}  {backend_policies:#?}", routing_rule.name);
 
                                 backend_policies.extend(policies);
-                                backends.extend(&mut routing_rule.backends.iter().filter_map(create_backends));
+                                backends.extend(&mut routing_rule.backends.iter().flat_map(create_backends).flatten());
                                 let epp_backends = epp_backends.into_iter().flatten().collect::<Vec<_>>();
                                 backends.extend(epp_backends);
                                 Route {
@@ -188,35 +188,52 @@ fn create_route_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentg
     }
 }
 
-fn create_backends(backend: &Backend) -> Option<(String, resource::Backend)> {
+fn create_backends(backend: &Backend) -> Vec<Option<(String, resource::Backend)>> {
     match backend {
         Backend::Resolved(BackendType::Service(config)) => {
             let name = format!("{}/{}", config.resource_key.namespace, config.resource_key.name);
-            Some((
+            vec![Some((
                 name.clone(),
                 resource::Backend {
                     name,
                     kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.effective_port })),
                     inline_policies: vec![],
                 },
-            ))
+            ))]
         },
         Backend::Resolved(BackendType::InferencePool(config)) => {
-            if config.target_ports.is_empty() {
-                None
+            if let Some(endpoints) = config.endpoints.as_ref() {
+                endpoints
+                    .iter()
+                    .map(|e| {
+                        if config.target_ports.is_empty() {
+                            None
+                        } else {
+                            let name = format!("{}/{}", config.resource_key.namespace, config.resource_key.name);
+                            Some((
+                                name.clone(),
+                                resource::Backend {
+                                    name,
+                                    kind: Some(backend::Kind::Static(StaticBackend { host: e.clone(), port: config.target_ports[0] })),
+                                    inline_policies: vec![],
+                                },
+                            ))
+                        }
+                    })
+                    .collect()
             } else {
                 let name = format!("{}/{}", config.resource_key.namespace, config.resource_key.name);
-                Some((
+                vec![Some((
                     name.clone(),
                     resource::Backend {
                         name,
                         kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.target_ports[0] })),
                         inline_policies: vec![],
                     },
-                ))
+                ))]
             }
         },
-        _ => None,
+        _ => vec![None],
     }
 }
 
