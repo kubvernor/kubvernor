@@ -487,16 +487,6 @@ fn name(gw: &str, port: i32, proto: &str) -> String {
     format! {"{gw}-{port}-{}",proto.to_lowercase()}
 }
 
-// fn address_name(address: workload::Address) -> String {
-//     match address.r#type {
-//         Some(address) => match address {
-//             workload::address::Type::Workload(workload) => workload.name.clone(),
-//             workload::address::Type::Service(service) => service.name.clone(),
-//         },
-//         None => "Unknown".to_owned(),
-//     }
-// }
-
 fn create_service_account(gateway: &Gateway) -> ServiceAccount {
     ServiceAccount {
         metadata: ObjectMeta {

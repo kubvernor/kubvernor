@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use agentgateway_api_rs::agentgateway::dev::resource::{
-    self, BackendReference, Listener, Policy, PolicySpec, PolicyTarget, Route, RouteBackend, StaticBackend,
+    self, BackendPolicySpec, BackendReference, Listener, Policy, PolicyTarget, Route, RouteBackend, StaticBackend,
     backend::{self},
-    policy_spec::InferenceRouting,
+    backend_policy_spec, policy,
 };
 use tracing::{info, warn};
 
@@ -134,10 +134,8 @@ impl<'a> ResourceGenerator<'a> {
                                     route_name: route.name().to_owned(),
                                     hostnames: route.hostnames().to_vec(),
                                     matches: routing_rule.matching_rules.iter().map(convert_route_match).collect(),
-                                    filters: vec![],
                                     backends: routing_rule.backends.iter().filter_map(create_route_backend).collect(),
-                                    traffic_policy: None,
-                                    inline_policies: vec![],
+                                    traffic_policies: vec![],
                                 }
                             })
                             .collect::<Vec<_>>()
@@ -173,7 +171,7 @@ fn create_route_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentg
                 ))),
             }),
             weight: config.weight,
-            filters: vec![],
+            backend_policies: vec![],
         }),
         Backend::Resolved(BackendType::InferencePool(config)) => Some(RouteBackend {
             backend: Some(agentgateway_api_rs::agentgateway::dev::resource::BackendReference {
@@ -184,7 +182,7 @@ fn create_route_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentg
                 ))),
             }),
             weight: config.weight,
-            filters: vec![],
+            backend_policies: vec![],
         }),
         _ => None,
     }
@@ -199,6 +197,7 @@ fn create_backends(backend: &Backend) -> Option<(String, resource::Backend)> {
                 resource::Backend {
                     name,
                     kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.effective_port })),
+                    inline_policies: vec![],
                 },
             ))
         },
@@ -212,6 +211,7 @@ fn create_backends(backend: &Backend) -> Option<(String, resource::Backend)> {
                     resource::Backend {
                         name,
                         kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.target_ports[0] })),
+                        inline_policies: vec![],
                     },
                 ))
             }
@@ -228,15 +228,16 @@ fn create_inference_policies(
     let epp_backend_name = format!("epp-backend-{policy_name}");
     (
         Policy {
-            spec: Some(PolicySpec {
-                kind: Some(resource::policy_spec::Kind::InferenceRouting(InferenceRouting {
+            kind: Some(policy::Kind::Backend(BackendPolicySpec {
+                kind: Some(backend_policy_spec::Kind::InferenceRouting(backend_policy_spec::InferenceRouting {
                     endpoint_picker: conf.inference_config.as_ref().map(|inference_config| BackendReference {
                         port: inference_config.extension_ref().port.as_ref().map_or_else(|| 9002, |f| f.number) as u32,
                         kind: Some(resource::backend_reference::Kind::Backend(epp_backend_name.clone())),
                     }),
                     failure_mode: 0,
                 })),
-            }),
+            })),
+
             name: policy_name.to_owned(),
             target: Some(PolicyTarget {
                 kind: Some(resource::policy_target::Kind::Backend(format!("{}/{}", backend.namespace, backend.name))),
@@ -248,9 +249,10 @@ fn create_inference_policies(
                 resource::Backend {
                     name: epp_backend_name,
                     kind: Some(backend::Kind::Static(StaticBackend {
-                        host: inference_config.extension_ref().name.to_owned(),
+                        host: inference_config.extension_ref().name.clone(),
                         port: inference_config.extension_ref().port.as_ref().map_or_else(|| 9002, |f| f.number),
                     })),
+                    inline_policies: vec![],
                 },
             )
         }),
