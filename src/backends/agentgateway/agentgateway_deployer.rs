@@ -142,7 +142,7 @@ impl AgentgatewayDeployerChannelHandlerService {
 
                                         let workloads = vec![workload::Address{ r#type: Some(workload::address::Type::Service(workload::Service::default())) }].into_iter().chain(services.clone().into_iter().map(|svc|
                                             workload::Address{ r#type: Some(workload::address::Type::Service(svc))}
-                                        )).chain(services.into_iter().map(|svc| workload::Address{ r#type: Some(workload::address::Type::Workload(Self::convert_into_workload(svc)))})).collect();
+                                        )).chain(services.into_iter().map(|svc| Self::convert_into_workload(svc).into_iter().map(|w| workload::Address{ r#type: Some(workload::address::Type::Workload(w))}).collect::<Vec<_>>()).flatten()).collect();
                                         let _ = stream_resource_sender.send(ServerAction::UpdateWorkloads {
                                             gateway_id: gateway.key().clone(),
                                             workloads,
@@ -160,9 +160,6 @@ impl AgentgatewayDeployerChannelHandlerService {
                                     let response_sender = ctx.response_sender;
                                     let gateway  = &ctx.gateway;
                                     info!("AgentgatewayDeployerChannelHandlerService GatewayDeleted {}",gateway.key());
-                                    // if self.cached_gateway_resources.remove(gateway.key()).is_none(){
-                                    //     warn!("AgentgatewayDeployerChannelHandlerService GatewayDeleted attempting to delete a gateway we don't know anything about {}",gateway.key());
-                                    // }
 
                                     if let Err(e) = undeploy_agentgateway(client.clone(), gateway).await{
                                         warn!("Gateway deleted with errors {e:?}");
@@ -241,17 +238,21 @@ impl AgentgatewayDeployerChannelHandlerService {
         }
     }
 
-    fn convert_into_workload(service: workload::Service) -> workload::Workload {
+    fn convert_into_workload(service: workload::Service) -> Vec<workload::Workload> {
         let mut services = HashMap::new();
         services.insert(format!("{}/{}", service.namespace, service.hostname), workload::PortList { ports: service.ports });
-        workload::Workload {
-            uid: format!("workload-{}/{}", service.namespace, service.hostname),
-            name: format!("workload-{}/{}", service.namespace, service.hostname),
-            namespace: service.namespace.clone(),
-            addresses: service.addresses.into_iter().map(|a| a.address).collect(),
-            services: services,
-            ..Default::default()
-        }
+        service
+            .addresses
+            .into_iter()
+            .map(|a| workload::Workload {
+                uid: format!("workload-{}/{}-{:x?}", service.namespace, service.hostname, a.address),
+                name: format!("workload-{}/{}-{:x?}", service.namespace, service.hostname, a.address),
+                namespace: service.namespace.clone(),
+                addresses: vec![a.address],
+                services: services.clone(),
+                ..Default::default()
+            })
+            .collect()
     }
     fn find_gateway_addresses(service: &Service) -> Option<Vec<String>> {
         let mut ips = vec![];

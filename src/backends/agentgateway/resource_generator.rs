@@ -6,7 +6,7 @@ use agentgateway_api_rs::agentgateway::dev::{
         backend::{self},
         backend_policy_spec, policy,
     },
-    workload::{self, NetworkAddress},
+    workload::{self, LoadBalancing, NetworkAddress},
 };
 use tracing::{info, warn};
 
@@ -244,6 +244,7 @@ fn create_backend_services(backend: &Backend) -> Option<(String, workload::Servi
                             })
                             .collect()
                     }),
+                    load_balancing: Some(LoadBalancing { routing_preference: vec![], mode: 0, health_policy: 1 }),
                     ..Default::default()
                 },
             ))
