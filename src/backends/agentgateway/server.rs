@@ -349,11 +349,10 @@ impl AggregateServerService {
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
                                 info!("Sending workloads DELTA discovery response {gateway_id} clients {}", clients.len());
                                 for client in &mut clients{
-                                    let Delta{to_add: to_add_workloads, to_remove: to_remove_workloads} = client.cache_workloads_and_calculate_delta(workloads.clone());
-                                    //let Delta{to_add: to_add_services, to_remove:to_remove_services} = client.cache_services_and_calculate_delta(services.clone());
+                                    let Delta{to_add: to_add_workloads, to_remove: to_remove_workloads} =
+                                        client.cache_workloads_and_calculate_delta(workloads.clone());
 
                                     debug!("Sending workloads DELTA Addresses discovery response for client {} {to_add_workloads:?} {to_remove_workloads:?}", client.client_id);
-                                    //debug!("Sending workloads DELTA Addresses discovery response for client {} {to_add_services:?} {to_remove_services:?}", client.client_id);
 
                                     let resources: Vec<_> = to_add_workloads.into_iter().map(|address|
                                         agentgateway_api_rs::envoy::service::discovery::v3::Resource{
@@ -361,19 +360,9 @@ impl AggregateServerService {
                                             resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
                                             address
                                         ))),..Default::default()})
-                                    //.chain(to_add_services.into_iter().map(|svc|
-                                        //     agentgateway_api_rs::envoy::service::discovery::v3::Resource{
-                                        //         name:"type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                        //         resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                        //             svc
-                                        //     ))),..Default::default()})
-
-                                        //     )
                                     .collect();
 
                                     let removed_resources = to_remove_workloads;
-                                    //.into_iter().chain(to_remove_services.into_iter()).collect();
-
 
                                     let response = DeltaDiscoveryResponse {
                                         type_url: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
@@ -384,25 +373,7 @@ impl AggregateServerService {
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
 
-                                    // debug!("Sending workloads DELTA Services discovery response for client {} {to_add_services:?} {to_remove_services:?}", client.client_id);
-                                    // let response = DeltaDiscoveryResponse {
-                                    //     type_url: "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                    //     resources: to_add_services.into_iter().map(|svc|
-                                    //         agentgateway_api_rs::envoy::service::discovery::v3::Resource{
-                                    //             name:"type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                    //             resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                    //             svc
-                                    //         ))),
-                                    //             ..Default::default() }
-                                    //         ).collect(),
-                                    //     nonce: uuid::Uuid::new_v4().to_string(),
-                                    //     removed_resources: to_remove_services,
-                                    //     ..Default::default()
-                                    // };
-                                    // let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                    //
-                                    //
-                                     ads_clients.update_client_and_workloads(client,workloads.clone());
+                                    ads_clients.update_client_and_workloads(client,workloads.clone());
                                 }
                             }
                         }

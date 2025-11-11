@@ -1,7 +1,10 @@
-use std::{collections::BTreeMap, sync::LazyLock};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::LazyLock,
+};
 
 use agentgateway_api_rs::agentgateway::dev::{
-    resource::{self, Bind, Listener, Resource, resource::Kind},
+    resource::{Bind, Listener, Resource, resource::Kind},
     workload::{self},
 };
 use futures::FutureExt;
@@ -47,30 +50,12 @@ pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templat
     },
 });
 
-#[derive(Clone, Default)]
-struct CachedResources {
-    bindings: Vec<resource::Bind>,
-    listeners: Vec<resource::Listener>,
-    routes: Vec<resource::Route>,
-    backends: Vec<resource::Backend>,
-    policies: Vec<resource::Policy>,
-}
-
-#[derive(Clone, Default)]
-struct CachedWorkloads {
-    addresses: Vec<workload::Address>,
-}
-
 #[derive(TypedBuilder)]
 pub struct AgentgatewayDeployerChannelHandlerService {
     control_plane_config: ControlPlaneConfig,
     client: Client,
     backend_deploy_request_channel_receiver: Receiver<BackendGatewayEvent>,
     backend_response_channel_sender: Sender<BackendGatewayResponse>,
-    // #[builder(default)]
-    // cached_gateway_resources: HashMap<ResourceKey, CachedResources>,
-    // #[builder(default)]
-    // cached_gateway_workloads: HashMap<ResourceKey, CachedWorkloads>,
 }
 
 impl AgentgatewayDeployerChannelHandlerService {
@@ -98,7 +83,8 @@ impl AgentgatewayDeployerChannelHandlerService {
                                         let bindings_and_listeners = resource_generator.generate_bindings_and_listeners();
 
 
-                                        let (routes, backends, policies, services) = resource_generator.generate_routes_and_backends_and_policies();
+                                        let (routes, backends, policies, services) =
+                                            resource_generator.generate_routes_and_backends_and_policies();
 
                                         let bindings = bindings_and_listeners.keys().cloned().map(|b|
                                             Bind{
@@ -154,9 +140,9 @@ impl AgentgatewayDeployerChannelHandlerService {
                                                     .collect(),
                                         }).await;
 
-                                        let workloads = vec![workload::Address{ r#type: Some(workload::address::Type::Service(workload::Service::default())) }].into_iter().chain(services.into_iter().map(|svc|
+                                        let workloads = vec![workload::Address{ r#type: Some(workload::address::Type::Service(workload::Service::default())) }].into_iter().chain(services.clone().into_iter().map(|svc|
                                             workload::Address{ r#type: Some(workload::address::Type::Service(svc))}
-                                        )).collect();
+                                        )).chain(services.into_iter().map(|svc| workload::Address{ r#type: Some(workload::address::Type::Workload(Self::convert_into_workload(svc)))})).collect();
                                         let _ = stream_resource_sender.send(ServerAction::UpdateWorkloads {
                                             gateway_id: gateway.key().clone(),
                                             workloads,
@@ -252,6 +238,19 @@ impl AgentgatewayDeployerChannelHandlerService {
                 }
                 debug!("Task completed for gateway {} service {}", gateway.key(), resource_key);
             });
+        }
+    }
+
+    fn convert_into_workload(service: workload::Service) -> workload::Workload {
+        let mut services = HashMap::new();
+        services.insert(format!("{}/{}", service.namespace, service.hostname), workload::PortList { ports: service.ports });
+        workload::Workload {
+            uid: format!("workload-{}/{}", service.namespace, service.hostname),
+            name: format!("workload-{}/{}", service.namespace, service.hostname),
+            namespace: service.namespace.clone(),
+            addresses: service.addresses.into_iter().map(|a| a.address).collect(),
+            services: services,
+            ..Default::default()
         }
     }
     fn find_gateway_addresses(service: &Service) -> Option<Vec<String>> {

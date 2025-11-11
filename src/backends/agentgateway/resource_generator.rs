@@ -183,9 +183,9 @@ fn create_route_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentg
         }),
         Backend::Resolved(BackendType::InferencePool(config)) => Some(RouteBackend {
             backend: Some(agentgateway_api_rs::agentgateway::dev::resource::BackendReference {
-                port: config.port as u32,
+                port: if config.target_ports.is_empty() { config.port as u32 } else { config.target_ports[0] as u32 },
                 kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Service(format!(
-                    "service/{}/{}",
+                    "{}/{}",
                     config.resource_key.namespace, config.endpoint
                 ))),
             }),
@@ -272,7 +272,7 @@ fn create_inference_policies(
 
             name: policy_name.to_owned(),
             target: Some(PolicyTarget {
-                kind: Some(resource::policy_target::Kind::Backend(format!("{}/{}", backend.namespace, backend.name))),
+                kind: Some(resource::policy_target::Kind::Service(format!("{}/{}", backend.namespace, conf.endpoint))),
             }),
         },
         conf.inference_config.as_ref().map(|inference_config| {
