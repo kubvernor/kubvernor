@@ -185,7 +185,7 @@ fn create_route_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentg
             backend: Some(agentgateway_api_rs::agentgateway::dev::resource::BackendReference {
                 port: config.port as u32,
                 kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Service(format!(
-                    "{}/{}",
+                    "service/{}/{}",
                     config.resource_key.namespace, config.endpoint
                 ))),
             }),
@@ -198,37 +198,16 @@ fn create_route_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentg
 
 fn create_backends(backend: &Backend) -> Vec<Option<(String, resource::Backend)>> {
     match backend {
-        Backend::Resolved(BackendType::InferencePool(config)) => {
-            if let Some(endpoints) = config.endpoints.as_ref() {
-                endpoints
-                    .iter()
-                    .map(|e| {
-                        if config.target_ports.is_empty() {
-                            None
-                        } else {
-                            let name = format!("{}/{}", config.resource_key.namespace, config.resource_key.name);
-                            Some((
-                                name.clone(),
-                                resource::Backend {
-                                    name,
-                                    kind: Some(backend::Kind::Static(StaticBackend { host: e.clone(), port: config.target_ports[0] })),
-                                    inline_policies: vec![],
-                                },
-                            ))
-                        }
-                    })
-                    .collect()
-            } else {
-                let name = format!("{}/{}", config.resource_key.namespace, config.resource_key.name);
-                vec![Some((
-                    name.clone(),
-                    resource::Backend {
-                        name,
-                        kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.target_ports[0] })),
-                        inline_policies: vec![],
-                    },
-                ))]
-            }
+        Backend::Resolved(BackendType::Service(config)) => {
+            let name = format!("{}/{}", config.resource_key.namespace, config.resource_key.name);
+            vec![Some((
+                name.clone(),
+                resource::Backend {
+                    name,
+                    kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.port })),
+                    inline_policies: vec![],
+                },
+            ))]
         },
         _ => vec![None],
     }
