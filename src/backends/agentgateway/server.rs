@@ -39,7 +39,7 @@ use crate::{
 
 pub enum ServerAction {
     UpdateResources { gateway_id: ResourceKey, resources: Vec<Resource> },
-    UpdateWorkloads { gateway_id: ResourceKey, workloads: Vec<workload::Address>, services: Vec<workload::Service> },
+    UpdateWorkloads { gateway_id: ResourceKey, workloads: Vec<workload::Address> },
 }
 
 fn print_resource(res: &Resource) -> String {
@@ -69,13 +69,8 @@ impl Display for ServerAction {
                 )
             },
 
-            ServerAction::UpdateWorkloads { gateway_id, workloads, services } => {
-                write!(
-                    f,
-                    "ServerAction::UpdateAddresses {{gateway_id: {gateway_id}, workloads: {} services: {}}}",
-                    workloads.len(),
-                    services.len()
-                )
+            ServerAction::UpdateWorkloads { gateway_id, workloads } => {
+                write!(f, "ServerAction::UpdateAddresses {{gateway_id: {gateway_id}, workloads: {} }}", workloads.len(),)
             },
         }
     }
@@ -102,7 +97,6 @@ struct AdsClient {
     gateway_id: Option<String>,
     resources: Vec<Resource>,
     workloads: Vec<workload::Address>,
-    services: Vec<workload::Service>,
 }
 
 struct Delta<T> {
@@ -118,15 +112,7 @@ impl<T> From<(Vec<T>, Vec<String>)> for Delta<T> {
 
 impl AdsClient {
     fn new(client_id: SocketAddr, sender: mpsc::Sender<Result<DeltaDiscoveryResponse, Status>>) -> Self {
-        Self {
-            sender,
-            client_id,
-            gateway_id: None,
-            ack_versions: AckVersions::default(),
-            resources: vec![],
-            workloads: vec![],
-            services: vec![],
-        }
+        Self { sender, client_id, gateway_id: None, ack_versions: AckVersions::default(), resources: vec![], workloads: vec![] }
     }
 
     fn update_from(&mut self, value: &AdsClient) {
@@ -190,17 +176,6 @@ impl AdsClient {
             .collect();
 
         self.workloads = new_workloads;
-        Delta { to_add, to_remove }
-    }
-
-    fn cache_services_and_calculate_delta(&mut self, new_services: Vec<workload::Service>) -> Delta<workload::Service> {
-        let cached_services = &self.services;
-        let to_add = difference(&new_services, cached_services);
-        let to_remove = difference(cached_services, &new_services);
-
-        let to_remove = to_remove.into_iter().map(|r| format!("service/{}/{}", r.name, r.namespace)).collect();
-
-        self.services = new_services;
         Delta { to_add, to_remove }
     }
 }
@@ -369,16 +344,16 @@ impl AggregateServerService {
                                 }
                             },
 
-                            ServerAction::UpdateWorkloads{ gateway_id: gateway_key, workloads, services } => {
+                            ServerAction::UpdateWorkloads{ gateway_id: gateway_key, workloads } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
                                 info!("Sending workloads DELTA discovery response {gateway_id} clients {}", clients.len());
                                 for client in &mut clients{
                                     let Delta{to_add: to_add_workloads, to_remove: to_remove_workloads} = client.cache_workloads_and_calculate_delta(workloads.clone());
-                                    let Delta{to_add: to_add_services, to_remove:to_remove_services} = client.cache_services_and_calculate_delta(services.clone());
+                                    //let Delta{to_add: to_add_services, to_remove:to_remove_services} = client.cache_services_and_calculate_delta(services.clone());
 
                                     debug!("Sending workloads DELTA Addresses discovery response for client {} {to_add_workloads:?} {to_remove_workloads:?}", client.client_id);
-                                    debug!("Sending workloads DELTA Addresses discovery response for client {} {to_add_services:?} {to_remove_services:?}", client.client_id);
+                                    //debug!("Sending workloads DELTA Addresses discovery response for client {} {to_add_services:?} {to_remove_services:?}", client.client_id);
 
                                     let resources: Vec<_> = to_add_workloads.into_iter().map(|address|
                                         agentgateway_api_rs::envoy::service::discovery::v3::Resource{
@@ -409,22 +384,24 @@ impl AggregateServerService {
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
 
-                                    debug!("Sending workloads DELTA Services discovery response for client {} {to_add_services:?} {to_remove_services:?}", client.client_id);
-                                    let response = DeltaDiscoveryResponse {
-                                        type_url: "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                        resources: to_add_services.into_iter().map(|svc|
-                                            agentgateway_api_rs::envoy::service::discovery::v3::Resource{
-                                                name:"type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                                resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                                svc
-                                            ))),
-                                                ..Default::default() }
-                                            ).collect(),
-                                        nonce: uuid::Uuid::new_v4().to_string(),
-                                        removed_resources: to_remove_services,
-                                        ..Default::default()
-                                    };
-                                    let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                    // debug!("Sending workloads DELTA Services discovery response for client {} {to_add_services:?} {to_remove_services:?}", client.client_id);
+                                    // let response = DeltaDiscoveryResponse {
+                                    //     type_url: "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
+                                    //     resources: to_add_services.into_iter().map(|svc|
+                                    //         agentgateway_api_rs::envoy::service::discovery::v3::Resource{
+                                    //             name:"type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
+                                    //             resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
+                                    //             svc
+                                    //         ))),
+                                    //             ..Default::default() }
+                                    //         ).collect(),
+                                    //     nonce: uuid::Uuid::new_v4().to_string(),
+                                    //     removed_resources: to_remove_services,
+                                    //     ..Default::default()
+                                    // };
+                                    // let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                    //
+                                    //
                                      ads_clients.update_client_and_workloads(client,workloads.clone());
                                 }
                             }

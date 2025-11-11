@@ -154,10 +154,12 @@ impl AgentgatewayDeployerChannelHandlerService {
                                                     .collect(),
                                         }).await;
 
+                                        let workloads = vec![workload::Address{ r#type: Some(workload::address::Type::Service(workload::Service::default())) }].into_iter().chain(services.into_iter().map(|svc|
+                                            workload::Address{ r#type: Some(workload::address::Type::Service(svc))}
+                                        )).collect();
                                         let _ = stream_resource_sender.send(ServerAction::UpdateWorkloads {
                                             gateway_id: gateway.key().clone(),
-                                            workloads: vec![workload::Address{ r#type: Some(workload::address::Type::Service(workload::Service::default())) }],
-                                            services
+                                            workloads,
                                         }).await;
 
                                         self.update_address_with_polling(&service, *ctx).await;
