@@ -9,7 +9,7 @@ use std::{
 use agentgateway_api_rs::{
     agentgateway::dev::{
         resource::{Resource, resource::Kind},
-        workload::Address,
+        workload::{self, Address},
     },
     envoy::service::discovery::v3::{
         DeltaDiscoveryRequest, DeltaDiscoveryResponse, DiscoveryRequest, DiscoveryResponse, Node,
@@ -39,7 +39,7 @@ use crate::{
 
 pub enum ServerAction {
     UpdateResources { gateway_id: ResourceKey, resources: Vec<Resource> },
-    UpdateWorkloads { gateway_id: ResourceKey, workloads: Vec<Address> },
+    UpdateWorkloads { gateway_id: ResourceKey, workloads: Vec<workload::Address>, services: Vec<workload::Service> },
 }
 
 fn print_resource(res: &Resource) -> String {
@@ -69,8 +69,13 @@ impl Display for ServerAction {
                 )
             },
 
-            ServerAction::UpdateWorkloads { gateway_id, workloads } => {
-                write!(f, "ServerAction::UpdateAddresses {{gateway_id: {gateway_id}, workloads: {} }}", workloads.len(),)
+            ServerAction::UpdateWorkloads { gateway_id, workloads, services } => {
+                write!(
+                    f,
+                    "ServerAction::UpdateAddresses {{gateway_id: {gateway_id}, workloads: {} services: {}}}",
+                    workloads.len(),
+                    services.len()
+                )
             },
         }
     }
@@ -96,7 +101,8 @@ struct AdsClient {
     client_id: SocketAddr,
     gateway_id: Option<String>,
     resources: Vec<Resource>,
-    workloads: Vec<Address>,
+    workloads: Vec<workload::Address>,
+    services: Vec<workload::Service>,
 }
 
 struct Delta<T> {
@@ -112,7 +118,15 @@ impl<T> From<(Vec<T>, Vec<String>)> for Delta<T> {
 
 impl AdsClient {
     fn new(client_id: SocketAddr, sender: mpsc::Sender<Result<DeltaDiscoveryResponse, Status>>) -> Self {
-        Self { sender, client_id, gateway_id: None, ack_versions: AckVersions::default(), resources: vec![], workloads: vec![] }
+        Self {
+            sender,
+            client_id,
+            gateway_id: None,
+            ack_versions: AckVersions::default(),
+            resources: vec![],
+            workloads: vec![],
+            services: vec![],
+        }
     }
 
     fn update_from(&mut self, value: &AdsClient) {
@@ -166,16 +180,27 @@ impl AdsClient {
             .filter_map(|r| {
                 r.r#type.map(|workloads_type| match workloads_type {
                     agentgateway_api_rs::agentgateway::dev::workload::address::Type::Workload(workload) => {
-                        "workload/".to_owned() + &workload.uid
+                        "address/".to_owned() + &workload.uid
                     },
                     agentgateway_api_rs::agentgateway::dev::workload::address::Type::Service(service) => {
-                        format!("service/{}/{}", service.name, service.namespace)
+                        format!("address/{}/{}", service.name, service.namespace)
                     },
                 })
             })
             .collect();
 
         self.workloads = new_workloads;
+        Delta { to_add, to_remove }
+    }
+
+    fn cache_services_and_calculate_delta(&mut self, new_services: Vec<workload::Service>) -> Delta<workload::Service> {
+        let cached_services = &self.services;
+        let to_add = difference(&new_services, cached_services);
+        let to_remove = difference(cached_services, &new_services);
+
+        let to_remove = to_remove.into_iter().map(|r| format!("service/{}/{}", r.name, r.namespace)).collect();
+
+        self.services = new_services;
         Delta { to_add, to_remove }
     }
 }
@@ -344,16 +369,19 @@ impl AggregateServerService {
                                 }
                             },
 
-                            ServerAction::UpdateWorkloads{ gateway_id: gateway_key, workloads } => {
+                            ServerAction::UpdateWorkloads{ gateway_id: gateway_key, workloads, services } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
                                 info!("Sending workloads DELTA discovery response {gateway_id} clients {}", clients.len());
                                 for client in &mut clients{
-                                    let Delta{to_add, to_remove} = client.cache_workloads_and_calculate_delta(workloads.clone());
-                                    debug!("Sending workloads DELTA discovery response for client {} {to_add:?} {to_remove:?}", client.client_id);
+                                    let Delta{to_add: to_add_workloads, to_remove: to_remove_workloads} = client.cache_workloads_and_calculate_delta(workloads.clone());
+                                    let Delta{to_add: to_add_services, to_remove:to_remove_services} = client.cache_services_and_calculate_delta(services.clone());
+
+
+                                    debug!("Sending workloads DELTA Addresses discovery response for client {} {to_add_workloads:?} {to_remove_workloads:?}", client.client_id);
                                     let response = DeltaDiscoveryResponse {
                                         type_url: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
-                                        resources: to_add.into_iter().map(|address|
+                                        resources: to_add_workloads.into_iter().map(|address|
                                             agentgateway_api_rs::envoy::service::discovery::v3::Resource{
                                                 name:"type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
                                                 resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
@@ -362,7 +390,24 @@ impl AggregateServerService {
                                                 ..Default::default() }
                                             ).collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
-                                        removed_resources: to_remove,
+                                        removed_resources: to_remove_workloads,
+                                        ..Default::default()
+                                    };
+                                    let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
+
+                                    debug!("Sending workloads DELTA Services discovery response for client {} {to_add_services:?} {to_remove_services:?}", client.client_id);
+                                    let response = DeltaDiscoveryResponse {
+                                        type_url: "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
+                                        resources: to_add_services.into_iter().map(|svc|
+                                            agentgateway_api_rs::envoy::service::discovery::v3::Resource{
+                                                name:"type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
+                                                resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
+                                                svc
+                                            ))),
+                                                ..Default::default() }
+                                            ).collect(),
+                                        nonce: uuid::Uuid::new_v4().to_string(),
+                                        removed_resources: to_remove_services,
                                         ..Default::default()
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
@@ -396,6 +441,7 @@ impl AggregatedDiscoveryService for AggregateServer {
 
     type DeltaAggregatedResourcesStream = Pin<Box<dyn Stream<Item = std::result::Result<DeltaDiscoveryResponse, Status>> + Send>>;
 
+    #[allow(clippy::too_many_lines)]
     async fn delta_aggregated_resources(
         &self,
         req: envoy_api_rs::tonic::Request<envoy_api_rs::tonic::Streaming<DeltaDiscoveryRequest>>,
@@ -417,111 +463,157 @@ impl AggregatedDiscoveryService for AggregateServer {
             while let Some(item) = incoming_stream.next().await {
                 match item {
                     Ok(discovery_request) => {
-                        if discovery_request.type_url == "type.googleapis.com/agentgateway.dev.resource.Resource" {
-                            info!("AggregateServer::delta_aggregated_resources {discovery_request:?}");
-                            if let Some(status) = discovery_request.error_detail {
-                                warn!("Got error... skipping  {status:?}");
-                                continue;
-                            }
+                        info!("AggregateServer::delta_aggregated_resources {discovery_request:?}");
+                        if let Some(status) = discovery_request.error_detail {
+                            warn!("Got error... skipping  {status:?}");
+                            continue;
+                        }
 
-                            let maybe_nonce = if discovery_request.response_nonce.is_empty() {
-                                None
-                            } else {
-                                let uuid = Uuid::parse_str(&discovery_request.response_nonce);
-                                Some(uuid)
-                            };
+                        let maybe_nonce = if discovery_request.response_nonce.is_empty() {
+                            None
+                        } else {
+                            let uuid = Uuid::parse_str(&discovery_request.response_nonce);
+                            Some(uuid)
+                        };
 
-                            match maybe_nonce {
-                                Some(Err(_)) => {
-                                    info!("Nonce set but we can't parse it");
-                                },
-                                Some(Ok(nonce)) => {
-                                    debug!(
-                                        "AggregateServer::delta_aggregated_resources Got ack/nack for {nonce} {:?}",
-                                        discovery_request.error_detail
-                                    );
-                                },
-                                None => {
-                                    let Some(node) = discovery_request.node.as_ref() else {
-                                        warn!("Node is empty");
-                                        continue;
-                                    };
+                        match maybe_nonce {
+                            Some(Err(_)) => {
+                                info!("Nonce set but we can't parse it");
+                            },
+                            Some(Ok(nonce)) => {
+                                debug!(
+                                    "AggregateServer::delta_aggregated_resources Got ack/nack for {nonce} {:?}",
+                                    discovery_request.error_detail
+                                );
+                            },
+                            None => {
+                                let Some(node) = discovery_request.node.as_ref() else {
+                                    warn!("Node is empty");
+                                    continue;
+                                };
 
-                                    let Some(mut ads_client) = ads_clients.get_client_by_client_id(client_ip) else {
-                                        warn!("Can't find any clients for this ip {:?}", node.id);
-                                        continue;
-                                    };
+                                let Some(mut ads_client) = ads_clients.get_client_by_client_id(client_ip) else {
+                                    warn!("Can't find any clients for this ip {:?}", node.id);
+                                    continue;
+                                };
 
-                                    let maybe_gateway_id = fetch_gateway_id_by_node_id(kube_client.clone(), node).await;
-                                    let Ok(gateway_id) = maybe_gateway_id else {
-                                        warn!("Node id is invalid {:?} {maybe_gateway_id:?}", node.id);
-                                        continue;
-                                    };
+                                let maybe_gateway_id = fetch_gateway_id_by_node_id(kube_client.clone(), node).await;
+                                let Ok(gateway_id) = maybe_gateway_id else {
+                                    warn!("Node id is invalid {:?} {maybe_gateway_id:?}", node.id);
+                                    continue;
+                                };
 
-                                    debug!("Updating client client {client_ip} {gateway_id}");
-                                    ads_client.set_gateway_id(&gateway_id);
-                                    ads_clients.update_client(&ads_client);
+                                debug!("Updating client client {client_ip} {gateway_id}");
+                                ads_client.set_gateway_id(&gateway_id);
+                                ads_clients.update_client(&ads_client);
 
-                                    let nonce = uuid::Uuid::new_v4();
-                                    nonces.lock().expect("We do expect this to work").insert(nonce, nonce);
+                                let nonce = uuid::Uuid::new_v4();
+                                nonces.lock().expect("We do expect this to work").insert(nonce, nonce);
 
-                                    if ads_client.resources.is_empty() {
-                                        info!(
-                                            "Initial connection from {gateway_id} {} {} - updating all resources",
-                                            ads_client.client_id, client_ip
-                                        );
-                                        ads_clients.update_client_resources(&mut ads_client);
-                                    }
-
+                                if ads_client.resources.is_empty() {
                                     info!(
-                                        "Sending resources INITIAL discovery response {gateway_id} client {} {} {} ",
-                                        ads_client.client_id,
-                                        ads_client.resources.len(),
-                                        ads_client.workloads.len()
+                                        "Initial connection from {gateway_id} {} {} - updating all resources",
+                                        ads_client.client_id, client_ip
                                     );
-                                    let response = DeltaDiscoveryResponse {
-                                        type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
-                                        resources: ads_client
-                                            .resources
-                                            .iter()
-                                            .map(|resource| agentgateway_api_rs::envoy::service::discovery::v3::Resource {
-                                                name: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
-                                                resource: Some(AnyTypeConverter::from((
-                                                    "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
-                                                    resource.clone(),
-                                                ))),
-                                                ..Default::default()
-                                            })
-                                            .collect(),
-                                        nonce: uuid::Uuid::new_v4().to_string(),
+                                    ads_clients.update_client_resources(&mut ads_client);
+                                }
 
-                                        ..Default::default()
-                                    };
-                                    let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                info!(
+                                    "Sending resources INITIAL discovery response {gateway_id} client {} {} {} ",
+                                    ads_client.client_id,
+                                    ads_client.resources.len(),
+                                    ads_client.workloads.len()
+                                );
 
-                                    info!("Sending workloads INITIAL discovery response {gateway_id} client {}", ads_client.client_id);
-                                    let response = DeltaDiscoveryResponse {
-                                        type_url: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
-                                        resources: ads_client
-                                            .workloads
-                                            .iter()
-                                            .map(|address| agentgateway_api_rs::envoy::service::discovery::v3::Resource {
-                                                name: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
-                                                resource: Some(AnyTypeConverter::from((
-                                                    "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
-                                                    address.clone(),
-                                                ))),
-                                                ..Default::default()
-                                            })
-                                            .collect(),
-                                        nonce: uuid::Uuid::new_v4().to_string(),
-                                        ..Default::default()
-                                    };
-                                    let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                },
-                            }
+                                match discovery_request.type_url.as_str() {
+                                    "type.googleapis.com/agentgateway.dev.resource.Resource" => {
+                                        let response = DeltaDiscoveryResponse {
+                                            type_url: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                            resources: ads_client
+                                                .resources
+                                                .iter()
+                                                .map(|resource| agentgateway_api_rs::envoy::service::discovery::v3::Resource {
+                                                    name: "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                                    resource: Some(AnyTypeConverter::from((
+                                                        "type.googleapis.com/agentgateway.dev.resource.Resource".to_owned(),
+                                                        resource.clone(),
+                                                    ))),
+                                                    ..Default::default()
+                                                })
+                                                .collect(),
+                                            nonce: uuid::Uuid::new_v4().to_string(),
+
+                                            ..Default::default()
+                                        };
+                                        let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                    },
+
+                                    "type.googleapis.com/agentgateway.dev.workload.Address" => {
+                                        info!("Sending workloads INITIAL discovery response {gateway_id} client {}", ads_client.client_id);
+                                        let response = DeltaDiscoveryResponse {
+                                            type_url: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
+                                            resources: ads_client
+                                                .workloads
+                                                .iter()
+                                                .map(|address| agentgateway_api_rs::envoy::service::discovery::v3::Resource {
+                                                    name: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
+                                                    resource: Some(AnyTypeConverter::from((
+                                                        "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
+                                                        address.clone(),
+                                                    ))),
+                                                    ..Default::default()
+                                                })
+                                                // .chain(ads_client.services.iter().map(|svc| {
+                                                //     agentgateway_api_rs::envoy::service::discovery::v3::Resource {
+                                                //         name: "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
+                                                //         resource: Some(AnyTypeConverter::from((
+                                                //             "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
+                                                //             svc.clone(),
+                                                //         ))),
+                                                //         ..Default::default()
+                                                //     }
+                                                // }))
+                                                .collect(),
+                                            nonce: uuid::Uuid::new_v4().to_string(),
+                                            ..Default::default()
+                                        };
+                                        let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
+
+                                        // info!("Sending workloads INITIAL discovery response {gateway_id} client {}", ads_client.client_id);
+                                        // let response = DeltaDiscoveryResponse {
+                                        //     type_url: "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
+                                        //     resources: ads_client
+                                        //         .services
+                                        //         .iter()
+                                        //         .map(|svc| agentgateway_api_rs::envoy::service::discovery::v3::Resource {
+                                        //             name: "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
+                                        //             resource: Some(AnyTypeConverter::from((
+                                        //                 "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
+                                        //                 svc.clone(),
+                                        //             ))),
+                                        //             ..Default::default()
+                                        //         })
+                                        //         .collect(),
+                                        //     nonce: uuid::Uuid::new_v4().to_string(),
+                                        //     ..Default::default()
+                                        // };
+                                        // let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                    },
+                                    _ => {
+                                        warn!("Unknown resource type {}", discovery_request.type_url);
+                                        let response = DeltaDiscoveryResponse {
+                                            type_url: discovery_request.type_url.clone(),
+                                            resources: vec![],
+                                            nonce: uuid::Uuid::new_v4().to_string(),
+                                            ..Default::default()
+                                        };
+                                        let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                    },
+                                }
+                            },
                         }
                     },
+
                     Err(e) => {
                         warn!("AggregateServer::delta_aggregated_resources Discovery request error {:?}", e);
                     },

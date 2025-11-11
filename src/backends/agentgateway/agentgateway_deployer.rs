@@ -1,10 +1,7 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::LazyLock,
-};
+use std::{collections::BTreeMap, sync::LazyLock};
 
 use agentgateway_api_rs::agentgateway::dev::{
-    resource::{self, Bind, Resource, resource::Kind},
+    resource::{self, Bind, Listener, Resource, resource::Kind},
     workload::{self},
 };
 use futures::FutureExt;
@@ -70,10 +67,10 @@ pub struct AgentgatewayDeployerChannelHandlerService {
     client: Client,
     backend_deploy_request_channel_receiver: Receiver<BackendGatewayEvent>,
     backend_response_channel_sender: Sender<BackendGatewayResponse>,
-    #[builder(default)]
-    cached_gateway_resources: HashMap<ResourceKey, CachedResources>,
-    #[builder(default)]
-    cached_gateway_workloads: HashMap<ResourceKey, CachedWorkloads>,
+    // #[builder(default)]
+    // cached_gateway_resources: HashMap<ResourceKey, CachedResources>,
+    // #[builder(default)]
+    // cached_gateway_workloads: HashMap<ResourceKey, CachedWorkloads>,
 }
 
 impl AgentgatewayDeployerChannelHandlerService {
@@ -101,25 +98,18 @@ impl AgentgatewayDeployerChannelHandlerService {
                                         let bindings_and_listeners = resource_generator.generate_bindings_and_listeners();
 
 
-                                        let (routes, backends, policies) = resource_generator.generate_routes_and_backends_and_policies();
+                                        let (routes, backends, policies, services) = resource_generator.generate_routes_and_backends_and_policies();
 
-                                        let resources  = self.cache_resources(
-                                            gateway.key().clone(),
-                                            CachedResources{
-                                                bindings: bindings_and_listeners.keys().cloned().map(|b|
-                                                    Bind{
-                                                        key: b.key,
-                                                        port: b.port}
-                                                    ).collect::<Vec<_>>(),
-                                                listeners: bindings_and_listeners.values().flatten().cloned().collect(),
-                                                routes,
-                                                backends,
-                                                policies,
-
-                                        });
+                                        let bindings = bindings_and_listeners.keys().cloned().map(|b|
+                                            Bind{
+                                                key: b.key,
+                                                port: b.port}
+                                            ).collect::<Vec<_>>();
+                                        let listeners: Vec<Listener> = bindings_and_listeners.values().flatten().cloned().collect();
 
 
-                                        let listeners = resources.listeners
+
+                                        let listeners = listeners
                                         .into_iter()
                                         .map(|l|{
                                             info!("Generated agentgateway listener {l:?}");
@@ -127,7 +117,7 @@ impl AgentgatewayDeployerChannelHandlerService {
                                         })
                                         .collect::<Vec<_>>();
 
-                                        let bindings = resources.bindings
+                                        let bindings = bindings
                                         .into_iter()
                                         .map(|b| {
                                             info!("Generated agentgateway bind {b:?}");
@@ -135,19 +125,19 @@ impl AgentgatewayDeployerChannelHandlerService {
                                         })
                                         .collect::<Vec<_>>();
 
-                                        let route_resources = resources.routes
+                                        let route_resources = routes
                                         .into_iter()
                                         .map(|r| { info!("Generated agentgateway route {r:?}"); Resource {
                                             kind: Some(Kind::Route(r))}
                                         }).collect::<Vec<_>>();
 
-                                        let backend_resources = resources.backends
+                                        let backend_resources = backends
                                         .into_iter()
                                         .map(|b| { info!("Generated agentgateway backend {b:?}"); Resource {
                                             kind: Some(Kind::Backend(b))}
                                         }).collect::<Vec<_>>();
 
-                                        let policies = resources.policies
+                                        let policies = policies
                                         .into_iter()
                                         .map(|b| { info!("Generated agentgateway policy {b:?}"); Resource {
                                             kind: Some(Kind::Policy(b))}
@@ -164,15 +154,10 @@ impl AgentgatewayDeployerChannelHandlerService {
                                                     .collect(),
                                         }).await;
 
-                                        let workloads  = self.cache_workloads(
-                                            gateway.key().clone(),
-                                            CachedWorkloads{
-                                                addresses: vec![workload::Address{ r#type: Some(workload::address::Type::Service(workload::Service::default())) }]
-                                            });
-
                                         let _ = stream_resource_sender.send(ServerAction::UpdateWorkloads {
                                             gateway_id: gateway.key().clone(),
-                                            workloads: workloads.addresses,
+                                            workloads: vec![workload::Address{ r#type: Some(workload::address::Type::Service(workload::Service::default())) }],
+                                            services
                                         }).await;
 
                                         self.update_address_with_polling(&service, *ctx).await;
@@ -187,9 +172,9 @@ impl AgentgatewayDeployerChannelHandlerService {
                                     let response_sender = ctx.response_sender;
                                     let gateway  = &ctx.gateway;
                                     info!("AgentgatewayDeployerChannelHandlerService GatewayDeleted {}",gateway.key());
-                                    if self.cached_gateway_resources.remove(gateway.key()).is_none(){
-                                        warn!("AgentgatewayDeployerChannelHandlerService GatewayDeleted attempting to delete a gateway we don't know anything about {}",gateway.key());
-                                    }
+                                    // if self.cached_gateway_resources.remove(gateway.key()).is_none(){
+                                    //     warn!("AgentgatewayDeployerChannelHandlerService GatewayDeleted attempting to delete a gateway we don't know anything about {}",gateway.key());
+                                    // }
 
                                     if let Err(e) = undeploy_agentgateway(client.clone(), gateway).await{
                                         warn!("Gateway deleted with errors {e:?}");
@@ -214,18 +199,6 @@ impl AgentgatewayDeployerChannelHandlerService {
         let xds_service = start_aggregate_server(kube_client, server_socket, stream_resource_receiver).boxed();
         futures::future::join_all(vec![agentgateway_deployer_service, xds_service]).await;
         Ok(())
-    }
-
-    fn cache_resources(&mut self, key: ResourceKey, new_resources: CachedResources) -> CachedResources {
-        let cached_resources = self.cached_gateway_resources.entry(key).or_default();
-        *cached_resources = new_resources.clone();
-        new_resources
-    }
-
-    fn cache_workloads(&mut self, key: ResourceKey, new_workloads: CachedWorkloads) -> CachedWorkloads {
-        let cached_workloads = self.cached_gateway_workloads.entry(key).or_default();
-        *cached_workloads = new_workloads.clone();
-        new_workloads
     }
 
     async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext) {
