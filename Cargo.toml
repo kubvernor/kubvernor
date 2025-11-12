@@ -16,22 +16,22 @@ kube = { version = "1", features = [
     "http-proxy",
 ] }
 thiserror = "2"
-tokio = { version = "1.39.3", features = ["full"] }
+tokio = { version = "1.48.0", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1"
 kube-core = "1"
-env_logger = "0.11.5"
-clap = { version = "4.5.16", features = ["derive"] }
-clap_derive = "4.5.13"
-uuid = { version = "1.10.0", features = ["v4"] }
-async-trait = "0.1.82"
+env_logger = "0.11.8"
+clap = { version = "4.5.51", features = ["derive"] }
+clap_derive = "4.5.49"
+uuid = { version = "1.18.1", features = ["v4"] }
+async-trait = "0.1.89"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2.3"
 itertools = "0.14"
 tera = "1.20"
-rustls-pki-types = "1.10"
+rustls-pki-types = "1.13"
 eater_domainmatcher = "0.1.2"
 typed-builder = "0.21"
 tracing-opentelemetry = "0.31"
