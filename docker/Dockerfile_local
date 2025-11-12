@@ -4,12 +4,17 @@ WORKDIR /tmp/
 
 RUN <<EOF
 apt update
-apt install -y git ca-certificates protobuf-compiler
+apt install -y git ca-certificates protobuf-compiler git
 git config --global http.sslVerify false
-git clone https://github.com/kubvernor/kubvernor
 EOF
 WORKDIR /tmp/kubvernor
 COPY .cargo/config.toml ./.cargo/config.toml
+COPY .cargo/crates-io.pem ./.cargo/crates-io.pem
+COPY src/ ./src/
+COPY Cargo.toml ./Cargo.toml
+COPY Cargo.lock ./Cargo.lock
+
+
 RUN \
     --mount=type=cache,id=cargo,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
