@@ -8,6 +8,7 @@ use agentgateway_api_rs::agentgateway::dev::{
     },
     workload::{self, LoadBalancing, NetworkAddress},
 };
+use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
 use tracing::{info, warn};
 
 use crate::common::{self, Backend, BackendType, InferencePoolTypeConfig, ProtocolType, ResourceKey};
@@ -122,7 +123,7 @@ impl<'a> ResourceGenerator<'a> {
                                 let (policies, epp_backends): (Vec<_>, Vec<_>) = inference_extension_configurations
                                     .into_iter()
                                     .map(|(name, backend, conf)| {
-                                        let (policy, backend) = create_inference_policies(&name, backend, conf);
+                                        let (policy, backend) = create_inference_policies(&name, &backend, conf);
 
                                         ((name.clone(), policy), backend)
                                     })
@@ -255,7 +256,7 @@ fn create_backend_services(backend: &Backend) -> Option<(String, workload::Servi
 
 fn create_inference_policies(
     policy_name: &str,
-    backend: ResourceKey,
+    backend: &ResourceKey,
     conf: &InferencePoolTypeConfig,
 ) -> (Policy, Option<(String, resource::Backend)>) {
     let epp_backend_name = format!("epp-backend-{policy_name}");
@@ -267,7 +268,19 @@ fn create_inference_policies(
                         port: inference_config.extension_ref().port.as_ref().map_or_else(|| 9002, |f| f.number) as u32,
                         kind: Some(resource::backend_reference::Kind::Backend(epp_backend_name.clone())),
                     }),
-                    failure_mode: 0,
+                    failure_mode: conf
+                        .inference_config
+                        .as_ref()
+                        .map(|conf| match conf.extension_ref().failure_mode.as_ref() {
+                            Some(InferencePoolEndpointPickerRefFailureMode::FailOpen) => {
+                                backend_policy_spec::inference_routing::FailureMode::FailOpen.into()
+                            },
+                            Some(InferencePoolEndpointPickerRefFailureMode::FailClose) => {
+                                backend_policy_spec::inference_routing::FailureMode::FailClosed.into()
+                            },
+                            _ => backend_policy_spec::inference_routing::FailureMode::Unknown.into(),
+                        })
+                        .unwrap_or_default(),
                 })),
             })),
 
