@@ -294,28 +294,24 @@ async fn deploy_agentgateway(
     let service_account_api: Api<ServiceAccount> = Api::namespaced(client.clone(), gateway.namespace());
     let deployment_api: Api<Deployment> = Api::namespaced(client.clone(), gateway.namespace());
     let config_map_api: Api<ConfigMap> = Api::namespaced(client.clone(), gateway.namespace());
-    let (_, bootstrap_cm) = config_map_names(gateway);
 
+    let (_, bootstrap_cm) = config_map_names(gateway);
     let deployment = create_deployment(gateway);
     let service = create_service(gateway);
     let service_account = create_service_account(gateway);
 
-    let pp = PatchParams { field_manager: Some(controller_name.to_owned()), ..Default::default() };
-
     let bootstrap_content = bootstrap_content(control_plane_config).map_err(kube::Error::Service)?;
-
     let boostrap_config_map = create_bootstrap_config_map(&bootstrap_cm, gateway, bootstrap_content);
-    let _res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&boostrap_config_map)).await?;
 
+    let pp = PatchParams { field_manager: Some(controller_name.to_owned()), ..Default::default() };
+    let _res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&boostrap_config_map)).await?;
     debug!("Created bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
 
     let _deployment = deployment_api.patch(gateway.name(), &pp, &Patch::Apply(&deployment)).await?;
     debug!("Created deployment {}-{}", gateway.name(), gateway.namespace());
 
     let service = service_api.patch(gateway.name(), &pp, &Patch::Apply(&service)).await?;
-
-    debug!("Service status {:?}", service.status);
-    debug!("Created service {}-{}", gateway.name(), gateway.namespace());
+    debug!("Created service {}-{} {:?}", gateway.name(), gateway.namespace(), service.status);
 
     let service_account = service_account_api.patch(gateway.name(), &pp, &Patch::Apply(&service_account)).await?;
     debug!("Service account status {:?}", service_account);
@@ -331,14 +327,12 @@ async fn undeploy_agentgateway(client: Client, gateway: &Gateway) -> std::result
     let (_, bootstrap_cm) = config_map_names(gateway);
 
     let _res = config_map_api.delete(&bootstrap_cm, &DeleteParams::default()).await?;
-
-    debug!("Created bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
+    debug!("Deleted bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
 
     let _deployment = deployment_api.delete(gateway.name(), &DeleteParams::default()).await?;
     debug!("Deleted deployment {}-{}", gateway.name(), gateway.namespace());
 
     let _service = service_api.delete(gateway.name(), &DeleteParams::default()).await?;
-
     debug!("Deleted service {}-{}", gateway.name(), gateway.namespace());
 
     let _service_account = service_account_api.delete(gateway.name(), &DeleteParams::default()).await?;
@@ -484,8 +478,8 @@ fn config_map_names(gateway: &Gateway) -> (String, String) {
 
 fn bootstrap_content(control_plane_config: &ControlPlaneConfig) -> Result<String, Error> {
     let mut tera_context = tera::Context::new();
-    tera_context.insert("control_plane_host", &control_plane_config.listening_socket.ip().to_string());
-    tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port());
+    tera_context.insert("control_plane_host", &control_plane_config.listening_socket.hostname);
+    tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port);
 
     Ok(TEMPLATES.render("agent-gateway-bootstrap-dynamic.yaml.tera", &tera_context)?)
 }

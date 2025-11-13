@@ -495,16 +495,16 @@ fn bootstrap_content_with_secrets(control_plane_config: &ControlPlaneConfig, sec
     if !tera_secrets.is_empty() {
         tera_context.insert("secrets", &tera_secrets);
     }
-    tera_context.insert("control_plane_host", &control_plane_config.listening_socket.ip().to_string());
-    tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port());
+    tera_context.insert("control_plane_host", &control_plane_config.listening_socket.hostname);
+    tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port);
 
     Ok(TEMPLATES.render("envoy-bootstrap-dynamic-with-secrets.yaml.tera", &tera_context)?)
 }
 
 fn bootstrap_content(control_plane_config: &ControlPlaneConfig) -> Result<String, Error> {
     let mut tera_context = tera::Context::new();
-    tera_context.insert("control_plane_host", &control_plane_config.listening_socket.ip().to_string());
-    tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port());
+    tera_context.insert("control_plane_host", &control_plane_config.listening_socket.hostname);
+    tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port);
 
     Ok(TEMPLATES.render("envoy-bootstrap-dynamic.yaml.tera", &tera_context)?)
 }

@@ -10,7 +10,7 @@ metadata:
   name: kubvernor-control-plane
   namespace: kubvernor
 spec:
-  replicas: 1  
+  replicas: 1
   selector:
     matchLabels:
       app: kubvernor-control-plane
@@ -20,28 +20,28 @@ spec:
         app: kubvernor-control-plane
     spec:
       containers:
-      - image: kubvernor:main        
-        imagePullPolicy: IfNotPresent
-        name: kubvernor
-        env:
-          - name: RUST_LOG
-            value: info,kubvernor=info
-          - name: RUST_FILE_LOG
-            value: info,kubvernor=debug
-          - name: RUST_TRACE_LOG
-            value: info,kubvernor=debug            
-        args:
-          - --with-config-file
-          - /kubvernor_config/config.yaml   
-        ports:
-        - name: envoy
-          containerPort: 55010
-        - name: agentgateway
-          containerPort: 55011
-        volumeMounts:
-          - name: kubvernor-config
-            mountPath: /kubvernor_config
-            readOnly: true
+        - image: kubvernor:main
+          imagePullPolicy: IfNotPresent
+          name: kubvernor
+          env:
+            - name: RUST_LOG
+              value: info,kubvernor=info
+            - name: RUST_FILE_LOG
+              value: info,kubvernor=debug
+            - name: RUST_TRACE_LOG
+              value: info,kubvernor=debug
+          args:
+            - --with-config-file
+            - /kubvernor_config/config.yaml
+          ports:
+            - name: envoy
+              containerPort: 55010
+            - name: agentgateway
+              containerPort: 55011
+          volumeMounts:
+            - name: kubvernor-config
+              mountPath: /kubvernor_config
+              readOnly: true
       serviceAccountName: kubvernor-controller-serviceaccount
       volumes:
         - name: kubvernor-config
@@ -59,54 +59,33 @@ metadata:
 spec:
   ports:
     - name: envoy
-      port: 55010      
-      targetPort: 55010
+      port: 50051
+      targetPort: 50051
       protocol: TCP
     - name: agentgateway
-      port: 55011
-      targetPort: 55011
-      protocol: TCP      
+      port: 50052
+      targetPort: 50052
+      protocol: TCP
   type: ClusterIP
   selector:
     app: kubvernor-control-plane
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: kubvernor-controller-role
-rules:
-  - apiGroups:
-      - gateway.networking.k8s.io
-    resources:
-      - httproutes
-      - grpcroutes
-      - gateways
-      - gatewayclasses
-      - gatewayclasses/status
-    verbs:
-      - get
-      - watch
-      - list
-      - patch
-      - update
-  - apiGroups:
-      - inference.networking.k8s.io
-    resources:
-      - inferencepools
-      - inferencepools/status
-    verbs:
-      - get
-      - watch
-      - list
-      - patch
-  - apiGroups:
-      - kubvernor.gateway.api
-    resources:
-      - kubvernorconfigs
-    verbs:
-      - get
-      - watch
-      - list
+  name: kubvernor-config-map
+  namespace: kubvernor
+data:
+  config.yaml: |
+    controller_name: kubvernor.com/proxy-controller
+    envoy_gateway_control_plane:
+      control_plane_socket:
+        hostname: kubvernor-control-plane.kubvernor
+        port: 50051
+    agentgateway_gateway_control_plane:
+      control_plane_socket:
+        hostname: kubvernor-control-plane.kubvernor
+        port: 50052
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -116,7 +95,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: kubvernor-controller-role
+  name: cluster-admin
 subjects:
   - namespace: kubvernor
     kind: ServiceAccount

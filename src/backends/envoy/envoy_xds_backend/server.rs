@@ -439,10 +439,10 @@ impl AggregatedDiscoveryService for AggregateServer {
 
 pub async fn start_aggregate_server(
     kube_client: kube::Client,
-    server_address: SocketAddr,
+    server_address: crate::Address,
     stream_resources_rx: Receiver<ResourceAction>,
 ) -> crate::Result<()> {
-    let stream = TcpListenerStream::new(TcpListener::bind(server_address).await?);
+    let stream = TcpListenerStream::new(TcpListener::bind(server_address.to_ips().as_slice()).await?);
     let channels = Arc::new(Mutex::new(ResourcesMapping::default()));
     let ads_clients = AdsClients::new();
     let service = AggregateServerService::new(stream_resources_rx, Arc::clone(&channels), ads_clients.clone());

@@ -26,6 +26,7 @@ apt upgrade -y
 EOF
 
 WORKDIR /
+COPY templates/ ./templates/
 COPY --from=builder /tmp/kubvernor/target/release/kubvernor /kubvernor
 LABEL org.opencontainers.image.source=https://github.com/kubvernor/kubvernor
 LABEL org.opencontainers.image.description="Kubvernor - open source highly experimental Gateway API and Inference Extension implementation in Rust."

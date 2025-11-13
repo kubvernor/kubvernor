@@ -6,12 +6,7 @@ mod route;
 #[cfg(test)]
 mod test;
 
-use std::{
-    cmp,
-    collections::BTreeSet,
-    fmt::Display,
-    net::{IpAddr, SocketAddr},
-};
+use std::{cmp, collections::BTreeSet, fmt::Display, net::IpAddr};
 
 pub use gateway::{ChangedContext, Gateway, GatewayImplementationType};
 pub use gateway_api::gateways::Gateway as KubeGateway;
@@ -30,7 +25,10 @@ pub use route::{
 use tokio::sync::{mpsc, oneshot};
 use typed_builder::TypedBuilder;
 
-use crate::services::patchers::{FinalizerContext, Operation};
+use crate::{
+    Address,
+    services::patchers::{FinalizerContext, Operation},
+};
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
 pub enum Certificate {
@@ -445,11 +443,11 @@ pub fn create_id(name: &str, namespace: &str) -> String {
 #[derive(Clone, Debug, TypedBuilder)]
 pub struct ControlPlaneConfig {
     pub controller_name: String,
-    pub listening_socket: SocketAddr,
+    pub listening_socket: Address,
 }
 
 impl ControlPlaneConfig {
-    pub fn addr(&self) -> SocketAddr {
-        self.listening_socket
+    pub fn addr(&self) -> Address {
+        self.listening_socket.clone()
     }
 }

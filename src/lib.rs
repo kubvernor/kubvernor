@@ -1,4 +1,11 @@
-use std::{collections::HashMap, fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+    net::SocketAddr,
+    sync::Arc,
+    time::Duration,
+    vec,
+};
 
 use common::{BackendReferenceResolver, ControlPlaneConfig, ReferenceGrantsResolver, SecretsResolver};
 use futures::FutureExt;
@@ -53,14 +60,36 @@ use crate::{common::GatewayImplementationType, controllers::inference_pool, serv
 
 const STARTUP_DURATION: Duration = Duration::from_secs(10);
 
+#[derive(Clone, Debug, TypedBuilder, Deserialize)]
+pub struct Address {
+    pub hostname: String,
+    pub port: u16,
+}
+
+impl Display for Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("{}:{}", self.hostname, self.port).as_str())
+    }
+}
+
+impl Address {
+    fn to_ips(&self) -> Vec<SocketAddr> {
+        if let Ok(socket) = self.to_string().parse::<SocketAddr>() {
+            vec![socket]
+        } else {
+            vec![SocketAddr::from(([0, 0, 0, 0], self.port)), SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], self.port))]
+        }
+    }
+}
+
 #[derive(Debug, TypedBuilder, Deserialize)]
 pub struct EnvoyGatewayControlPlaneConfiguration {
-    control_plane_socket: SocketAddr,
+    control_plane_socket: Address,
 }
 
 #[derive(Debug, TypedBuilder, Deserialize)]
 pub struct AgentgatewayGatewayControlPlaneConfiguration {
-    control_plane_socket: SocketAddr,
+    control_plane_socket: Address,
 }
 
 #[derive(Debug, TypedBuilder, Deserialize)]

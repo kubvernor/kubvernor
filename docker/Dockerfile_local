@@ -9,8 +9,8 @@ git config --global http.sslVerify false
 EOF
 WORKDIR /tmp/kubvernor
 COPY .cargo/config.toml ./.cargo/config.toml
-COPY .cargo/crates-io.pem ./.cargo/crates-io.pem
 COPY src/ ./src/
+COPY templates/ ./templates/
 COPY Cargo.toml ./Cargo.toml
 COPY Cargo.lock ./Cargo.lock
 
@@ -32,6 +32,7 @@ EOF
 
 WORKDIR /
 COPY --from=builder /tmp/kubvernor/target/release/kubvernor /kubvernor
+COPY templates/ ./templates/
 LABEL org.opencontainers.image.source=https://github.com/kubvernor/kubvernor
 LABEL org.opencontainers.image.description="Kubvernor - open source highly experimental Gateway API and Inference Extension implementation in Rust."
 ENTRYPOINT ["/kubvernor"]
