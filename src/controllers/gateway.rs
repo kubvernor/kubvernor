@@ -11,7 +11,7 @@ use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
 };
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -229,9 +229,14 @@ impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
 impl GatewayResourceHandler<Gateway> {
     async fn on_deleted(&self, id: ResourceKey, kube_gateway: &Arc<Gateway>, state: &State) -> Result<Action> {
         let _ = state.delete_gateway(&id).expect("We expect the lock to work");
-        let _ = state.delete_gateway_type(&id).expect("We expect the lock to work");
+        let gateway_type = state.delete_gateway_type(&id).expect("We expect the lock to work");
         let senders = &self.gateway_channel_senders;
-        let _res = self.delete_gateway(senders, kube_gateway).await;
+        if let Some(gateway_type) = gateway_type {
+            let _res = self.delete_gateway(senders, kube_gateway, gateway_type).await;
+        } else {
+            warn!("GatewayResourceHandler Controller {} Gateway {} Unknown gateway implementation type ", &self.controller_name, id);
+        }
+
         let _res = self
             .gateway_patcher
             .send(Operation::Delete(DeleteContext {
@@ -247,14 +252,16 @@ impl GatewayResourceHandler<Gateway> {
         &self,
         senders: &HashMap<GatewayImplementationType, Sender<BackendGatewayEvent>>,
         kube_gateway: &Arc<Gateway>,
+        gateway_type: GatewayImplementationType,
     ) -> Result<Gateway> {
         let maybe_gateway = common::Gateway::try_from(&**kube_gateway);
 
-        let Ok(backend_gateway) = maybe_gateway else {
+        let Ok(mut backend_gateway) = maybe_gateway else {
             warn!("Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
 
+        *backend_gateway.backend_type_mut() = gateway_type;
         let sender = senders.get(backend_gateway.backend_type()).expect("Invalid backend type");
 
         let (response_sender, response_receiver) = oneshot::channel();
@@ -278,7 +285,7 @@ impl GatewayResourceHandler<Gateway> {
         };
 
         let kube_gateway = (**kube_gateway).clone();
-
+        info!("Saving gateway type");
         let _ = self.state.save_gateway_type(backend_gateway.key().clone(), self.gateway_backend_type.clone());
 
         let _ = self
