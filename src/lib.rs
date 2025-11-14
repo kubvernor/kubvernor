@@ -84,12 +84,12 @@ impl Address {
 
 #[derive(Debug, TypedBuilder, Deserialize)]
 pub struct EnvoyGatewayControlPlaneConfiguration {
-    control_plane_socket: Address,
+    address: Address,
 }
 
 #[derive(Debug, TypedBuilder, Deserialize)]
 pub struct AgentgatewayGatewayControlPlaneConfiguration {
-    control_plane_socket: Address,
+    address: Address,
 }
 
 #[derive(Debug, TypedBuilder, Deserialize)]
@@ -317,10 +317,8 @@ pub async fn start(configuration: Configuration) -> Result<()> {
     ];
 
     if let Some(control_plane_config) = configuration.envoy_gateway_control_plane {
-        let control_plane_config = ControlPlaneConfig {
-            listening_socket: control_plane_config.control_plane_socket,
-            controller_name: configuration.controller_name.clone(),
-        };
+        let control_plane_config =
+            ControlPlaneConfig { listening_socket: control_plane_config.address, controller_name: configuration.controller_name.clone() };
 
         let service = EnvoyDeployerChannelHandlerService::builder()
             .client(client.clone())
@@ -334,10 +332,8 @@ pub async fn start(configuration: Configuration) -> Result<()> {
 
     #[cfg(feature = "agentgateway")]
     if let Some(control_plane_config) = configuration.agentgateway_gateway_control_plane {
-        let control_plane_config = ControlPlaneConfig {
-            listening_socket: control_plane_config.control_plane_socket,
-            controller_name: configuration.controller_name.clone(),
-        };
+        let control_plane_config =
+            ControlPlaneConfig { listening_socket: control_plane_config.address, controller_name: configuration.controller_name.clone() };
 
         let service = AgentgatewayDeployerChannelHandlerService::builder()
             .client(client.clone())

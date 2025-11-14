@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt::Display,
     net::SocketAddr,
     ops::AddAssign,
@@ -199,7 +200,7 @@ struct ManagedResources {
 #[derive(Debug, Clone, Default)]
 struct AdsClients {
     ads_clients: Arc<Mutex<Vec<AdsClient>>>,
-    managed_resources: Arc<Mutex<ManagedResources>>,
+    managed_resources: Arc<Mutex<HashMap<String, ManagedResources>>>,
 }
 
 impl AdsClients {
@@ -208,68 +209,120 @@ impl AdsClients {
     }
 
     fn get_clients_by_gateway_id(&self, gateway_id: &str) -> Vec<AdsClient> {
+        debug!("get_clients_by_gateway_id {gateway_id}");
         let clients = self.ads_clients.lock().expect("We expect the lock to work");
         let clients = clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect();
         clients
     }
 
     fn get_client_by_client_id(&self, client_id: SocketAddr) -> Option<AdsClient> {
+        debug!("get_client_by_client_id {client_id}");
         let clients = self.ads_clients.lock().expect("We expect the lock to work");
         clients.iter().find(|client| client.client_id == client_id).cloned()
     }
 
-    fn update_client(&self, client: &AdsClient) {
+    fn update_client(&self, client: &mut AdsClient, gateway_id: &str) {
+        debug!("update_client {:?} {gateway_id}", client.client_id);
+        if client.gateway_id.is_none() {
+            info!("update_client {:?} {gateway_id}  Initial connection - Uupdating all resources", client.client_id);
+            client.set_gateway_id(&gateway_id);
+
+            {
+                if let Some(resources) = self.managed_resources.lock().expect("We expect the lock to work").get(gateway_id) {
+                    debug!("update_client {:?} {gateway_id} - Updating resources {:?}", client.client_id, resources);
+                    client.resources = resources.all_resources.clone();
+                    client.workloads = resources.all_workloads.clone();
+                } else {
+                    debug!("update_client {:?} {gateway_id} - No resources", client.client_id);
+                }
+            }
+        }
+
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             local_client.update_from(client);
         } else {
-            info!("No client");
+            debug!("update_client No client {:?} {gateway_id}", client.client_id);
         }
     }
 
-    fn update_client_resources(&self, client: &mut AdsClient) {
-        let managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
-        client.resources.clone_from(&managed_resources.all_resources);
-        client.workloads.clone_from(&managed_resources.all_workloads);
+    fn update_managed_resources(&self, gateway_id: &str, resources: Vec<Resource>) {
+        debug!("update_managed_resources {gateway_id}");
+        let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
+        managed_resources
+            .entry(gateway_id.to_owned())
+            .and_modify(|e| e.all_resources = resources.clone())
+            .or_insert(ManagedResources { all_resources: resources, all_workloads: vec![] });
+    }
+
+    fn update_managed_workloads(&self, gateway_id: &str, workloads: Vec<Address>) {
+        debug!("update_managed_workloads {gateway_id}");
+        let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
+        managed_resources
+            .entry(gateway_id.to_owned())
+            .and_modify(|e| e.all_workloads = workloads.clone())
+            .or_insert(ManagedResources { all_resources: vec![], all_workloads: workloads });
     }
 
     fn update_client_and_resources(&self, client: &AdsClient, resources: Vec<Resource>) {
+        debug!("update_client_and_resources {:?} {:?}", client.client_id, client.gateway_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             local_client.update_from(client);
         } else {
-            info!("No client");
+            debug!("update_client_and_resources {:?} {:?} - No client", client.client_id, client.gateway_id);
         }
         let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
-        managed_resources.all_resources = resources;
+        if let Some(gateway_id) = client.gateway_id.as_ref() {
+            managed_resources
+                .entry(gateway_id.clone())
+                .and_modify(|m| m.all_resources = resources.clone())
+                .or_insert(ManagedResources { all_resources: resources.clone(), all_workloads: vec![] });
+        }
     }
 
     fn update_client_and_workloads(&self, client: &AdsClient, workloads: Vec<Address>) {
+        debug!("update_client_and_workloads {:?} {:?}", client.client_id, client.gateway_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             local_client.update_from(client);
         } else {
-            info!("No client");
+            debug!("update_client_and_workloads {:?} {:?} - No client", client.client_id, client.gateway_id);
         }
         let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
-        managed_resources.all_workloads = workloads;
+        if let Some(gateway_id) = client.gateway_id.as_ref() {
+            managed_resources
+                .entry(gateway_id.clone())
+                .and_modify(|m| m.all_workloads = workloads.clone())
+                .or_insert(ManagedResources { all_resources: vec![], all_workloads: workloads.clone() });
+        }
     }
 
     fn add_or_replace_client(&self, mut client: AdsClient) {
+        debug!("add_or_replace_client {:?} {:?}", client.client_id, client.gateway_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
+
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             let versions = local_client.versions().clone();
             client.ack_versions = versions;
-            info!("Updated client client {client:?}");
+            debug!("add_or_replace_client Updated client client {:?} {:?}", client.client_id, client.gateway_id);
             *local_client = client;
         } else {
-            info!("Adding client {client:?}");
+            debug!("add_or_replace_client Added client client {:?} {:?}", client.client_id, client.gateway_id);
             clients.push(client);
         }
     }
 
     fn remove_client(&self, client_id: SocketAddr) {
+        debug!("remove_client {:?}", client_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
+        if let Some(client) = clients.iter().find(|client| client.client_id == client_id).as_ref()
+            && let Some(gateway_id) = client.gateway_id.as_ref()
+        {
+            debug!("remove_client : Managed resources {:?} {:?}", client_id, gateway_id);
+            self.managed_resources.lock().expect("We expect the lock to work").remove(gateway_id);
+        }
+
         clients.retain(|f| f.client_id != client_id);
     }
 }
@@ -319,6 +372,8 @@ impl AggregateServerService {
                                 let gateway_id = create_gateway_id(&gateway_key);
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
                                 info!("Sending resources DELTA discovery response {gateway_id} clients {}", clients.len());
+                                ads_clients.update_managed_resources(&gateway_id, resources.clone());
+
                                 for client in &mut clients{
                                     let Delta{to_add, to_remove} = client.cache_resources_and_calculate_delta(resources.clone());
                                     debug!("Sending resources DELTA discovery response for client {} {to_add:?} {to_remove:?}", client.client_id);
@@ -336,14 +391,17 @@ impl AggregateServerService {
                                     };
                                     ads_clients.update_client_and_resources(client, resources.clone());
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
-
                                 }
                             },
 
                             ServerAction::UpdateWorkloads{ gateway_id: gateway_key, workloads } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
-                                let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
+                                let clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
                                 info!("Sending workloads DELTA discovery response {gateway_id} clients {}", clients.len());
+
+                                let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
+                                ads_clients.update_managed_workloads(&gateway_id, workloads.clone());
+
                                 for client in &mut clients{
                                     let Delta{to_add: to_add_workloads, to_remove: to_remove_workloads} =
                                         client.cache_workloads_and_calculate_delta(workloads.clone());
@@ -461,20 +519,19 @@ impl AggregatedDiscoveryService for AggregateServer {
                                     continue;
                                 };
 
-                                debug!("Updating client client {client_ip} {gateway_id}");
-                                ads_client.set_gateway_id(&gateway_id);
-                                ads_clients.update_client(&ads_client);
+                                debug!("Updating client {client_ip} {gateway_id}");
+                                ads_clients.update_client(&mut ads_client, &gateway_id);
 
                                 let nonce = uuid::Uuid::new_v4();
                                 nonces.lock().expect("We do expect this to work").insert(nonce, nonce);
 
-                                if ads_client.resources.is_empty() {
-                                    info!(
-                                        "Initial connection from {gateway_id} {} {} - updating all resources",
-                                        ads_client.client_id, client_ip
-                                    );
-                                    ads_clients.update_client_resources(&mut ads_client);
-                                }
+                                // if ads_client.resources.is_empty() {
+                                //     info!(
+                                //         "Initial connection from {gateway_id} {} {} - updating all resources",
+                                //         ads_client.client_id, client_ip
+                                //     );
+                                //     ads_clients.update_client_resources(&mut ads_client);
+                                // }
 
                                 info!(
                                     "Sending resources INITIAL discovery response {gateway_id} client {} {} {} ",

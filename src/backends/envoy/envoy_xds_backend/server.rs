@@ -130,40 +130,46 @@ impl AdsClients {
     }
 
     fn get_clients_by_gateway_id(&self, gateway_id: &str) -> Vec<AdsClient> {
+        debug!("get_clients_by_gateway_id {gateway_id}");
         let clients = self.ads_clients.lock().expect("We expect the lock to work");
         let clients = clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect();
         clients
     }
 
     fn get_client_by_client_id(&self, client_id: SocketAddr) -> Option<AdsClient> {
+        debug!("get_client_by_client_id {client_id:?}");
         let clients = self.ads_clients.lock().expect("We expect the lock to work");
         clients.iter().find(|client| client.client_id == client_id).cloned()
     }
 
     fn update_client(&self, client: &AdsClient) {
+        debug!("update_client {:?} {:?}", client.client_id, client.gateway_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             local_client.update_from(client);
         } else {
-            info!("No client");
+            debug!("update_client No client {:?} {:?}", client.client_id, client.gateway_id);
         }
     }
 
     fn add_or_replace_client(&self, mut client: AdsClient) {
+        debug!("add_or_replace_client {:?} {:?}", client.client_id, client.gateway_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             let versions = local_client.versions().clone();
             client.ack_versions = versions;
-            info!("Updated client client {client:?}");
+            debug!("add_or_replace_client Updated client client {:?} {:?}", client.client_id, client.gateway_id);
             *local_client = client;
         } else {
-            info!("Adding client {client:?}");
+            debug!("add_or_replace_client Added client client {:?} {:?}", client.client_id, client.gateway_id);
             clients.push(client);
         }
     }
 
     fn remove_client(&self, client_id: SocketAddr) {
+        debug!("remove_client {:?}", client_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
+
         clients.retain(|f| f.client_id != client_id);
     }
 }

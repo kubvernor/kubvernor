@@ -79,11 +79,11 @@ data:
   config.yaml: |
     controller_name: kubvernor.com/proxy-controller
     envoy_gateway_control_plane:
-      control_plane_socket:
+      address:
         hostname: kubvernor-control-plane.kubvernor
         port: 50051
     agentgateway_gateway_control_plane:
-      control_plane_socket:
+      address:
         hostname: kubvernor-control-plane.kubvernor
         port: 50052
 
@@ -106,36 +106,6 @@ kind: ServiceAccount
 metadata:
   name: kubvernor-controller-serviceaccount
   namespace: kubvernor
----
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: kubvernorconfigs.kubvernor.gateway.api
-spec:
-  group: kubvernor.gateway.api
-  scope: Namespaced
-  names:
-    plural: kubvernorconfigs
-    singular: kubvernorconfig
-    kind: KubvernorConfig
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-          properties:
-            spec:
-              type: object
-              properties:
-                backendtype:
-                  type: string
-
-      additionalPrinterColumns:
-        - jsonPath: .spec.backendtype
-          name: BackendType
-          type: string
 ---
 apiVersion: kubvernor.gateway.api/v1
 kind: KubvernorConfig
@@ -175,4 +145,3 @@ metadata:
   name: kubvernor-inference-gateway
 spec:
   controllerName: kubvernor.com/proxy-controller
----

@@ -1,0 +1,44 @@
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentgateway-inference-routes
+spec:
+  parentRefs:
+    - name: agentgateway-one
+      group: gateway.networking.k8s.io
+      kind: Gateway
+  hostnames:
+    - "www.inference-one.com"
+  rules:
+    - backendRefs:
+        - group: inference.networking.k8s.io
+          kind: InferencePool
+          name: vllm-llama3-8b-instruct
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: envoy-inference-route
+spec:
+  parentRefs:
+    - name: envoygateway-one
+      group: gateway.networking.k8s.io
+      kind: Gateway
+  hostnames:
+    - "www.inference-one.com"
+  rules:
+    - backendRefs:
+        - group: inference.networking.k8s.io
+          kind: InferencePool
+          name: vllm-llama3-8b-instruct
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+

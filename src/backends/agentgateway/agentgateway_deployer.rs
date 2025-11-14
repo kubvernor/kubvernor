@@ -509,7 +509,7 @@ const AGENTGATEWAY_POD_SPEC: &str = r#"
             "command": [
                 "/app/agentgateway"
             ],
-            "image": "docker.io/agentgateway/agentgateway:local",
+            "image": "ghcr.io/agentgateway/agentgateway:latest",
             "imagePullPolicy": "IfNotPresent",
             "name": "agentgateway",
             "env": [
