@@ -22,8 +22,6 @@ spec:
               properties:
                 backendtype:
                   type: string
-      # selectableFields:
-      # - jsonPath: .spec.backendtype
 
       additionalPrinterColumns:
         - jsonPath: .spec.backendtype
@@ -33,13 +31,13 @@ spec:
 apiVersion: kubvernor.gateway.api/v1
 kind: KubvernorConfig
 metadata:
-  name: kubvernor-config-1
+  name: kubvernor-config-envoy
 spec:
   backendtype: envoy
 ---
 apiVersion: kubvernor.gateway.api/v1
 kind: KubvernorConfig
 metadata:
-  name: kubvernor-config-2
+  name: kubvernor-config-agentgateway
 spec:
   backendtype: agentgateway

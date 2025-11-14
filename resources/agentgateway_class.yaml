@@ -7,4 +7,4 @@ spec:
   parametersRef:
     group: kubvernor.gateway.api
     kind: KubvernorConfig
-    name: kubvernor-config-2
+    name: kubvernor-config-agentgateway
