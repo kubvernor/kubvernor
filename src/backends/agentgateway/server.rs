@@ -125,10 +125,6 @@ impl AdsClient {
         &self.ack_versions
     }
 
-    // fn versions_mut(&mut self) -> &mut AckVersions {
-    //     &mut self.ack_versions
-    // }
-
     fn set_gateway_id(&mut self, gateway_id: &str) {
         self.gateway_id = Some(gateway_id.to_owned());
     }
@@ -525,41 +521,11 @@ impl AggregatedDiscoveryService for AggregateServer {
                                                     ))),
                                                     ..Default::default()
                                                 })
-                                                // .chain(ads_client.services.iter().map(|svc| {
-                                                //     agentgateway_api_rs::envoy::service::discovery::v3::Resource {
-                                                //         name: "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                                //         resource: Some(AnyTypeConverter::from((
-                                                //             "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                                //             svc.clone(),
-                                                //         ))),
-                                                //         ..Default::default()
-                                                //     }
-                                                // }))
                                                 .collect(),
                                             nonce: uuid::Uuid::new_v4().to_string(),
                                             ..Default::default()
                                         };
                                         let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
-
-                                        // info!("Sending workloads INITIAL discovery response {gateway_id} client {}", ads_client.client_id);
-                                        // let response = DeltaDiscoveryResponse {
-                                        //     type_url: "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                        //     resources: ads_client
-                                        //         .services
-                                        //         .iter()
-                                        //         .map(|svc| agentgateway_api_rs::envoy::service::discovery::v3::Resource {
-                                        //             name: "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                        //             resource: Some(AnyTypeConverter::from((
-                                        //                 "type.googleapis.com/agentgateway.dev.workload.Service".to_owned(),
-                                        //                 svc.clone(),
-                                        //             ))),
-                                        //             ..Default::default()
-                                        //         })
-                                        //         .collect(),
-                                        //     nonce: uuid::Uuid::new_v4().to_string(),
-                                        //     ..Default::default()
-                                        // };
-                                        // let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
                                     },
                                     _ => {
                                         warn!("Unknown resource type {}", discovery_request.type_url);
