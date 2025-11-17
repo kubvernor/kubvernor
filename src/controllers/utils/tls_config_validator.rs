@@ -1,7 +1,9 @@
-use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use tracing::{debug, info};
 
-use crate::common::{self, ListenerCondition, ProtocolType, ReferenceGrantRef, ReferenceGrantsResolver, ResolvedRefs, SecretsResolver, TlsType};
+use crate::common::{
+    self, ListenerCondition, ProtocolType, ReferenceGrantRef, ReferenceGrantsResolver, ResolvedRefs, SecretsResolver, TlsType,
+};
 pub struct ListenerTlsConfigValidator<'a> {
     gateway: common::Gateway,
     secrets_resolver: &'a SecretsResolver,
@@ -17,12 +19,12 @@ impl SameSpace<'_> {
 }
 
 impl<'a> ListenerTlsConfigValidator<'a> {
-    pub fn new(gateway: common::Gateway, secrets_resolver: &'a SecretsResolver, reference_grants_resolver: &'a ReferenceGrantsResolver) -> Self {
-        Self {
-            gateway,
-            secrets_resolver,
-            reference_grants_resolver,
-        }
+    pub fn new(
+        gateway: common::Gateway,
+        secrets_resolver: &'a SecretsResolver,
+        reference_grants_resolver: &'a ReferenceGrantsResolver,
+    ) -> Self {
+        Self { gateway, secrets_resolver, reference_grants_resolver }
     }
 
     pub async fn validate(mut self) -> common::Gateway {
@@ -45,7 +47,8 @@ impl<'a> ListenerTlsConfigValidator<'a> {
                 for certificate in certificates {
                     let certificate_key = certificate.resouce_key();
 
-                    let reference_grant_allowed = self.reference_grants_resolver.is_allowed(&gateway_key, certificate_key, &gateway_key).await;
+                    let reference_grant_allowed =
+                        self.reference_grants_resolver.is_allowed(&gateway_key, certificate_key, &gateway_key).await;
 
                     let grant_ref = ReferenceGrantRef::builder()
                         .namespace(certificate_key.namespace.clone())
@@ -55,7 +58,9 @@ impl<'a> ListenerTlsConfigValidator<'a> {
                         .build();
 
                     let is_samespace = SameSpace(&gateway_key.namespace).is_samespace(&certificate.resouce_key().namespace);
-                    info!("Secret ReferenceGrant Allowing because of reference grant {grant_ref:?} {reference_grant_allowed} samespace {is_samespace}");
+                    info!(
+                        "Secret ReferenceGrant Allowing because of reference grant {grant_ref:?} {reference_grant_allowed} samespace {is_samespace}"
+                    );
 
                     if let Some(secret) = self.secrets_resolver.get_reference(certificate_key).await {
                         if reference_grant_allowed || is_samespace {
@@ -76,45 +81,57 @@ impl<'a> ListenerTlsConfigValidator<'a> {
                                                     *certificate = certificate.resolve_cross_space();
                                                     info!("Cross space certificate: Private key and certificate are valid");
                                                 }
-                                            }
+                                            },
                                             (Ok(_), Err(e)) => {
                                                 *certificate = certificate.invalid();
                                                 debug!("Key is invalid {e}");
-                                                _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
-                                            }
+                                                _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(
+                                                    supported_routes,
+                                                )));
+                                            },
                                             (Err(e), Ok(_)) => {
                                                 *certificate = certificate.invalid();
                                                 debug!("Certificate is invalid {e}");
-                                                _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
-                                            }
+                                                _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(
+                                                    supported_routes,
+                                                )));
+                                            },
                                             (Err(e_cert), Err(e_key)) => {
                                                 *certificate = certificate.invalid();
                                                 debug!("Key and cer certificate are invalid {e_cert}{e_key}");
-                                                _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
-                                            }
+                                                _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(
+                                                    supported_routes,
+                                                )));
+                                            },
                                         }
                                     } else {
                                         *certificate = certificate.invalid();
-                                        _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
+                                        _ = conditions
+                                            .replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
                                     }
                                 } else {
                                     *certificate = certificate.not_resolved();
-                                    _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
+                                    _ = conditions
+                                        .replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes)));
                                 }
                             } else {
                                 *certificate = certificate.not_resolved();
-                                _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes.clone())));
+                                _ = conditions
+                                    .replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes.clone())));
                             }
                         } else if is_samespace {
                             *certificate = certificate.not_resolved();
-                            _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes.clone())));
+                            _ = conditions
+                                .replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes.clone())));
                         } else {
                             *certificate = certificate.not_resolved();
-                            _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::RefNotPermitted(supported_routes.clone())));
+                            _ = conditions
+                                .replace(ListenerCondition::ResolvedRefs(ResolvedRefs::RefNotPermitted(supported_routes.clone())));
                         }
                     } else {
                         *certificate = certificate.not_resolved();
-                        _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes.clone())));
+                        _ = conditions
+                            .replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(supported_routes.clone())));
                     }
                 }
             }

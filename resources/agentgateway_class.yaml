@@ -1,0 +1,10 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kubvernor-agentgateway
+spec:
+  controllerName: kubvernor.com/proxy-controller
+  parametersRef:
+    group: kubvernor.gateway.api
+    kind: KubvernorConfig
+    name: kubvernor-config-agentgateway

@@ -6,26 +6,29 @@ mod route;
 #[cfg(test)]
 mod test;
 
-use std::{
-    cmp,
-    collections::BTreeSet,
-    fmt::Display,
-    net::{IpAddr, SocketAddr},
-};
+use std::{cmp, collections::BTreeSet, fmt::Display, net::IpAddr};
 
-pub use gateway::{ChangedContext, Gateway};
+pub use gateway::{ChangedContext, Gateway, GatewayImplementationType};
 pub use gateway_api::gateways::Gateway as KubeGateway;
 use gateway_api::{gatewayclasses::GatewayClass, gateways::GatewayListeners};
-use gateway_api_inference_extension::inferencepools::{InferencePoolExtensionRef, InferencePoolExtensionRefFailureMode, InferencePoolSpec};
+use gateway_api_inference_extension::inferencepools::{
+    InferencePoolEndpointPickerRef, InferencePoolEndpointPickerRefFailureMode, InferencePoolSpec,
+};
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};
-pub use resource_key::{ResourceKey, RouteRefKey, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE};
-pub use route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule, NotResolvedReason, ResolutionStatus, Route, RouteStatus, RouteType};
+pub use resource_key::{DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE, ResourceKey, RouteRefKey};
+pub use route::{
+    FilterHeaders, NotResolvedReason, ResolutionStatus, Route, RouteStatus, RouteType,
+    grpc_route::{GRPCRoutingConfiguration, GRPCRoutingRule},
+    http_route::{HTTPRoutingConfiguration, HTTPRoutingRule},
+};
 use tokio::sync::{mpsc, oneshot};
 use typed_builder::TypedBuilder;
-use uuid::Uuid;
 
-use crate::services::patchers::{FinalizerContext, Operation};
+use crate::{
+    Address,
+    services::patchers::{FinalizerContext, Operation},
+};
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
 pub enum Certificate {
@@ -38,35 +41,50 @@ pub enum Certificate {
 impl Certificate {
     pub fn resolve(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key)
+            | Certificate::ResolvedCrossSpace(resource_key)
+            | Certificate::NotResolved(resource_key)
+            | Certificate::Invalid(resource_key) => resource_key,
         };
         Certificate::ResolvedSameSpace(resource.clone())
     }
 
     pub fn resolve_cross_space(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key)
+            | Certificate::ResolvedCrossSpace(resource_key)
+            | Certificate::NotResolved(resource_key)
+            | Certificate::Invalid(resource_key) => resource_key,
         };
         Certificate::ResolvedCrossSpace(resource.clone())
     }
 
     pub fn not_resolved(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key)
+            | Certificate::ResolvedCrossSpace(resource_key)
+            | Certificate::NotResolved(resource_key)
+            | Certificate::Invalid(resource_key) => resource_key,
         };
         Certificate::NotResolved(resource.clone())
     }
 
     pub fn invalid(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key)
+            | Certificate::ResolvedCrossSpace(resource_key)
+            | Certificate::NotResolved(resource_key)
+            | Certificate::Invalid(resource_key) => resource_key,
         };
         Certificate::Invalid(resource.clone())
     }
 
     pub fn resouce_key(&self) -> &ResourceKey {
         match self {
-            Certificate::ResolvedSameSpace(resource_key) | Certificate::ResolvedCrossSpace(resource_key) | Certificate::NotResolved(resource_key) | Certificate::Invalid(resource_key) => resource_key,
+            Certificate::ResolvedSameSpace(resource_key)
+            | Certificate::ResolvedCrossSpace(resource_key)
+            | Certificate::NotResolved(resource_key)
+            | Certificate::Invalid(resource_key) => resource_key,
         }
     }
 }
@@ -85,7 +103,7 @@ pub struct InferencePoolTypeConfig {
     pub resource_key: ResourceKey,
     pub endpoint: String,
     pub port: i32,
-    pub effective_port: i32,
+    pub target_ports: Vec<i32>,
     pub weight: i32,
     pub inference_config: Option<InferencePoolConfig>,
     pub endpoints: Option<Vec<String>>,
@@ -101,8 +119,8 @@ impl InferencePoolTypeConfig {
 pub struct InferencePoolConfig(pub InferencePoolSpec);
 
 impl InferencePoolConfig {
-    pub fn extension_ref(&self) -> &InferencePoolExtensionRef {
-        &self.0.extension_ref
+    pub fn extension_ref(&self) -> &InferencePoolEndpointPickerRef {
+        &self.0.endpoint_picker_ref
     }
 }
 
@@ -120,16 +138,20 @@ impl Ord for InferencePoolConfig {
         let this = &self.0;
         let other = &other.0;
 
-        let this_extension_ref = &this.extension_ref;
-        let other_extension_ref = &other.extension_ref;
+        let this_extension_ref = &this.endpoint_picker_ref;
+        let other_extension_ref = &other.endpoint_picker_ref;
 
         let this_failure_mode = &this_extension_ref.failure_mode;
         let other_failure_mode = &other_extension_ref.failure_mode;
         match (this_failure_mode, other_failure_mode) {
             (None, Some(_)) => return cmp::Ordering::Less,
             (Some(_), None) => return cmp::Ordering::Greater,
-            (Some(InferencePoolExtensionRefFailureMode::FailOpen), Some(InferencePoolExtensionRefFailureMode::FailClose)) => return cmp::Ordering::Greater,
-            (Some(InferencePoolExtensionRefFailureMode::FailClose), Some(InferencePoolExtensionRefFailureMode::FailOpen)) => return cmp::Ordering::Less,
+            (Some(InferencePoolEndpointPickerRefFailureMode::FailOpen), Some(InferencePoolEndpointPickerRefFailureMode::FailClose)) => {
+                return cmp::Ordering::Greater;
+            },
+            (Some(InferencePoolEndpointPickerRefFailureMode::FailClose), Some(InferencePoolEndpointPickerRefFailureMode::FailOpen)) => {
+                return cmp::Ordering::Less;
+            },
             _ => (),
         }
 
@@ -146,23 +168,26 @@ impl Ord for InferencePoolConfig {
             return order;
         }
 
-        let order = this_extension_ref.port_number.cmp(&other_extension_ref.port_number);
-        if order != cmp::Ordering::Equal {
-            return order;
+        match (this_extension_ref.port.as_ref(), other_extension_ref.port.as_ref()) {
+            (None, None) => (),
+            (None, Some(_)) => return cmp::Ordering::Less,
+            (Some(_), None) => return cmp::Ordering::Greater,
+            (Some(this_port_ref), Some(other_port_ref)) => {
+                let order = this_port_ref.number.cmp(&other_port_ref.number);
+                if order != cmp::Ordering::Equal {
+                    return order;
+                }
+            },
         }
+        cmp::Ordering::Equal
 
-        let order = this.target_port_number.cmp(&other.target_port_number);
-        if order != cmp::Ordering::Equal {
-            return order;
-        }
+        // let order = this.target_ports.cmp(&other.target_ports);
+        // if order != cmp::Ordering::Equal {
+        //     return order;
+        // }
 
-        this.selector.cmp(&other.selector)
+        // this.selector.cmp(&other.selector)
     }
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
-pub struct InvalidTypeConfig {
-    pub resource_key: ResourceKey,
 }
 
 impl BackendTypeConfig for ServiceTypeConfig {
@@ -171,19 +196,6 @@ impl BackendTypeConfig for ServiceTypeConfig {
     }
     fn weight(&self) -> i32 {
         self.weight
-    }
-
-    fn resource_key(&self) -> ResourceKey {
-        self.resource_key.clone()
-    }
-}
-
-impl BackendTypeConfig for InvalidTypeConfig {
-    fn cluster_name(&self) -> String {
-        self.resource_key.name.clone() + "." + &self.resource_key.namespace
-    }
-    fn weight(&self) -> i32 {
-        1
     }
 
     fn resource_key(&self) -> ResourceKey {
@@ -238,15 +250,21 @@ impl BackendType {
 impl Backend {
     pub fn resource_key(&self) -> ResourceKey {
         match self {
-            Backend::Resolved(backend_type) | Backend::Unresolved(backend_type) | Backend::NotAllowed(backend_type) | Backend::Maybe(backend_type) | Backend::Invalid(backend_type) => {
-                backend_type.resource_key()
-            }
+            Backend::Resolved(backend_type)
+            | Backend::Unresolved(backend_type)
+            | Backend::NotAllowed(backend_type)
+            | Backend::Maybe(backend_type)
+            | Backend::Invalid(backend_type) => backend_type.resource_key(),
         }
     }
 
     pub fn backend_type(&self) -> &BackendType {
         match self {
-            Backend::Resolved(backend_type) | Backend::Unresolved(backend_type) | Backend::NotAllowed(backend_type) | Backend::Maybe(backend_type) | Backend::Invalid(backend_type) => backend_type,
+            Backend::Resolved(backend_type)
+            | Backend::Unresolved(backend_type)
+            | Backend::NotAllowed(backend_type)
+            | Backend::Maybe(backend_type)
+            | Backend::Invalid(backend_type) => backend_type,
         }
     }
 }
@@ -258,34 +276,10 @@ pub enum GatewayAddress {
     NamedAddress(String),
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct Label {
-    label: String,
-    value: String,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct Annotation {
-    label: String,
-    value: String,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct DeployedGatewayStatus {
-    pub id: Uuid,
-    pub name: String,
-    pub namespace: String,
-    pub attached_addresses: Vec<String>,
-}
-
 #[derive(Debug)]
 pub enum BackendGatewayResponse {
     Processed(Box<Gateway>),
-    ProcessedWithContext {
-        gateway: Box<Gateway>,
-        kube_gateway: Box<KubeGateway>,
-        gateway_class_name: String,
-    },
+    ProcessedWithContext { gateway: Box<Gateway>, kube_gateway: Box<KubeGateway>, gateway_class_name: String },
     Deleted(Vec<RouteStatus>),
     ProcessingError,
 }
@@ -308,9 +302,7 @@ impl Display for RouteToListenersMapping {
             f,
             "route {} -> [{}]",
             self.route.name(),
-            self.listeners
-                .iter()
-                .fold(String::new(), |acc, l| { acc + &format!("  Listener(name: {} port: {}), ", &l.name, l.port) })
+            self.listeners.iter().fold(String::new(), |acc, l| { acc + &format!("  Listener(name: {} port: {}), ", &l.name, l.port) })
         )
     }
 }
@@ -330,10 +322,12 @@ pub enum BackendGatewayEvent {
 impl Display for BackendGatewayEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BackendGatewayEvent::Changed(ctx) => write!(f, "GatewayEvent::GatewayChanged {ctx}"),
+            BackendGatewayEvent::Changed(ctx) => {
+                write!(f, "GatewayEvent::GatewayChanged {ctx}")
+            },
             BackendGatewayEvent::Deleted(ctx) => {
                 write!(f, "GatewayEvent::GatewayDeleted gateway {:?}", ctx.gateway)
-            }
+            },
         }
     }
 }
@@ -427,7 +421,11 @@ pub async fn add_finalizer(sender: &mpsc::Sender<Operation<KubeGateway>>, gatewa
 
 const GATEWAY_CLASS_FINALIZER_NAME: &str = "gateway-exists-finalizer.gateway.networking.k8s.io";
 
-pub async fn add_finalizer_to_gateway_class(sender: &mpsc::Sender<Operation<GatewayClass>>, gateway_class_name: &str, controller_name: &str) {
+pub async fn add_finalizer_to_gateway_class(
+    sender: &mpsc::Sender<Operation<GatewayClass>>,
+    gateway_class_name: &str,
+    controller_name: &str,
+) {
     let key = ResourceKey::new(gateway_class_name);
     let _ = sender
         .send(Operation::PatchFinalizer(FinalizerContext {
@@ -444,14 +442,12 @@ pub fn create_id(name: &str, namespace: &str) -> String {
 
 #[derive(Clone, Debug, TypedBuilder)]
 pub struct ControlPlaneConfig {
-    pub host: String,
-    pub port: u32,
     pub controller_name: String,
-    pub listening_socket: SocketAddr,
+    pub listening_socket: Address,
 }
 
 impl ControlPlaneConfig {
-    pub fn addr(&self) -> SocketAddr {
-        self.listening_socket
+    pub fn addr(&self) -> Address {
+        self.listening_socket.clone()
     }
 }

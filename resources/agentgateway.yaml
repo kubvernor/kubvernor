@@ -1,0 +1,12 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-one
+  # finalizers:
+  #   - kubevernor.com/proxy-controller
+spec:
+  gatewayClassName: kubvernor-agentgateway
+  listeners:
+    - name: http-1080
+      protocol: HTTP
+      port: 1080

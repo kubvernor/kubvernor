@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use kube::{runtime::controller::Action, Resource, ResourceExt};
+use kube::{Resource, ResourceExt, runtime::controller::Action};
 use tracing::info;
 
 use super::{ControllerError, ResourceChecker, ResourceState, ResourceStateChecker};
@@ -17,12 +17,18 @@ where
     R: Resource<DynamicType = ()>,
     R: Send + Sync + 'static,
 {
-    async fn process(&self, stored_resource: Option<Arc<R>>, resource_spec_checker: ResourceChecker<R>, resource_status_checker: ResourceChecker<R>) -> Result<Action> {
+    async fn process(
+        &self,
+        stored_resource: Option<Arc<R>>,
+        resource_spec_checker: ResourceChecker<R>,
+        resource_status_checker: ResourceChecker<R>,
+    ) -> Result<Action> {
         let resource = &Arc::clone(&self.resource());
         let id = self.resource_key();
         let state = self.state();
 
-        let resource_state = ResourceStateChecker::check_status(resource, stored_resource.clone(), resource_spec_checker, resource_status_checker);
+        let resource_state =
+            ResourceStateChecker::check_status(resource, stored_resource.clone(), resource_spec_checker, resource_status_checker);
 
         info!(
             "ResourceHandler {} {} version = {} Resource state {resource_state:?}",

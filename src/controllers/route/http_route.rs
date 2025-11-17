@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gateway_api::{
     common::RouteStatus,
     httproutes::{self, HTTPRoute},
 };
 use gateway_api_inference_extension::inferencepools::InferencePool;
 use kube::{
-    runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource,
+    runtime::{Controller, controller::Action, watcher::Config},
 };
 use tokio::sync::mpsc::{self};
 use typed_builder::TypedBuilder;
@@ -19,9 +19,9 @@ use super::routes_common::CommonRouteHandler;
 use crate::{
     common::{ReferenceValidateRequest, ResourceKey, Route},
     controllers::{
+        ControllerError, RECONCILE_LONG_WAIT,
         handlers::ResourceHandler,
         utils::{ResourceCheckerArgs, ResourceState},
-        ControllerError, RECONCILE_LONG_WAIT,
     },
     services::patchers::{DeleteContext, Operation},
     state::State,
@@ -45,7 +45,7 @@ pub struct HttpRouteController {
 }
 
 impl HttpRouteController {
-    pub fn get_controller(&self) -> BoxFuture<()> {
+    pub fn get_controller(&'_ self) -> BoxFuture<'_, ()> {
         let client = self.ctx.client.clone();
         let context = &self.ctx;
 
@@ -100,20 +100,12 @@ impl HttpRouteController {
 
     fn check_spec(args: ResourceCheckerArgs<HTTPRoute>) -> ResourceState {
         let (resource, stored_resource) = args;
-        if resource.spec == stored_resource.spec {
-            ResourceState::SpecNotChanged
-        } else {
-            ResourceState::SpecChanged
-        }
+        if resource.spec == stored_resource.spec { ResourceState::SpecNotChanged } else { ResourceState::SpecChanged }
     }
 
     fn check_status(args: ResourceCheckerArgs<HTTPRoute>) -> ResourceState {
         let (resource, stored_resource) = args;
-        if resource.status == stored_resource.status {
-            ResourceState::StatusNotChanged
-        } else {
-            ResourceState::StatusChanged
-        }
+        if resource.status == stored_resource.status { ResourceState::StatusNotChanged } else { ResourceState::StatusChanged }
     }
 }
 

@@ -1,5 +1,5 @@
 use std::{
-    collections::{btree_map::Values, BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, btree_map::Values},
     sync::LazyLock,
 };
 
@@ -9,15 +9,15 @@ use k8s_openapi::{
     api::{
         apps::v1::{Deployment, DeploymentSpec},
         core::v1::{
-            ConfigMap, ConfigMapVolumeSource, ContainerPort, KeyToPath, PodSpec, PodTemplateSpec, ProjectedVolumeSource, SecretProjection, Service, ServiceAccount, ServicePort, ServiceSpec, Volume,
-            VolumeProjection,
+            ConfigMap, ConfigMapVolumeSource, ContainerPort, KeyToPath, PodSpec, PodTemplateSpec, ProjectedVolumeSource, SecretProjection,
+            Service, ServiceAccount, ServicePort, ServiceSpec, Volume, VolumeProjection,
         },
     },
     apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
 };
 use kube::{
-    api::{DeleteParams, Patch, PatchParams},
     Api, Client,
+    api::{DeleteParams, Patch, PatchParams},
 };
 use kube_core::ObjectMeta;
 use tera::Tera;
@@ -30,14 +30,16 @@ use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use super::xds_generator::{self, RdsData};
-use crate::common::{BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, Gateway, GatewayAddress, Listener, ResourceKey, TlsType};
+use crate::common::{
+    BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, Gateway, GatewayAddress, Listener, ResourceKey, TlsType,
+};
 
 pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templates/**.tera") {
     Ok(t) => t,
     Err(e) => {
         warn!("Parsing error(s): {}", e);
         ::std::process::exit(1);
-    }
+    },
 });
 
 #[derive(TypedBuilder)]
@@ -64,7 +66,8 @@ impl EnvoyDeployerChannelHandlerService {
                                     self.update_address_with_polling(&service, *ctx).await;
                                 }else{
                                     warn!("Problem {maybe_service:?}");
-                                    let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
+                                    let _res = self.backend_response_channel_sender
+                                        .send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                                 }
                             }
 
@@ -100,22 +103,13 @@ impl EnvoyDeployerChannelHandlerService {
         let service = Self::create_service(gateway);
         let service_account = Self::create_service_account(gateway);
 
-        let pp = PatchParams {
-            field_manager: Some(self.controller_name.clone()),
-            ..Default::default()
-        };
+        let pp = PatchParams { field_manager: Some(self.controller_name.clone()), ..Default::default() };
 
         debug!("Created bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
 
         let maybe_templates = xds_generator::EnvoyXDSGenerator::new(gateway).generate_xds();
 
-        if let Ok(xds_generator::XdsData {
-            bootstrap_content,
-            lds_content,
-            rds_content,
-            cds_content,
-        }) = maybe_templates
-        {
+        if let Ok(xds_generator::XdsData { bootstrap_content, lds_content, rds_content, cds_content }) = maybe_templates {
             let envoy_xds_config_map = Self::create_envoy_xds_config_map(&xds_cm, gateway, lds_content, rds_content, cds_content);
             let _envoy_xds_config_map = config_map_api.patch(&xds_cm, &pp, &Patch::Apply(&envoy_xds_config_map)).await?;
             let envoy_boostrap_config_map = Self::create_envoy_bootstrap_config_map(&bootstrap_cm, gateway, bootstrap_content);
@@ -144,10 +138,10 @@ impl EnvoyDeployerChannelHandlerService {
             Ok(_) => (),
             Err(kube::Error::Api(e)) if e.code != 404 => {
                 debug!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
-            }
+            },
             Err(e) => {
                 warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
-            }
+            },
         }
     }
 
@@ -181,11 +175,7 @@ impl EnvoyDeployerChannelHandlerService {
             }
         }
         let ips = ips.into_iter().flatten().collect::<Vec<_>>();
-        if ips.is_empty() {
-            None
-        } else {
-            Some(ips)
-        }
+        if ips.is_empty() { None } else { Some(ips) }
     }
 
     fn create_envoy_xds_config_map(name: &str, gateway: &Gateway, lds: String, routes: Vec<RdsData>, cds: String) -> ConfigMap {
@@ -235,12 +225,7 @@ impl EnvoyDeployerChannelHandlerService {
         let mut labels = Self::create_labels(gateway);
         let ports = gateway
             .listeners()
-            .map(|l| ContainerPort {
-                name: None,
-                container_port: l.port(),
-                protocol: Some("TCP".to_owned()),
-                ..Default::default()
-            })
+            .map(|l| ContainerPort { name: None, container_port: l.port(), protocol: Some("TCP".to_owned()), ..Default::default() })
             .dedup_by(|x, y| x.container_port == y.container_port && x.protocol == y.protocol)
             .collect();
         labels.insert("app".to_owned(), gateway.name().to_owned());
@@ -286,15 +271,9 @@ impl EnvoyDeployerChannelHandlerService {
             },
             spec: Some(DeploymentSpec {
                 replicas: Some(1),
-                selector: LabelSelector {
-                    match_expressions: None,
-                    match_labels: Some(labels.clone()),
-                },
+                selector: LabelSelector { match_expressions: None, match_labels: Some(labels.clone()) },
                 template: PodTemplateSpec {
-                    metadata: Some(ObjectMeta {
-                        labels: Some(labels.clone()),
-                        ..Default::default()
-                    }),
+                    metadata: Some(ObjectMeta { labels: Some(labels.clone()), ..Default::default() }),
                     spec: Some(pod_spec),
                 },
                 ..Default::default()
@@ -373,11 +352,7 @@ impl EnvoyDeployerChannelHandlerService {
     async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext) {
         if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
             debug!("Got address address {attached_addresses:?}");
-            let ChangedContext {
-                mut gateway,
-                kube_gateway,
-                gateway_class_name,
-            } = ctx;
+            let ChangedContext { mut gateway, kube_gateway, gateway_class_name } = ctx;
             gateway.addresses_mut().append(
                 &mut attached_addresses
                     .into_iter()
@@ -400,11 +375,7 @@ impl EnvoyDeployerChannelHandlerService {
 
             let _handle = tokio::spawn(async move {
                 let api: Api<Service> = Api::namespaced(client, &resource_key.namespace);
-                let ChangedContext {
-                    mut gateway,
-                    kube_gateway,
-                    gateway_class_name,
-                } = ctx;
+                let ChangedContext { mut gateway, kube_gateway, gateway_class_name } = ctx;
                 let mut interval = time::interval(time::Duration::from_secs(1));
                 loop {
                     interval.tick().await;
@@ -453,16 +424,8 @@ impl EnvoyDeployerChannelHandlerService {
                 secret: Some(SecretProjection {
                     name: resource_key.name.clone(),
                     items: Some(vec![
-                        KeyToPath {
-                            key: "tls.crt".to_owned(),
-                            path: create_certificate_name(&resource_key),
-                            ..Default::default()
-                        },
-                        KeyToPath {
-                            key: "tls.key".to_owned(),
-                            path: create_key_name(&resource_key),
-                            ..Default::default()
-                        },
+                        KeyToPath { key: "tls.crt".to_owned(), path: create_certificate_name(&resource_key), ..Default::default() },
+                        KeyToPath { key: "tls.key".to_owned(), path: create_key_name(&resource_key), ..Default::default() },
                     ]),
                     ..Default::default()
                 }),
@@ -472,10 +435,7 @@ impl EnvoyDeployerChannelHandlerService {
 
         vec![Volume {
             name: "envoy-secrets".to_owned(),
-            projected: Some(ProjectedVolumeSource {
-                sources: Some(secrets),
-                ..Default::default()
-            }),
+            projected: Some(ProjectedVolumeSource { sources: Some(secrets), ..Default::default() }),
             ..Default::default()
         }]
     }

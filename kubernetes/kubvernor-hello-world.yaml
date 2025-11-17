@@ -1,0 +1,115 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-server-app
+  namespace: default
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: echo-server-app
+  template:
+    metadata:
+      labels:
+        app: echo-server-app
+    spec:
+      containers:
+        - image: ealen/echo-server:latest
+          imagePullPolicy: IfNotPresent
+          name: echoserver
+          ports:
+            - containerPort: 9080
+          env:
+            - name: PORT
+              value: "9080"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-service
+  namespace: default
+spec:
+  ports:
+    - port: 9080
+      targetPort: 9080
+      protocol: TCP
+  type: ClusterIP
+  selector:
+    app: echo-server-app
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agentgateway-one
+  # finalizers:
+  #   - kubevernor.com/proxy-controller
+spec:
+  gatewayClassName: kubvernor-agentgateway
+  listeners:
+    - name: http-1080
+      protocol: HTTP
+      port: 1080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: envoygateway-one
+  # finalizers:
+  #   - kubevernor.com/proxy-controller
+spec:
+  gatewayClassName: kubvernor-gateway
+  listeners:
+    - name: http-1080
+      protocol: HTTP
+      port: 1080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agw-route-service-one
+spec:
+  parentRefs:
+    - name: agentgateway-one
+      port: 1080
+
+  hostnames:
+    - "www.service-one.com"
+    - "*.service-one.com"
+    - "service-one.com"
+  rules:
+    - backendRefs:
+        - name: echo-service
+          port: 9080
+      matches:
+        - path:
+            type: PathPrefix
+            value: /login
+        - path:
+            type: PathPrefix
+            value: /data
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: envoy-route-service-one
+spec:
+  parentRefs:
+    - name: envoygateway-one
+      port: 1080
+
+  hostnames:
+    - "www.service-one.com"
+    - "*.service-one.com"
+    - "service-one.com"
+  rules:
+    - backendRefs:
+        - name: echo-service
+          port: 9080
+      matches:
+        - path:
+            type: PathPrefix
+            value: /login
+        - path:
+            type: PathPrefix
+            value: /data

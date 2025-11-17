@@ -15,9 +15,11 @@ use crate::{
 
 #[derive(Clone, TypedBuilder)]
 pub struct BackendReferenceResolver {
-    #[builder(setter(transform = |client:Client, reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>| MultiReferencesResolver::builder().client(client).reference_validate_channel_sender(reference_validate_channel_sender).build()))]
+    #[builder(setter(transform = |client:Client, reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>
+        | MultiReferencesResolver::builder().client(client).reference_validate_channel_sender(reference_validate_channel_sender).build()))]
     reference_resolver: MultiReferencesResolver<Service>,
-    #[builder(setter(transform = |client:Client, reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>| MultiReferencesResolver::builder().client(client).reference_validate_channel_sender(reference_validate_channel_sender).build()))]
+    #[builder(setter(transform = |client:Client, reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>
+        | MultiReferencesResolver::builder().client(client).reference_validate_channel_sender(reference_validate_channel_sender).build()))]
     inference_pool_reference_resolver: MultiReferencesResolver<InferencePool>,
     state: State,
 }
@@ -75,7 +77,8 @@ impl BackendReferenceResolver {
 
     pub async fn delete_route_references(&self, route_key: &ResourceKey, reference_keys: &BTreeSet<ResourceKey>) -> BTreeSet<ResourceKey> {
         let service_references = self.reference_resolver.delete_route_references(route_key, reference_keys.iter().cloned()).await;
-        let inference_pool_references = self.inference_pool_reference_resolver.delete_route_references(route_key, reference_keys.iter().cloned()).await;
+        let inference_pool_references =
+            self.inference_pool_reference_resolver.delete_route_references(route_key, reference_keys.iter().cloned()).await;
         service_references.into_iter().chain(inference_pool_references.into_iter()).collect()
     }
 

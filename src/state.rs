@@ -6,7 +6,7 @@ use std::{
 use gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
 use gateway_api_inference_extension::inferencepools::InferencePool;
 
-use crate::common::ResourceKey;
+use crate::common::{GatewayImplementationType, ResourceKey};
 
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]
 pub enum StorageError {
@@ -26,6 +26,7 @@ pub struct State {
     grpc_routes: Arc<Mutex<HashMap<ResourceKey, Arc<GRPCRoute>>>>,
     gateways_with_routes: Arc<Mutex<HashMap<ResourceKey, BTreeSet<ResourceKey>>>>,
     inference_pools: Arc<Mutex<HashMap<ResourceKey, Arc<InferencePool>>>>,
+    gateway_implementation_types: Arc<Mutex<HashMap<ResourceKey, GatewayImplementationType>>>,
 }
 #[allow(dead_code)]
 impl State {
@@ -37,6 +38,7 @@ impl State {
             grpc_routes: Arc::new(Mutex::new(HashMap::new())),
             gateways_with_routes: Arc::new(Mutex::new(HashMap::new())),
             inference_pools: Arc::new(Mutex::new(HashMap::new())),
+            gateway_implementation_types: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     pub fn save_gateway(&self, id: ResourceKey, gateway: &Arc<Gateway>) -> Result<(), StorageError> {
@@ -129,9 +131,32 @@ impl State {
             .map(|keys| keys.iter().filter_map(|k| grpc_routes.get(k).cloned()).collect::<Vec<_>>()))
     }
 
-    pub fn save_gateway_class(&self, id: ResourceKey, gateway_class: &Arc<GatewayClass>) -> Result<Option<Arc<GatewayClass>>, StorageError> {
+    pub fn save_gateway_class(
+        &self,
+        id: ResourceKey,
+        gateway_class: &Arc<GatewayClass>,
+    ) -> Result<Option<Arc<GatewayClass>>, StorageError> {
         let mut lock = self.gateway_classes.lock().map_err(|_| StorageError::LockingError)?;
         Ok(lock.insert(id, Arc::clone(gateway_class)))
+    }
+
+    pub fn save_gateway_type(
+        &self,
+        id: ResourceKey,
+        gateway_implementation_type: GatewayImplementationType,
+    ) -> Result<Option<GatewayImplementationType>, StorageError> {
+        let mut lock = self.gateway_implementation_types.lock().map_err(|_| StorageError::LockingError)?;
+        Ok(lock.insert(id, gateway_implementation_type))
+    }
+
+    pub fn get_gateway_type(&self, id: &ResourceKey) -> Result<Option<GatewayImplementationType>, StorageError> {
+        let lock = self.gateway_implementation_types.lock().map_err(|_| StorageError::LockingError)?;
+        Ok(lock.get(id).cloned())
+    }
+
+    pub fn delete_gateway_type(&self, id: &ResourceKey) -> Result<Option<GatewayImplementationType>, StorageError> {
+        let mut lock = self.gateway_implementation_types.lock().map_err(|_| StorageError::LockingError)?;
+        Ok(lock.remove(id))
     }
 
     pub fn get_gateway_class_by_id(&self, id: &ResourceKey) -> Result<Option<Arc<GatewayClass>>, StorageError> {

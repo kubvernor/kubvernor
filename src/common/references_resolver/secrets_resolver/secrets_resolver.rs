@@ -9,7 +9,9 @@ use crate::common::{Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey
 
 #[derive(Clone, TypedBuilder)]
 pub struct SecretsResolver {
-    #[builder(setter(transform = |client:Client, reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>| ReferencesResolver::builder().client(client).reference_validate_channel_sender(reference_validate_channel_sender).build()))]
+    #[builder(setter(transform =
+        |client:Client, reference_validate_channel_sender: tokio::sync::mpsc::Sender<ReferenceValidateRequest>|
+            ReferencesResolver::builder().client(client).reference_validate_channel_sender(reference_validate_channel_sender).build()))]
     reference_resolver: ReferencesResolver<Secret>,
 }
 

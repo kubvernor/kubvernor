@@ -1,18 +1,19 @@
 pub mod converters;
-mod resource_generator;
+pub mod resource_generator;
+mod route;
 use envoy_api_rs::{
     envoy::config::{
         cluster::v3::Cluster as EnvoyCluster,
-        core::v3::{address, socket_address::PortSpecifier, Address, SocketAddress},
+        core::v3::{Address, SocketAddress, address, socket_address::PortSpecifier},
         route::v3::Route as EnvoyRoute,
     },
     google::protobuf::Duration,
 };
-pub use resource_generator::{calculate_hostnames_common, EnvoyListener, EnvoyVirtualHost, ResourceGenerator};
+pub use route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule};
 
 use crate::{
-    backends,
-    common::{Backend, HTTPEffectiveRoutingRule, InferencePoolTypeConfig, ServiceTypeConfig},
+    backends::envoy::common::resource_generator::EnvoyListener,
+    common::{Backend, InferencePoolTypeConfig, ServiceTypeConfig},
 };
 
 pub const INFERENCE_EXT_PROC_FILTER_NAME: &str = "inference.filters.http.ext_proc";
@@ -32,7 +33,7 @@ impl PartialEq for ClusterHolder {
 
 impl PartialOrd for ClusterHolder {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.name.cmp(&other.name))
+        Some(self.cmp(other))
     }
 }
 impl Ord for ClusterHolder {
@@ -54,7 +55,7 @@ impl DurationConverter {
 
 pub enum SocketAddressFactory {}
 impl SocketAddressFactory {
-    pub fn from(listener: &backends::common::EnvoyListener) -> envoy_api_rs::envoy::config::core::v3::Address {
+    pub fn from(listener: &EnvoyListener) -> envoy_api_rs::envoy::config::core::v3::Address {
         Address {
             address: Some(address::Address::SocketAddress(SocketAddress {
                 address: "0.0.0.0".to_owned(),
@@ -70,7 +71,9 @@ impl SocketAddressFactory {
         Address {
             address: Some(address::Address::SocketAddress(SocketAddress {
                 address: backend.endpoint.clone(),
-                port_specifier: Some(PortSpecifier::PortValue(backend.effective_port.try_into().expect("For time being we expect this to work"))),
+                port_specifier: Some(PortSpecifier::PortValue(
+                    backend.effective_port.try_into().expect("For time being we expect this to work"),
+                )),
                 ..Default::default()
             })),
         }
@@ -117,10 +120,9 @@ impl HTTPEffectiveRoutingRule {
 }
 
 pub fn get_inference_pool_configurations(effective_route: &HTTPEffectiveRoutingRule) -> Option<InferenceClusterInfo> {
-    get_inference_extension_configurations(&effective_route.backends).first().map(|conf| InferenceClusterInfo {
-        cluster_name: effective_route.inference_cluster_name(),
-        config: (**conf).clone(),
-    })
+    get_inference_extension_configurations(&effective_route.backends)
+        .first()
+        .map(|conf| InferenceClusterInfo { cluster_name: effective_route.inference_cluster_name(), config: (**conf).clone() })
 }
 
 pub fn get_inference_extension_configurations(backends: &[Backend]) -> Vec<&InferencePoolTypeConfig> {

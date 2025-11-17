@@ -130,7 +130,7 @@ where
                                 });
                         };
 
-                        debug!("Resolved reference {key} {update_gateway}");
+                        debug!("Resolved reference {key} gateway needs an update {update_gateway}");
 
                         if update_gateway {
                             myself.update_gateways(&key).await;
@@ -153,7 +153,8 @@ where
 
     async fn update_gateways(&self, key: &ResourceKey) {
         let references = self.references.lock().await;
-        let gateways = references.get(key).cloned().map(|set| set.distinct_elements().cloned().collect::<BTreeSet<_>>()).unwrap_or_default();
+        let gateways =
+            references.get(key).cloned().map(|set| set.distinct_elements().cloned().collect::<BTreeSet<_>>()).unwrap_or_default();
         debug!("Reference changed... updating gateways {key} {gateways:?}");
         let _res = self
             .reference_validate_channel_sender

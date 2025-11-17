@@ -1,0 +1,4 @@
+config:
+  adminAddr: 0.0.0.0:19001
+  statsAddr: 0.0.0.0:19002
+  xdsAddress: http://{{control_plane_host}}:{{control_plane_port}}

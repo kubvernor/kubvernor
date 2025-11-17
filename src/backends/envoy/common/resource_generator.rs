@@ -8,63 +8,141 @@ use envoy_api_rs::{
     envoy::{
         config::{
             cluster::v3::{
-                cluster::{ClusterDiscoveryType, DiscoveryType, LbPolicy},
                 Cluster as EnvoyCluster, LoadBalancingPolicy,
+                cluster::{ClusterDiscoveryType, DiscoveryType, LbPolicy},
             },
-            core::v3::{transport_socket::ConfigType, Http2ProtocolOptions, UpstreamHttpProtocolOptions},
-            endpoint::v3::{lb_endpoint::HostIdentifier, ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints},
+            core::v3::{Http2ProtocolOptions, UpstreamHttpProtocolOptions, transport_socket::ConfigType},
+            endpoint::v3::{ClusterLoadAssignment, Endpoint, LbEndpoint, LocalityLbEndpoints, lb_endpoint::HostIdentifier},
             route::v3::Route as EnvoyRoute,
         },
         extensions::{
             load_balancing_policies::{
-                override_host::v3::{override_host::OverrideHostSource, OverrideHost},
+                override_host::v3::{OverrideHost, override_host::OverrideHostSource},
                 round_robin::v3::RoundRobin,
             },
-            transport_sockets::tls::v3::{tls_parameters::TlsProtocol, CommonTlsContext, TlsParameters, UpstreamTlsContext},
-            upstreams::http::v3::http_protocol_options::{explicit_http_config::ProtocolConfig, ExplicitHttpConfig, UpstreamProtocolOptions},
+            transport_sockets::tls::v3::{CommonTlsContext, TlsParameters, UpstreamTlsContext, tls_parameters::TlsProtocol},
+            upstreams::http::v3::http_protocol_options::{
+                ExplicitHttpConfig, UpstreamProtocolOptions, explicit_http_config::ProtocolConfig,
+            },
         },
     },
     google::protobuf::UInt32Value,
 };
+use gateway_api::{
+    common::HTTPFilterType,
+    grpcroutes::GRPCRouteMatch,
+    httproutes::{HTTPRouteRulesMatchesPathType, PathMatch, RouteMatch},
+};
 use tracing::debug;
 
 use crate::{
-    backends::common::{converters, get_inference_pool_configurations, ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory},
+    backends::envoy::common::{
+        ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory, converters, get_inference_pool_configurations,
+        route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule},
+    },
     common::{
-        self, Backend, BackendType, BackendTypeConfig, GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule, InferencePoolTypeConfig, Listener, ProtocolType, Route, RouteType, ServiceTypeConfig,
-        TlsType, DEFAULT_ROUTE_HOSTNAME,
+        self, Backend, BackendType, BackendTypeConfig, DEFAULT_ROUTE_HOSTNAME, FilterHeaders, GRPCRoutingConfiguration, GRPCRoutingRule,
+        HTTPRoutingConfiguration, HTTPRoutingRule, InferencePoolTypeConfig, Listener, ProtocolType, Route, RouteType, ServiceTypeConfig,
+        TlsType,
     },
     controllers::HostnameMatchFilter,
 };
 
 type ListenerNameToHostname = (String, Option<String>);
 
+fn get_http_default_rules_matches() -> RouteMatch {
+    RouteMatch {
+        headers: Some(vec![]),
+        method: None,
+        path: Some(PathMatch { r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix), value: Some("/".to_owned()) }),
+        query_params: None,
+    }
+}
+
+fn get_grpc_default_rules_matches() -> GRPCRouteMatch {
+    GRPCRouteMatch { headers: Some(vec![]), method: None }
+}
+
 impl Listener {
-    pub fn http_matching_rules(&self) -> Vec<&HTTPEffectiveRoutingRule> {
+    fn create_http_effective_route(
+        hostnames: &[String],
+        routing_configuration: &HTTPRoutingConfiguration,
+    ) -> Vec<HTTPEffectiveRoutingRule> {
+        routing_configuration
+            .routing_rules
+            .iter()
+            .flat_map(|rr: &HTTPRoutingRule| {
+                let mut matching_rules = rr.matching_rules.clone();
+                if matching_rules.is_empty() {
+                    matching_rules.push(get_http_default_rules_matches());
+                }
+
+                matching_rules.into_iter().map(|matcher| HTTPEffectiveRoutingRule {
+                    route_matcher: matcher.clone(),
+                    backends: rr.backends.clone(),
+                    name: rr.name.clone(),
+                    hostnames: hostnames.to_vec(),
+                    request_headers: rr.filter_headers(),
+                    response_headers: FilterHeaders::default(),
+                    redirect_filter: rr
+                        .filters
+                        .iter()
+                        .find_map(|f| if f.r#type == HTTPFilterType::RequestRedirect { f.request_redirect.clone() } else { None }),
+                })
+            })
+            .collect()
+    }
+
+    fn create_grpc_effective_route(
+        hostnames: &[String],
+        routing_configuration: &GRPCRoutingConfiguration,
+    ) -> Vec<GRPCEffectiveRoutingRule> {
+        routing_configuration
+            .routing_rules
+            .iter()
+            .flat_map(|rr: &GRPCRoutingRule| {
+                let mut matching_rules = rr.matching_rules.clone();
+                if matching_rules.is_empty() {
+                    matching_rules.push(get_grpc_default_rules_matches());
+                }
+
+                matching_rules.into_iter().map(|matcher| GRPCEffectiveRoutingRule {
+                    route_matcher: matcher.clone(),
+                    backends: rr.backends.clone(),
+                    name: rr.name.clone(),
+                    hostnames: hostnames.to_vec(),
+                    request_headers: rr.filter_headers(),
+                    response_headers: FilterHeaders::default(),
+                })
+            })
+            .collect()
+    }
+
+    pub fn http_matching_rules(&self) -> Vec<HTTPEffectiveRoutingRule> {
         let (resolved_routes, unresolved) = self.routes();
         let mut matching_rules: Vec<_> = resolved_routes
             .iter()
             .chain(unresolved.iter())
             .filter_map(|r| match &r.config.route_type {
-                RouteType::Http(configuration) => Some(configuration),
+                RouteType::Http(configuration) => Some((&r.config.hostnames, configuration)),
                 RouteType::Grpc(_) => None,
             })
-            .flat_map(|r| &r.effective_routing_rules)
+            .flat_map(|(hostnames, config)| Self::create_http_effective_route(hostnames, config))
             .collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
         matching_rules
     }
 
-    pub fn grpc_matching_rules(&self) -> Vec<&GRPCEffectiveRoutingRule> {
+    pub fn grpc_matching_rules(&self) -> Vec<GRPCEffectiveRoutingRule> {
         let (resolved_routes, unresolved) = self.routes();
         let mut matching_rules: Vec<_> = resolved_routes
             .iter()
             .chain(unresolved.iter())
             .filter_map(|r| match &r.config.route_type {
                 RouteType::Http(_) => None,
-                RouteType::Grpc(configuration) => Some(configuration),
+                RouteType::Grpc(configuration) => Some((&r.config.hostnames, configuration)),
             })
-            .flat_map(|r| &r.effective_routing_rules)
+            .flat_map(|(hostnames, config)| Self::create_grpc_effective_route(hostnames, config))
             .collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
         matching_rules
@@ -91,7 +169,7 @@ impl Eq for EnvoyVirtualHost {}
 
 impl PartialOrd for EnvoyVirtualHost {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.name.cmp(&other.name))
+        Some(self.cmp(other))
     }
 }
 
@@ -118,11 +196,7 @@ pub struct ResourceGenerator<'a> {
 
 impl<'a> ResourceGenerator<'a> {
     pub fn new(effective_gateway: &'a common::Gateway) -> Self {
-        Self {
-            effective_gateway,
-            resources: BTreeMap::new(),
-            inference_clusters: vec![],
-        }
+        Self { effective_gateway, resources: BTreeMap::new(), inference_clusters: vec![] }
     }
 
     pub fn generate_envoy_listeners(&mut self) -> &BTreeMap<i32, EnvoyListener> {
@@ -143,7 +217,10 @@ impl<'a> ResourceGenerator<'a> {
             ..Default::default()
         };
 
-        let grpc_http_configuration = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), &grpc_protocol_options));
+        let grpc_http_configuration = converters::AnyTypeConverter::from((
+            "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(),
+            &grpc_protocol_options,
+        ));
 
         let clusters: BTreeSet<ClusterHolder> = listeners
             .values()
@@ -155,7 +232,10 @@ impl<'a> ResourceGenerator<'a> {
                         let service_backends = backends
                             .iter()
                             .filter_map(|b| {
-                                if let Backend::Resolved(BackendType::Service(backend_service_config) | BackendType::Invalid(backend_service_config)) = b {
+                                if let Backend::Resolved(
+                                    BackendType::Service(backend_service_config) | BackendType::Invalid(backend_service_config),
+                                ) = b
+                                {
                                     Some(backend_service_config)
                                 } else {
                                     None
@@ -203,10 +283,10 @@ impl<'a> ResourceGenerator<'a> {
                     ProtocolType::Http | ProtocolType::Https => {
                         let mut new_listener = self.generate_envoy_listener(gateway_name, listener);
                         envoy_listener.http_listener_map.append(&mut new_listener.http_listener_map);
-                    }
+                    },
                     ProtocolType::Tcp => {
                         envoy_listener.tcp_listener_map.insert((listener_name, listener_hostname));
-                    }
+                    },
                     _ => (),
                 }
             } else {
@@ -214,7 +294,7 @@ impl<'a> ResourceGenerator<'a> {
                     ProtocolType::Http | ProtocolType::Https => {
                         let envoy_listener = self.generate_envoy_listener(gateway_name, listener);
                         acc.insert(port, envoy_listener);
-                    }
+                    },
                     ProtocolType::Tcp => {
                         let mut listener_map = BTreeSet::new();
                         listener_map.insert((listener_name, listener_hostname));
@@ -228,7 +308,7 @@ impl<'a> ResourceGenerator<'a> {
                                 tls_type: None,
                             },
                         );
-                    }
+                    },
                     _ => (),
                 }
             }
@@ -249,23 +329,21 @@ impl<'a> ResourceGenerator<'a> {
             let http_matching_rules = listener
                 .http_matching_rules()
                 .into_iter()
-                .filter(|&em| {
+                .filter(|em| {
                     let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
                     debug!("generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
                     filtered
                 })
-                .cloned()
                 .collect::<Vec<_>>();
 
             let grpc_matching_rules = listener
                 .grpc_matching_rules()
                 .into_iter()
-                .filter(|&em| {
+                .filter(|em| {
                     let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
                     debug!("generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
                     filtered
                 })
-                .cloned()
                 .collect::<Vec<_>>();
 
             self.inference_clusters = self
@@ -303,7 +381,11 @@ impl<'a> ResourceGenerator<'a> {
     }
 }
 
-pub fn calculate_hostnames_common(routes: &[&Route], listener_hostname: Option<String>, create_hostnames: impl Fn(String) -> Vec<String>) -> Vec<String> {
+pub fn calculate_hostnames_common(
+    routes: &[&Route],
+    listener_hostname: Option<String>,
+    create_hostnames: impl Fn(String) -> Vec<String>,
+) -> Vec<String> {
     let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {
         acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
         acc
@@ -316,7 +398,11 @@ pub fn calculate_hostnames_common(routes: &[&Route], listener_hostname: Option<S
     }
 }
 
-fn create_service_cluster(config: &ServiceTypeConfig, route_type: &RouteType, grpc_http_configuration: &envoy_api_rs::google::protobuf::Any) -> ClusterHolder {
+fn create_service_cluster(
+    config: &ServiceTypeConfig,
+    route_type: &RouteType,
+    grpc_http_configuration: &envoy_api_rs::google::protobuf::Any,
+) -> ClusterHolder {
     ClusterHolder {
         name: config.cluster_name(),
         cluster: EnvoyCluster {
@@ -344,9 +430,11 @@ fn create_service_cluster(config: &ServiceTypeConfig, route_type: &RouteType, gr
             }),
             typed_extension_protocol_options: match route_type {
                 common::RouteType::Http(_) => HashMap::new(),
-                common::RouteType::Grpc(_) => vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
-                    .into_iter()
-                    .collect(),
+                common::RouteType::Grpc(_) => {
+                    vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
+                        .into_iter()
+                        .collect()
+                },
             },
 
             ..Default::default()
@@ -355,11 +443,13 @@ fn create_service_cluster(config: &ServiceTypeConfig, route_type: &RouteType, gr
 }
 
 fn generate_ext_service_cluster(config: &InferenceClusterInfo) -> Option<ClusterHolder> {
-    let Some(extension_config) = &config.config.inference_config else { return None };
+    let Some(extension_config) = &config.config.inference_config else {
+        return None;
+    };
 
     let address_port = (
         extension_config.extension_ref().name.clone() + "." + &config.config.resource_key.namespace,
-        extension_config.extension_ref().port_number.unwrap_or(9002),
+        extension_config.extension_ref().port.as_ref().map_or_else(|| 9002, |f| f.number),
     );
     let cluster_name = config.cluster_name().to_owned();
 
@@ -378,7 +468,10 @@ fn generate_ext_service_cluster(config: &InferenceClusterInfo) -> Option<Cluster
         ..Default::default()
     };
 
-    let grpc_http_configuration = converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), &grpc_protocol_options));
+    let grpc_http_configuration = converters::AnyTypeConverter::from((
+        "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(),
+        &grpc_protocol_options,
+    ));
 
     let upstream_tls_context = UpstreamTlsContext {
         common_tls_context: Some(CommonTlsContext {
@@ -425,9 +518,12 @@ fn generate_ext_service_cluster(config: &InferenceClusterInfo) -> Option<Cluster
                 ..Default::default()
             }),
             transport_socket: Some(transport_configuration),
-            typed_extension_protocol_options: vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
-                .into_iter()
-                .collect(),
+            typed_extension_protocol_options: vec![(
+                "envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(),
+                grpc_http_configuration.clone(),
+            )]
+            .into_iter()
+            .collect(),
 
             ..Default::default()
         },
@@ -446,10 +542,7 @@ fn create_inference_cluster(config: &InferencePoolTypeConfig, _route_type: &Rout
     };
 
     let override_host = OverrideHost {
-        override_host_sources: vec![OverrideHostSource {
-            header: "x-gateway-destination-endpoint".to_owned(),
-            metadata: None,
-        }],
+        override_host_sources: vec![OverrideHostSource { header: "x-gateway-destination-endpoint".to_owned(), metadata: None }],
         fallback_policy: Some(LoadBalancingPolicy { policies: vec![fallback_policy] }),
     };
 
@@ -459,7 +552,7 @@ fn create_inference_cluster(config: &InferencePoolTypeConfig, _route_type: &Rout
         .map(|endpoints| {
             endpoints
                 .iter()
-                .map(|e| (e.clone(), config.effective_port))
+                .map(|e| (e.clone(), config.target_ports[0]))
                 .map(|addr| LbEndpoint {
                     host_identifier: Some(HostIdentifier::Endpoint(Endpoint {
                         address: Some(SocketAddressFactory::from_address_port(addr)),

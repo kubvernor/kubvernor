@@ -1,10 +1,10 @@
 use envoy_api_rs::{
     envoy::{
         config::{
-            core::v3::{header_value_option::HeaderAppendAction, HeaderValue, HeaderValueOption},
-            route::v3::{header_matcher::HeaderMatchSpecifier, weighted_cluster::ClusterWeight, HeaderMatcher},
+            core::v3::{HeaderValue, HeaderValueOption, header_value_option::HeaderAppendAction},
+            route::v3::{HeaderMatcher, header_matcher::HeaderMatchSpecifier, weighted_cluster::ClusterWeight},
         },
-        r#type::matcher::v3::{string_matcher::MatchPattern, StringMatcher},
+        r#type::matcher::v3::{StringMatcher, string_matcher::MatchPattern},
     },
     google::protobuf::UInt32Value,
 };
@@ -35,20 +35,12 @@ fn headers_to_add(to_add: Vec<HTTPHeader>, to_set: Vec<HTTPHeader>) -> Vec<Heade
     to_add
         .into_iter()
         .map(|h| HeaderValueOption {
-            header: Some(HeaderValue {
-                key: h.name,
-                value: h.value,
-                ..Default::default()
-            }),
+            header: Some(HeaderValue { key: h.name, value: h.value, ..Default::default() }),
             append_action: HeaderAppendAction::AppendIfExistsOrAdd.into(),
             ..Default::default()
         })
         .chain(to_set.into_iter().map(|h| HeaderValueOption {
-            header: Some(HeaderValue {
-                key: h.name,
-                value: h.value,
-                ..Default::default()
-            }),
+            header: Some(HeaderValue { key: h.name, value: h.value, ..Default::default() }),
             append_action: HeaderAppendAction::OverwriteIfExistsOrAdd.into(),
             ..Default::default()
         }))
@@ -64,9 +56,7 @@ where
         .filter(|b| b.weight() > 0)
         .map(|b| ClusterWeight {
             name: b.cluster_name(),
-            weight: Some(UInt32Value {
-                value: b.weight().try_into().expect("We do expect this to work for time being"),
-            }),
+            weight: Some(UInt32Value { value: b.weight().try_into().expect("We do expect this to work for time being") }),
             ..Default::default()
         })
         .collect()

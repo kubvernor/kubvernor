@@ -1,15 +1,15 @@
 use std::{collections::BTreeSet, sync::Arc};
 
-use futures::{future::BoxFuture, FutureExt};
+use futures::{FutureExt, future::BoxFuture};
 use gateway_api::referencegrants::{ReferenceGrant, ReferenceGrantFrom, ReferenceGrantTo};
-use kube::{api::ListParams, Api, Client, ResourceExt};
+use kube::{Api, Client, ResourceExt, api::ListParams};
 use kube_core::ObjectList;
 use tokio::time;
 use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{resource_key::DEFAULT_GROUP_NAME, Backend, Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey, TlsType},
+    common::{Backend, Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey, TlsType, resource_key::DEFAULT_GROUP_NAME},
     controllers::find_linked_routes,
     state::State,
 };
@@ -31,11 +31,7 @@ pub struct FromResourceKey {
 
 impl From<ResourceKey> for FromResourceKey {
     fn from(rk: ResourceKey) -> Self {
-        Self {
-            group: rk.group,
-            namespace: rk.namespace,
-            kind: rk.kind,
-        }
+        Self { group: rk.group, namespace: rk.namespace, kind: rk.kind }
     }
 }
 
@@ -47,11 +43,7 @@ impl From<&ResourceKey> for FromResourceKey {
 
 impl From<&ReferenceGrantFrom> for FromResourceKey {
     fn from(rk: &ReferenceGrantFrom) -> Self {
-        Self {
-            group: rk.group.clone(),
-            namespace: rk.namespace.clone(),
-            kind: rk.kind.clone(),
-        }
+        Self { group: rk.group.clone(), namespace: rk.namespace.clone(), kind: rk.kind.clone() }
     }
 }
 
@@ -80,11 +72,7 @@ impl From<ResourceKey> for ToResourceKey {
 
 impl From<ReferenceGrantTo> for ToResourceKey {
     fn from(rk: ReferenceGrantTo) -> Self {
-        Self {
-            group: if rk.group.is_empty() { DEFAULT_GROUP_NAME.to_owned() } else { rk.group },
-            name: rk.name,
-            kind: rk.kind,
-        }
+        Self { group: if rk.group.is_empty() { DEFAULT_GROUP_NAME.to_owned() } else { rk.group }, name: rk.name, kind: rk.kind }
     }
 }
 
@@ -258,11 +246,7 @@ impl ReferenceGrantsResolver {
             let _res = self
                 .reference_validate_channel_sender
                 .send(ReferenceValidateRequest::UpdatedGateways {
-                    reference: ResourceKey {
-                        group: "ReferenceGrant".to_owned(),
-                        kind: "ReferenceGrant".to_owned(),
-                        ..Default::default()
-                    },
+                    reference: ResourceKey { group: "ReferenceGrant".to_owned(), kind: "ReferenceGrant".to_owned(), ..Default::default() },
                     gateways: changed_gateways.iter().map(|f| f.gateway_key.clone()).collect(),
                 })
                 .await;
@@ -329,7 +313,7 @@ mod tests {
     use gateway_api::referencegrants;
     use kube_core::{ApiResource, ListMeta, ObjectMeta, TypeMeta};
     use referencegrants::ReferenceGrantSpec;
-    use tokio::sync::{mpsc, Mutex};
+    use tokio::sync::{Mutex, mpsc};
 
     use super::*;
 
@@ -359,10 +343,7 @@ mod tests {
                 }];
                 let ar = ApiResource::erase::<ReferenceGrant>(&());
                 let reference_grant_list: ObjectList<ReferenceGrant> = ObjectList {
-                    types: TypeMeta {
-                        api_version: ar.api_version,
-                        kind: ar.kind + "List",
-                    },
+                    types: TypeMeta { api_version: ar.api_version, kind: ar.kind + "List" },
                     metadata: ListMeta { ..Default::default() },
                     items: vec![ReferenceGrant {
                         metadata: ObjectMeta {
@@ -450,11 +431,11 @@ mod tests {
             match event {
                 Some(ReferenceValidateRequest::UpdatedGateways { reference: _, gateways }) => {
                     assert_eq!(gateways.len(), 1);
-                }
+                },
 
                 _ => {
                     panic!("Invalid event");
-                }
+                },
             }
         });
     }
@@ -474,16 +455,8 @@ mod tests {
         let resolver_fn = move |_: String| {
             async move {
                 let tos: Vec<ReferenceGrantTo> = vec![
-                    ReferenceGrantTo {
-                        group: "to_group_1".to_owned(),
-                        kind: "to_kind_1".to_owned(),
-                        name: Some("to_name_1".to_owned()),
-                    },
-                    ReferenceGrantTo {
-                        group: "to_group_2".to_owned(),
-                        kind: "to_kind_2".to_owned(),
-                        name: Some("to_name_2".to_owned()),
-                    },
+                    ReferenceGrantTo { group: "to_group_1".to_owned(), kind: "to_kind_1".to_owned(), name: Some("to_name_1".to_owned()) },
+                    ReferenceGrantTo { group: "to_group_2".to_owned(), kind: "to_kind_2".to_owned(), name: Some("to_name_2".to_owned()) },
                 ];
                 let froms: Vec<ReferenceGrantFrom> = vec![
                     ReferenceGrantFrom {
@@ -499,10 +472,7 @@ mod tests {
                 ];
                 let ar = ApiResource::erase::<ReferenceGrant>(&());
                 let reference_grant_list: ObjectList<ReferenceGrant> = ObjectList {
-                    types: TypeMeta {
-                        api_version: ar.api_version,
-                        kind: ar.kind + "List",
-                    },
+                    types: TypeMeta { api_version: ar.api_version, kind: ar.kind + "List" },
                     metadata: ListMeta { ..Default::default() },
                     items: vec![ReferenceGrant {
                         metadata: ObjectMeta {
@@ -590,11 +560,11 @@ mod tests {
             match event {
                 Some(ReferenceValidateRequest::UpdatedGateways { reference: _, gateways }) => {
                     assert_eq!(gateways.len(), 2);
-                }
+                },
 
                 _ => {
                     panic!("Invalid event");
-                }
+                },
             }
         });
     }

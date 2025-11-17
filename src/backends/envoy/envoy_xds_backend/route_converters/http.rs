@@ -4,32 +4,32 @@ use envoy_api_rs::{
     envoy::{
         config::{
             core::v3::{
-                grpc_service::{EnvoyGrpc, TargetSpecifier},
                 GrpcService,
+                grpc_service::{EnvoyGrpc, TargetSpecifier},
             },
             route::v3::{
-                redirect_action,
+                RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster, redirect_action,
                 route::Action,
                 route_action::{self, ClusterSpecifier},
                 route_match::PathSpecifier,
-                RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster,
             },
         },
         extensions::filters::http::ext_proc::v3::{
+            ExtProcOverrides, ExtProcPerRoute, ProcessingMode,
             ext_proc_per_route::Override,
             processing_mode::{BodySendMode, HeaderSendMode},
-            ExtProcOverrides, ExtProcPerRoute, ProcessingMode,
         },
         r#type::matcher::v3::RegexMatcher,
     },
     google::protobuf::BoolValue,
 };
 use gateway_api::httproutes;
+use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
 use tracing::{debug, warn};
 
-use crate::{
-    backends::common::{converters, envoy_route_name, get_inference_extension_configurations, inference_cluster_name, INFERENCE_EXT_PROC_FILTER_NAME},
-    common::HTTPEffectiveRoutingRule,
+use crate::backends::envoy::common::{
+    HTTPEffectiveRoutingRule, INFERENCE_EXT_PROC_FILTER_NAME, converters, envoy_route_name, get_inference_extension_configurations,
+    inference_cluster_name,
 };
 
 impl HTTPEffectiveRoutingRule {
@@ -63,8 +63,8 @@ impl HTTPEffectiveRoutingRule {
                                     ..Default::default()
                                 }),
                                 failure_mode_allow: match conf.extension_ref().failure_mode.as_ref() {
-                                    Some(gateway_api_inference_extension::inferencepools::InferencePoolExtensionRefFailureMode::FailOpen) => Some(BoolValue { value: true }),
-                                    Some(gateway_api_inference_extension::inferencepools::InferencePoolExtensionRefFailureMode::FailClose) | None => Some(BoolValue { value: false }),
+                                    Some(InferencePoolEndpointPickerRefFailureMode::FailOpen) => Some(BoolValue { value: true }),
+                                    Some(InferencePoolEndpointPickerRefFailureMode::FailClose) | None => Some(BoolValue { value: false }),
                                 },
                                 ..Default::default()
                             })),
@@ -72,7 +72,10 @@ impl HTTPEffectiveRoutingRule {
                         let mut per_route_filters = HashMap::new();
                         per_route_filters.insert(
                             INFERENCE_EXT_PROC_FILTER_NAME.to_owned(),
-                            converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute".to_owned(), &ext_proc_route)),
+                            converters::AnyTypeConverter::from((
+                                "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute".to_owned(),
+                                &ext_proc_route,
+                            )),
                         );
                         per_route_filters
                     })
@@ -96,16 +99,14 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
                 httproutes::HTTPRouteRulesMatchesPathType::Exact => PathSpecifier::Path(value),
                 httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
                     if let Some(val) = matcher.value {
-                        if val == "/" {
-                            PathSpecifier::Prefix(value)
-                        } else {
-                            PathSpecifier::PathSeparatedPrefix(value)
-                        }
+                        if val == "/" { PathSpecifier::Prefix(value) } else { PathSpecifier::PathSeparatedPrefix(value) }
                     } else {
                         PathSpecifier::Prefix(value)
                     }
-                }
-                httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => PathSpecifier::SafeRegex(RegexMatcher { regex: value, ..Default::default() }),
+                },
+                httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => {
+                    PathSpecifier::SafeRegex(RegexMatcher { regex: value, ..Default::default() })
+                },
             })
         });
 
@@ -114,27 +115,26 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
         debug!("Headers to match {:?}", &effective_routing_rule.route_matcher.headers);
         let headers = super::create_header_matchers(effective_routing_rule.route_matcher.headers.clone());
 
-        let route_match = RouteMatch {
-            path_specifier,
-            grpc: None,
-            headers,
-            ..Default::default()
-        };
+        let route_match = RouteMatch { path_specifier, grpc: None, headers, ..Default::default() };
 
         let request_filter_headers = effective_routing_rule.request_headers.clone();
 
         let request_headers_to_add = super::headers_to_add(request_filter_headers.add, request_filter_headers.set);
         let request_headers_to_remove = request_filter_headers.remove;
 
-        let service_cluster_names: Vec<_> = super::create_cluster_weights(effective_routing_rule.backends.iter().filter_map(|b| match b.backend_type() {
-            crate::common::BackendType::Service(service_type_config) | crate::common::BackendType::Invalid(service_type_config) => Some(service_type_config),
-            crate::common::BackendType::InferencePool(_) => None,
-        }));
+        let service_cluster_names: Vec<_> =
+            super::create_cluster_weights(effective_routing_rule.backends.iter().filter_map(|b| match b.backend_type() {
+                crate::common::BackendType::Service(service_type_config) | crate::common::BackendType::Invalid(service_type_config) => {
+                    Some(service_type_config)
+                },
+                crate::common::BackendType::InferencePool(_) => None,
+            }));
 
-        let inference_cluster_names: Vec<_> = super::create_cluster_weights(effective_routing_rule.backends.iter().filter_map(|b| match b.backend_type() {
-            crate::common::BackendType::InferencePool(inference_type_config) => Some(inference_type_config),
-            _ => None,
-        }));
+        let inference_cluster_names: Vec<_> =
+            super::create_cluster_weights(effective_routing_rule.backends.iter().filter_map(|b| match b.backend_type() {
+                crate::common::BackendType::InferencePool(inference_type_config) => Some(inference_type_config),
+                _ => None,
+            }));
 
         let cluster_action = RouteAction {
             cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),

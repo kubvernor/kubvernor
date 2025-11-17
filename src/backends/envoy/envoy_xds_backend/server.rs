@@ -11,11 +11,11 @@ use envoy_api_rs::{
     envoy::{
         config::core::v3::Node as EnvoyNode,
         service::discovery::v3::{
-            aggregated_discovery_service_server::{AggregatedDiscoveryService, AggregatedDiscoveryServiceServer},
             DeltaDiscoveryRequest, DeltaDiscoveryResponse, DiscoveryRequest, DiscoveryResponse, Resource,
+            aggregated_discovery_service_server::{AggregatedDiscoveryService, AggregatedDiscoveryServiceServer},
         },
     },
-    tonic::{transport::Server, IntoStreamingRequest, Response, Status},
+    tonic::{IntoStreamingRequest, Response, Status, transport::Server},
 };
 use futures::FutureExt;
 use k8s_openapi::api::core::v1::Pod;
@@ -25,14 +25,14 @@ use tokio::{
     sync::mpsc::{self, Receiver},
 };
 use tokio_stream::{
-    wrappers::{ReceiverStream, TcpListenerStream},
     Stream, StreamExt,
+    wrappers::{ReceiverStream, TcpListenerStream},
 };
 use tracing::{debug, info, warn};
 
 use crate::{
-    backends::envoy_xds_backend::model::TypeUrl,
-    common::{create_id, ResourceKey},
+    backends::envoy::envoy_xds_backend::model::TypeUrl,
+    common::{ResourceKey, create_id},
 };
 
 pub enum ServerAction {
@@ -93,12 +93,7 @@ struct AdsClient {
 
 impl AdsClient {
     fn new(client_id: SocketAddr, sender: mpsc::Sender<Result<DiscoveryResponse, Status>>) -> Self {
-        Self {
-            sender,
-            client_id,
-            gateway_id: None,
-            ack_versions: AckVersions::default(),
-        }
+        Self { sender, client_id, gateway_id: None, ack_versions: AckVersions::default() }
     }
 
     fn update_from(&mut self, value: &AdsClient) {
@@ -135,40 +130,46 @@ impl AdsClients {
     }
 
     fn get_clients_by_gateway_id(&self, gateway_id: &str) -> Vec<AdsClient> {
+        debug!("get_clients_by_gateway_id {gateway_id}");
         let clients = self.ads_clients.lock().expect("We expect the lock to work");
         let clients = clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect();
         clients
     }
 
     fn get_client_by_client_id(&self, client_id: SocketAddr) -> Option<AdsClient> {
+        debug!("get_client_by_client_id {client_id:?}");
         let clients = self.ads_clients.lock().expect("We expect the lock to work");
         clients.iter().find(|client| client.client_id == client_id).cloned()
     }
 
     fn update_client(&self, client: &AdsClient) {
+        debug!("update_client {:?} {:?}", client.client_id, client.gateway_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             local_client.update_from(client);
         } else {
-            info!("No client");
+            debug!("update_client No client {:?} {:?}", client.client_id, client.gateway_id);
         }
     }
 
-    fn replace_client(&self, mut client: AdsClient) {
+    fn add_or_replace_client(&self, mut client: AdsClient) {
+        debug!("add_or_replace_client {:?} {:?}", client.client_id, client.gateway_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             let versions = local_client.versions().clone();
             client.ack_versions = versions;
-            info!("Updated client client {client:?}");
+            debug!("add_or_replace_client Updated client client {:?} {:?}", client.client_id, client.gateway_id);
             *local_client = client;
         } else {
-            info!("Adding client {client:?}");
+            debug!("add_or_replace_client Added client client {:?} {:?}", client.client_id, client.gateway_id);
             clients.push(client);
         }
     }
 
     fn remove_client(&self, client_id: SocketAddr) {
+        debug!("remove_client {:?}", client_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
+
         clients.retain(|f| f.client_id != client_id);
     }
 }
@@ -190,20 +191,12 @@ pub struct AggregateServerService {
 
 impl AggregateServer {
     fn new(kube_client: kube::Client, ads_channels: Arc<Mutex<ResourcesMapping>>, ads_clients: AdsClients) -> Self {
-        Self {
-            kube_client,
-            ads_channels,
-            ads_clients,
-        }
+        Self { kube_client, ads_channels, ads_clients }
     }
 }
 impl AggregateServerService {
     fn new(stream_resources_rx: Receiver<ServerAction>, ads_channels: Arc<Mutex<ResourcesMapping>>, ads_clients: AdsClients) -> Self {
-        Self {
-            ads_channels,
-            ads_clients,
-            stream_resources_rx,
-        }
+        Self { ads_channels, ads_clients, stream_resources_rx }
     }
 
     pub async fn start(self) {
@@ -222,7 +215,6 @@ impl AggregateServerService {
                                 {
                                     let mut channels = ads_channels.lock().expect("We expect lock to work");
                                     channels.cluster.insert(gateway_id.clone(), resources.clone());
-
                                 };
 
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
@@ -297,7 +289,7 @@ impl AggregatedDiscoveryService for AggregateServer {
         let (tx, rx) = mpsc::channel(128);
         let kube_client = self.kube_client.clone();
         let ads_channels = Arc::clone(&self.ads_channels);
-        self.ads_clients.replace_client(AdsClient::new(client_ip, tx.clone()));
+        self.ads_clients.add_or_replace_client(AdsClient::new(client_ip, tx.clone()));
 
         let ads_clients = self.ads_clients.clone();
         let mut incoming_stream = req.into_streaming_request().into_inner();
@@ -366,7 +358,10 @@ impl AggregatedDiscoveryService for AggregateServer {
                                     let ack_version = ads_client.ack_versions.cluster;
                                     let response = DiscoveryResponse {
                                         type_url: TypeUrl::Cluster.to_string(),
-                                        resources: resources.iter().map(|resource| resource.resource.clone().expect("We would expect this to work")).collect(),
+                                        resources: resources
+                                            .iter()
+                                            .map(|resource| resource.resource.clone().expect("We would expect this to work"))
+                                            .collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
                                         version_info: ack_version.to_string(),
 
@@ -375,7 +370,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                                     let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
                                 }
                             }
-                        }
+                        },
                         Ok(TypeUrl::Listener) => {
                             let ack_version = ads_client.versions().listener;
                             if !first_connect && incoming_version == ack_version {
@@ -405,7 +400,10 @@ impl AggregatedDiscoveryService for AggregateServer {
 
                                     let response = DiscoveryResponse {
                                         type_url: TypeUrl::Listener.to_string(),
-                                        resources: resources.iter().map(|resource| resource.resource.clone().expect("We expect this to work")).collect(),
+                                        resources: resources
+                                            .iter()
+                                            .map(|resource| resource.resource.clone().expect("We expect this to work"))
+                                            .collect(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
                                         version_info: ack_version.to_string(),
 
@@ -414,10 +412,10 @@ impl AggregatedDiscoveryService for AggregateServer {
                                     let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
                                 }
                             }
-                        }
+                        },
                         _ => {
                             warn!("Unknown resource type");
-                        }
+                        },
                     }
                 } else {
                     warn!("Discovery request error {:?}", item.err());
@@ -445,18 +443,18 @@ impl AggregatedDiscoveryService for AggregateServer {
     }
 }
 
-pub async fn start_aggregate_server(kube_client: kube::Client, server_address: SocketAddr, stream_resources_rx: Receiver<ResourceAction>) -> crate::Result<()> {
-    let stream = TcpListenerStream::new(TcpListener::bind(server_address).await?);
+pub async fn start_aggregate_server(
+    kube_client: kube::Client,
+    server_address: crate::Address,
+    stream_resources_rx: Receiver<ResourceAction>,
+) -> crate::Result<()> {
+    let stream = TcpListenerStream::new(TcpListener::bind(server_address.to_ips().as_slice()).await?);
     let channels = Arc::new(Mutex::new(ResourcesMapping::default()));
     let ads_clients = AdsClients::new();
     let service = AggregateServerService::new(stream_resources_rx, Arc::clone(&channels), ads_clients.clone());
     let server = AggregateServer::new(kube_client, channels, ads_clients);
     let aggregate_server = AggregatedDiscoveryServiceServer::new(server);
-    let server = Server::builder()
-        .concurrency_limit_per_connection(256)
-        .add_service(aggregate_server)
-        .serve_with_incoming(stream)
-        .boxed();
+    let server = Server::builder().concurrency_limit_per_connection(256).add_service(aggregate_server).serve_with_incoming(stream).boxed();
 
     let service = async move {
         service.start().await;

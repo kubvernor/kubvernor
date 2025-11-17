@@ -104,10 +104,10 @@ impl GatewayProcessedHandler<'_> {
                 let patched_route = receiver.await;
                 if let Ok(maybe_patched) = patched_route {
                     match maybe_patched {
-                        Ok(_patched_route) => {}
+                        Ok(_patched_route) => {},
                         Err(e) => {
                             warn!("Error while patching {e}");
-                        }
+                        },
                     }
                 }
             }
@@ -131,10 +131,10 @@ impl GatewayProcessedHandler<'_> {
                 let patched_route = receiver.await;
                 if let Ok(maybe_patched) = patched_route {
                     match maybe_patched {
-                        Ok(_patched_route) => {}
+                        Ok(_patched_route) => {},
                         Err(e) => {
                             warn!("Error while patching {e}");
-                        }
+                        },
                     }
                 }
             }
@@ -158,10 +158,10 @@ impl GatewayProcessedHandler<'_> {
                 let patched_route = receiver.await;
                 if let Ok(maybe_patched) = patched_route {
                     match maybe_patched {
-                        Ok(_patched_route) => {}
+                        Ok(_patched_route) => {},
                         Err(e) => {
                             warn!("Error while patching {e}");
-                        }
+                        },
                     }
                 }
             }
@@ -193,10 +193,10 @@ impl GatewayProcessedHandler<'_> {
                 let patched_route = receiver.await;
                 if let Ok(maybe_patched) = patched_route {
                     match maybe_patched {
-                        Ok(_patched_route) => {}
+                        Ok(_patched_route) => {},
                         Err(e) => {
                             warn!("Error while patching {e}");
-                        }
+                        },
                     }
                 }
             }
@@ -220,10 +220,10 @@ impl GatewayProcessedHandler<'_> {
                 let patched_route = receiver.await;
                 if let Ok(maybe_patched) = patched_route {
                     match maybe_patched {
-                        Ok(_patched_route) => {}
+                        Ok(_patched_route) => {},
                         Err(e) => {
                             warn!("Error while patching {e}");
-                        }
+                        },
                     }
                 }
             }
@@ -247,10 +247,10 @@ impl GatewayProcessedHandler<'_> {
                 let patched_route = receiver.await;
                 if let Ok(maybe_patched) = patched_route {
                     match maybe_patched {
-                        Ok(_patched_route) => {}
+                        Ok(_patched_route) => {},
                         Err(e) => {
                             warn!("Error while patching {e}");
-                        }
+                        },
                     }
                 }
             }
@@ -348,7 +348,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
-                }
+                },
                 NotResolvedReason::BackendNotFound => {
                     vec![
                         Condition {
@@ -376,7 +376,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
-                }
+                },
                 NotResolvedReason::RefNotPermitted => {
                     vec![
                         Condition {
@@ -396,7 +396,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
-                }
+                },
                 NotResolvedReason::NoMatchingParent => {
                     vec![
                         Condition {
@@ -416,7 +416,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
-                }
+                },
                 _ => {
                     vec![
                         Condition {
@@ -436,7 +436,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Programmed.to_string(),
                         },
                     ]
-                }
+                },
             },
         };
         self.update_http_route_parents(rejected_route, gateway_id, conditions)
@@ -483,7 +483,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
-                }
+                },
                 NotResolvedReason::BackendNotFound => {
                     vec![
                         Condition {
@@ -511,7 +511,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
-                }
+                },
                 NotResolvedReason::RefNotPermitted => {
                     vec![
                         Condition {
@@ -531,7 +531,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
-                }
+                },
                 NotResolvedReason::NoMatchingParent => {
                     vec![
                         Condition {
@@ -551,7 +551,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
-                }
+                },
                 _ => {
                     vec![
                         Condition {
@@ -571,7 +571,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Programmed.to_string(),
                         },
                     ]
-                }
+                },
             },
         };
         self.update_grpc_route_parents(rejected_route, gateway_id, conditions)
@@ -629,7 +629,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                     ]
-                }
+                },
 
                 NotResolvedReason::RefNotPermitted => {
                     vec![
@@ -650,7 +650,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                     ]
-                }
+                },
 
                 NotResolvedReason::NoMatchingListenerHostname => {
                     vec![
@@ -671,7 +671,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                     ]
-                }
+                },
 
                 NotResolvedReason::NoMatchingParent => {
                     vec![
@@ -692,7 +692,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
-                }
+                },
 
                 NotResolvedReason::InvalidBackend | NotResolvedReason::BackendNotFound => {
                     vec![
@@ -713,7 +713,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Programmed.to_string(),
                         },
                     ]
-                }
+                },
             },
         };
         self.update_http_route_parents(non_attached_route, gateway_id, conditions)
@@ -771,7 +771,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                     ]
-                }
+                },
 
                 NotResolvedReason::RefNotPermitted => {
                     vec![
@@ -792,7 +792,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                     ]
-                }
+                },
 
                 NotResolvedReason::NoMatchingListenerHostname => {
                     vec![
@@ -813,7 +813,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                     ]
-                }
+                },
 
                 NotResolvedReason::NoMatchingParent => {
                     vec![
@@ -834,7 +834,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                     ]
-                }
+                },
 
                 NotResolvedReason::InvalidBackend | NotResolvedReason::BackendNotFound => {
                     vec![
@@ -855,7 +855,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Programmed.to_string(),
                         },
                     ]
-                }
+                },
             },
         };
         self.update_grpc_route_parents(non_attached_route, gateway_id, conditions)
@@ -870,7 +870,9 @@ impl GatewayProcessedHandler<'_> {
                 .find(|f| f.metadata.name == Some(route.name().to_owned()) && f.metadata.namespace == Some(route.namespace().clone()));
 
             if let Some(mut kube_route) = kube_route.map(|r| (**r).clone()) {
-                new_conditions.iter_mut().for_each(|f| f.observed_generation = kube_route.meta().generation);
+                for f in &mut new_conditions {
+                    f.observed_generation = kube_route.meta().generation;
+                }
 
                 let mut status = if let Some(status) = kube_route.status { status } else { RouteStatus { parents: vec![] } };
 
@@ -878,7 +880,9 @@ impl GatewayProcessedHandler<'_> {
                     let geteway_name = gateway_id.name.clone();
                     let geteway_namespace = gateway_id.namespace.clone();
                     if p.parent_ref.namespace.is_some() {
-                        !(p.controller_name == self.controller_name && p.parent_ref.namespace == Some(geteway_namespace) && Some(geteway_name) == Some(p.parent_ref.name.clone()))
+                        !(p.controller_name == self.controller_name
+                            && p.parent_ref.namespace == Some(geteway_namespace)
+                            && Some(geteway_name) == Some(p.parent_ref.name.clone()))
                     } else {
                         !(p.controller_name == self.controller_name && Some(geteway_name) == Some(p.parent_ref.name.clone()))
                     }
@@ -917,7 +921,9 @@ impl GatewayProcessedHandler<'_> {
                 .find(|f| f.metadata.name == Some(route.name().to_owned()) && f.metadata.namespace == Some(route.namespace().clone()));
 
             if let Some(mut kube_route) = kube_route.map(|r| (**r).clone()) {
-                new_conditions.iter_mut().for_each(|f| f.observed_generation = kube_route.meta().generation);
+                for f in &mut new_conditions {
+                    f.observed_generation = kube_route.meta().generation;
+                }
 
                 let mut status = if let Some(status) = kube_route.status { status } else { RouteStatus { parents: vec![] } };
 
@@ -925,7 +931,9 @@ impl GatewayProcessedHandler<'_> {
                     let geteway_name = gateway_id.name.clone();
                     let geteway_namespace = gateway_id.namespace.clone();
                     if p.parent_ref.namespace.is_some() {
-                        !(p.controller_name == self.controller_name && p.parent_ref.namespace == Some(geteway_namespace) && Some(geteway_name) == Some(p.parent_ref.name.clone()))
+                        !(p.controller_name == self.controller_name
+                            && p.parent_ref.namespace == Some(geteway_namespace)
+                            && Some(geteway_name) == Some(p.parent_ref.name.clone()))
                     } else {
                         !(p.controller_name == self.controller_name && Some(geteway_name) == Some(p.parent_ref.name.clone()))
                     }
@@ -962,14 +970,8 @@ impl GatewayProcessedHandler<'_> {
             .addresses()
             .iter()
             .map(|a| match a {
-                GatewayAddress::Hostname(hostname) => CommonGatewayAddress {
-                    r#type: None,
-                    value: hostname.clone(),
-                },
-                GatewayAddress::IPAddress(ip_addr) => CommonGatewayAddress {
-                    r#type: None,
-                    value: ip_addr.to_string(),
-                },
+                GatewayAddress::Hostname(hostname) => CommonGatewayAddress { r#type: None, value: hostname.clone() },
+                GatewayAddress::IPAddress(ip_addr) => CommonGatewayAddress { r#type: None, value: ip_addr.to_string() },
                 GatewayAddress::NamedAddress(addr) => CommonGatewayAddress { r#type: None, value: addr.clone() },
             })
             .collect::<Vec<_>>();

@@ -1,15 +1,9 @@
 pub mod grpc_route;
 pub mod http_route;
-
-use std::cmp;
-
-use gateway_api::common::{HTTPHeader, HeaderMatch, HeaderModifier, ParentReference};
-pub use grpc_route::GRPCEffectiveRoutingRule;
-pub use http_route::HTTPEffectiveRoutingRule;
+use gateway_api::common::{HTTPHeader, HeaderModifier, ParentReference};
 use thiserror::Error;
-use typed_builder::TypedBuilder;
 
-use super::{Backend, ResourceKey, ServiceTypeConfig, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME};
+use super::{Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, ResourceKey, ServiceTypeConfig};
 use crate::common::route::{grpc_route::GRPCRoutingConfiguration, http_route::HTTPRoutingConfiguration};
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
@@ -84,7 +78,7 @@ pub enum RouteType {
 pub struct RouteConfig {
     pub resource_key: ResourceKey,
     parents: Option<Vec<ParentReference>>,
-    hostnames: Vec<String>,
+    pub hostnames: Vec<String>,
     pub resolution_status: ResolutionStatus,
     pub route_type: RouteType,
 }
@@ -92,23 +86,12 @@ pub struct RouteConfig {
 impl RouteConfig {
     pub fn backends(&self) -> Vec<&Backend> {
         match &self.route_type {
-            RouteType::Http(routing_rules_configuration) => routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect(),
-            RouteType::Grpc(routing_rules_configuration) => routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect(),
-        }
-    }
-}
-
-impl RouteConfig {
-    pub fn reorder_routes(&mut self) {
-        match &mut self.route_type {
-            RouteType::Http(HTTPRoutingConfiguration {
-                routing_rules: _,
-                effective_routing_rules,
-            }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
-            RouteType::Grpc(GRPCRoutingConfiguration {
-                routing_rules: _,
-                effective_routing_rules,
-            }) => effective_routing_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less)),
+            RouteType::Http(routing_rules_configuration) => {
+                routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect()
+            },
+            RouteType::Grpc(routing_rules_configuration) => {
+                routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect()
+            },
         }
     }
 }
@@ -121,7 +104,7 @@ impl PartialEq for RouteConfig {
 
 impl PartialOrd for RouteConfig {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.resource_key.cmp(&other.resource_key))
+        Some(self.cmp(other))
     }
 }
 
@@ -151,27 +134,15 @@ pub enum ResolutionStatus {
 }
 
 fn get_add_headers(modifier: Option<&HeaderModifier>) -> Option<&Vec<HTTPHeader>> {
-    if let Some(modifier) = modifier {
-        modifier.add.as_ref()
-    } else {
-        None
-    }
+    if let Some(modifier) = modifier { modifier.add.as_ref() } else { None }
 }
 
 fn get_set_headers(modifier: Option<&HeaderModifier>) -> Option<&Vec<HTTPHeader>> {
-    if let Some(modifier) = modifier {
-        modifier.set.as_ref()
-    } else {
-        None
-    }
+    if let Some(modifier) = modifier { modifier.set.as_ref() } else { None }
 }
 
 fn get_remove_headers(modifier: Option<&HeaderModifier>) -> Option<&Vec<String>> {
-    if let Some(modifier) = modifier {
-        modifier.remove.as_ref()
-    } else {
-        None
-    }
+    if let Some(modifier) = modifier { modifier.remove.as_ref() } else { None }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -179,45 +150,4 @@ pub struct FilterHeaders {
     pub add: Vec<HTTPHeader>,
     pub remove: Vec<String>,
     pub set: Vec<HTTPHeader>,
-}
-
-struct Comparator<'a, T> {
-    this: Option<&'a Vec<T>>,
-    other: Option<&'a Vec<T>>,
-}
-
-impl<T> Comparator<'_, T> {
-    pub fn compare(self) -> std::cmp::Ordering {
-        match (self.this, self.other) {
-            (None, None) => std::cmp::Ordering::Equal,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (Some(this_headers), Some(other_headers)) => other_headers.len().cmp(&this_headers.len()),
-        }
-    }
-}
-
-#[derive(TypedBuilder)]
-struct HeaderComparator<'a> {
-    this: Option<&'a Vec<HeaderMatch>>,
-    other: Option<&'a Vec<HeaderMatch>>,
-}
-
-impl HeaderComparator<'_> {
-    pub fn compare_headers(self) -> std::cmp::Ordering {
-        let comp = Comparator { this: self.this, other: self.other };
-        comp.compare()
-    }
-}
-
-#[derive(TypedBuilder)]
-struct QueryComparator<'a> {
-    this: Option<&'a Vec<HeaderMatch>>,
-    other: Option<&'a Vec<HeaderMatch>>,
-}
-impl QueryComparator<'_> {
-    pub fn compare_queries(self) -> std::cmp::Ordering {
-        let comp = Comparator { this: self.this, other: self.other };
-        comp.compare()
-    }
 }

@@ -51,17 +51,17 @@ spec:
           image: us-central1-docker.pkg.dev/k8s-staging-images/gateway-api-inference-extension/epp:main
           imagePullPolicy: IfNotPresent
           args:
-            - -poolName
+            - -pool-name
             - "vllm-llama3-8b-instruct"
-            - "-poolNamespace"
+            - "-pool-namespace"
             - "default"
             - -v
             - "4"
             - --zap-encoder
             - "json"
-            - -grpcPort
+            - -grpc-port
             - "9002"
-            - -grpcHealthPort
+            - -grpc-health-port
             - "9003"
           ports:
             - containerPort: 9002

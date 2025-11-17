@@ -10,12 +10,12 @@ use std::{collections::BTreeMap, sync::Arc};
 pub use hostname_match_filter::HostnameMatchFilter;
 use k8s_openapi::api::core::v1::Namespace;
 use kube::{
+    Api, Client, Resource, ResourceExt,
     api::{ListParams, Patch, PatchParams},
     runtime::{
         controller::Action,
         finalizer::{self, Error},
     },
-    Api, Client, Resource, ResourceExt,
 };
 use kube_core::{PartialObjectMeta, PartialObjectMetaExt};
 pub(crate) use route_listener_matcher::RouteListenerMatcher;
@@ -44,7 +44,12 @@ pub enum ResourceState {
 pub struct FinalizerPatcher {}
 
 impl FinalizerPatcher {
-    pub async fn patch_finalizer<T>(api: &Api<T>, resource_name: &str, controller_name: &str, finalizer_name: &str) -> std::result::Result<(), ControllerError>
+    pub async fn patch_finalizer<T>(
+        api: &Api<T>,
+        resource_name: &str,
+        controller_name: &str,
+        finalizer_name: &str,
+    ) -> std::result::Result<(), ControllerError>
     where
         T: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug,
         T: ResourceExt,
@@ -69,7 +74,7 @@ impl FinalizerPatcher {
                     Err(e) => {
                         warn!("patch_finalizer: {type_name} {controller_name} {resource_name} patch failed {e:?}",);
                         Err(ControllerError::PatchFailed)
-                    }
+                    },
                 }
             }
         } else {
@@ -84,7 +89,12 @@ pub type ResourceChecker<T> = fn(args: ResourceCheckerArgs<T>) -> ResourceState;
 pub struct ResourceStateChecker {}
 
 impl ResourceStateChecker {
-    pub fn check_status<R>(resource: &Arc<R>, maybe_stored_resource: Option<Arc<R>>, resource_spec_checker: ResourceChecker<R>, resource_status_checker: ResourceChecker<R>) -> ResourceState
+    pub fn check_status<R>(
+        resource: &Arc<R>,
+        maybe_stored_resource: Option<Arc<R>>,
+        resource_spec_checker: ResourceChecker<R>,
+        resource_status_checker: ResourceChecker<R>,
+    ) -> ResourceState
     where
         R: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug,
         R: ResourceExt,
@@ -99,11 +109,7 @@ impl ResourceStateChecker {
                 return ResourceState::VersionNotChanged;
             }
             let status = resource_spec_checker((resource, Arc::clone(&stored_object)));
-            if ResourceState::SpecNotChanged == status {
-                resource_status_checker((resource, stored_object))
-            } else {
-                status
-            }
+            if ResourceState::SpecNotChanged == status { resource_status_checker((resource, stored_object)) } else { status }
         } else {
             ResourceState::New
         }
@@ -113,7 +119,11 @@ impl ResourceStateChecker {
 pub struct ResourceFinalizer {}
 
 impl ResourceFinalizer {
-    pub async fn delete_resource<R, ReconcileErr>(api: &Api<R>, finalizer_name: &str, resource: &Arc<R>) -> std::result::Result<Action, Error<ReconcileErr>>
+    pub async fn delete_resource<R, ReconcileErr>(
+        api: &Api<R>,
+        finalizer_name: &str,
+        resource: &Arc<R>,
+    ) -> std::result::Result<Action, Error<ReconcileErr>>
     where
         R: k8s_openapi::serde::de::DeserializeOwned + Clone + std::fmt::Debug,
         R: ResourceExt,
@@ -121,12 +131,13 @@ impl ResourceFinalizer {
         R: Serialize,
         ReconcileErr: std::error::Error + 'static,
     {
-        let res: std::result::Result<Action, Error<_>> = finalizer::finalizer(api, finalizer_name, Arc::clone(resource), |event| async move {
-            match event {
-                finalizer::Event::Apply(_) | finalizer::Event::Cleanup(_) => Result::<Action, ReconcileErr>::Ok(Action::await_change()),
-            }
-        })
-        .await;
+        let res: std::result::Result<Action, Error<_>> =
+            finalizer::finalizer(api, finalizer_name, Arc::clone(resource), |event| async move {
+                match event {
+                    finalizer::Event::Apply(_) | finalizer::Event::Cleanup(_) => Result::<Action, ReconcileErr>::Ok(Action::await_change()),
+                }
+            })
+            .await;
         res
     }
 }

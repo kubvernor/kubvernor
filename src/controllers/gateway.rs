@@ -1,27 +1,27 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gateway_api::{constants, gatewayclasses::GatewayClass, gateways::Gateway};
 use kube::{
-    runtime::{controller::Action, watcher::Config, Controller},
     Api, Client, Resource,
+    runtime::{Controller, controller::Action, watcher::Config},
 };
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
 };
-use tracing::warn;
+use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
 use super::{
+    ControllerError, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
     handlers::ResourceHandler,
     utils::{ResourceCheckerArgs, ResourceState},
-    ControllerError, RECONCILE_ERROR_WAIT, RECONCILE_LONG_WAIT,
 };
 use crate::{
-    common::{self, BackendGatewayEvent, DeletedContext, ReferenceValidateRequest, RequestContext, ResourceKey},
+    common::{self, BackendGatewayEvent, DeletedContext, GatewayImplementationType, ReferenceValidateRequest, RequestContext, ResourceKey},
     services::patchers::{DeleteContext, Operation},
     state::State,
 };
@@ -32,7 +32,7 @@ type Result<T, E = ControllerError> = std::result::Result<T, E>;
 pub struct GatewayControllerContext {
     controller_name: String,
     client: Client,
-    gateway_channel_sender: mpsc::Sender<BackendGatewayEvent>,
+    gateway_channel_senders: HashMap<GatewayImplementationType, mpsc::Sender<BackendGatewayEvent>>,
     state: State,
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
     gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
@@ -45,7 +45,7 @@ pub struct GatewayController {
 }
 
 impl GatewayController {
-    pub fn get_controller(&self) -> BoxFuture<()> {
+    pub fn get_controller(&'_ self) -> BoxFuture<'_, ()> {
         let client = self.ctx.client.clone();
         let context = &self.ctx;
 
@@ -65,7 +65,10 @@ impl GatewayController {
             | ControllerError::FinalizerPatchFailed(_)
             | ControllerError::BackendError
             | ControllerError::UnknownResource => Action::requeue(RECONCILE_LONG_WAIT),
-            ControllerError::UnknownGatewayClass(_) | ControllerError::ResourceInWrongState | ControllerError::ResourceHasWrongStatus => Action::requeue(RECONCILE_ERROR_WAIT),
+            ControllerError::UnknownGatewayClass(_)
+            | ControllerError::UnknownGatewayType
+            | ControllerError::ResourceInWrongState
+            | ControllerError::ResourceHasWrongStatus => Action::requeue(RECONCILE_ERROR_WAIT),
         }
     }
 
@@ -90,8 +93,37 @@ impl GatewayController {
         let state = ctx.state.clone();
         let version = resource.meta().resource_version.clone();
 
-        let gateway_class_name = {
+        let (gateway_class_name, backend_type) = {
             let gateway_class_name = &resource.spec.gateway_class_name;
+            let mut configured_backend_type = GatewayImplementationType::Envoy;
+            if let Some(gateway_class) = state
+                .get_gateway_classes()
+                .expect("We expect the lock to work")
+                .into_iter()
+                .find(|gc| gc.metadata.name == Some(gateway_class_name.clone()))
+            {
+                if let Some(config_reference) = &gateway_class.spec.parameters_ref {
+                    let configuration_api: Api<kubvernor_api::crds::KubvernorConfig> =
+                        Api::namespaced(ctx.client.clone(), &resource_key.namespace);
+
+                    if let Ok(configuration) = configuration_api.get(&config_reference.name).await {
+                        debug!("reconcile_gateway: {controller_name} {name} retrieved configuration {:?}", configuration);
+                        let Ok(backend_type) = GatewayImplementationType::try_from(configuration.spec.backendtype.as_ref()) else {
+                            return Err(ControllerError::InvalidPayload("Uid must be present".to_owned()));
+                        };
+                        configured_backend_type = backend_type;
+                    } else {
+                        debug!("reconcile_gateway: {controller_name} {name} Unable to find KubernorConfig {config_reference:?}");
+                        return Err(ControllerError::InvalidPayload("Unable to find KubernorConfig".to_owned()));
+                    }
+                } else {
+                    debug!("reconcile_gateway: {controller_name} {name} No configuration found.. using defaults ");
+                }
+            } else {
+                warn!("reconcile_gateway: {controller_name} {name} Unknown gateway class name {gateway_class_name}");
+                return Err(ControllerError::UnknownGatewayClass(gateway_class_name.clone()));
+            }
+
             if !state
                 .get_gateway_classes()
                 .expect("We expect the lock to work")
@@ -101,10 +133,10 @@ impl GatewayController {
                 warn!("reconcile_gateway: {controller_name} {name} Unknown gateway class name {gateway_class_name}");
                 return Err(ControllerError::UnknownGatewayClass(gateway_class_name.clone()));
             }
-            gateway_class_name.clone()
+            (gateway_class_name.clone(), configured_backend_type)
         };
 
-        let maybe_stored_gateway_class = state.get_gateway(&resource_key).expect("We expect the lock to work");
+        let maybe_stored_gateway = state.get_gateway(&resource_key).expect("We expect the lock to work");
 
         let handler = GatewayResourceHandler::builder()
             .state(ctx.state.clone())
@@ -113,31 +145,24 @@ impl GatewayController {
             .gateway_class_name(gateway_class_name)
             .resource(resource)
             .version(version)
-            .gateway_channel_sender(ctx.gateway_channel_sender.clone())
+            .gateway_channel_senders(ctx.gateway_channel_senders.clone())
             .gateway_patcher(gateway_patcher)
             .gateway_class_patcher(gateway_class_patcher)
             .validate_references_channel_sender(ctx.validate_references_channel_sender.clone())
+            .gateway_backend_type(backend_type)
             .build();
 
-        handler.process(maybe_stored_gateway_class, Self::check_spec_changed, Self::check_status_changed).await
+        handler.process(maybe_stored_gateway, Self::check_spec_changed, Self::check_status_changed).await
     }
 
     fn check_spec_changed(args: ResourceCheckerArgs<Gateway>) -> ResourceState {
         let (resource, stored_resource) = args;
-        if resource.spec == stored_resource.spec {
-            ResourceState::SpecNotChanged
-        } else {
-            ResourceState::SpecChanged
-        }
+        if resource.spec == stored_resource.spec { ResourceState::SpecNotChanged } else { ResourceState::SpecChanged }
     }
 
     fn check_status_changed(args: ResourceCheckerArgs<Gateway>) -> ResourceState {
         let (resource, stored_resource) = args;
-        if resource.status == stored_resource.status {
-            ResourceState::StatusNotChanged
-        } else {
-            ResourceState::StatusChanged
-        }
+        if resource.status == stored_resource.status { ResourceState::StatusNotChanged } else { ResourceState::StatusChanged }
     }
 }
 
@@ -149,10 +174,11 @@ struct GatewayResourceHandler<R> {
     resource: Arc<R>,
     version: Option<String>,
     gateway_class_name: String,
-    gateway_channel_sender: mpsc::Sender<BackendGatewayEvent>,
+    gateway_channel_senders: HashMap<GatewayImplementationType, mpsc::Sender<BackendGatewayEvent>>,
     gateway_patcher: mpsc::Sender<Operation<Gateway>>,
     gateway_class_patcher: mpsc::Sender<Operation<GatewayClass>>,
     validate_references_channel_sender: mpsc::Sender<ReferenceValidateRequest>,
+    gateway_backend_type: GatewayImplementationType,
 }
 
 #[async_trait]
@@ -203,8 +229,14 @@ impl ResourceHandler<Gateway> for GatewayResourceHandler<Gateway> {
 impl GatewayResourceHandler<Gateway> {
     async fn on_deleted(&self, id: ResourceKey, kube_gateway: &Arc<Gateway>, state: &State) -> Result<Action> {
         let _ = state.delete_gateway(&id).expect("We expect the lock to work");
-        let sender = &self.gateway_channel_sender;
-        let _res = self.delete_gateway(sender, kube_gateway).await;
+        let gateway_type = state.delete_gateway_type(&id).expect("We expect the lock to work");
+        let senders = &self.gateway_channel_senders;
+        if let Some(gateway_type) = gateway_type {
+            let _res = self.delete_gateway(senders, kube_gateway, gateway_type).await;
+        } else {
+            warn!("GatewayResourceHandler Controller {} Gateway {} Unknown gateway implementation type ", &self.controller_name, id);
+        }
+
         let _res = self
             .gateway_patcher
             .send(Operation::Delete(DeleteContext {
@@ -216,15 +248,26 @@ impl GatewayResourceHandler<Gateway> {
         Ok(Action::requeue(RECONCILE_LONG_WAIT))
     }
 
-    async fn delete_gateway(&self, sender: &Sender<BackendGatewayEvent>, kube_gateway: &Arc<Gateway>) -> Result<Gateway> {
+    async fn delete_gateway(
+        &self,
+        senders: &HashMap<GatewayImplementationType, Sender<BackendGatewayEvent>>,
+        kube_gateway: &Arc<Gateway>,
+        gateway_type: GatewayImplementationType,
+    ) -> Result<Gateway> {
         let maybe_gateway = common::Gateway::try_from(&**kube_gateway);
-        let Ok(backend_gateway) = maybe_gateway else {
+
+        let Ok(mut backend_gateway) = maybe_gateway else {
             warn!("Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
 
+        *backend_gateway.backend_type_mut() = gateway_type;
+        let sender = senders.get(backend_gateway.backend_type()).expect("Invalid backend type");
+
         let (response_sender, response_receiver) = oneshot::channel();
-        let listener_event = BackendGatewayEvent::Deleted(Box::new(DeletedContext::builder().response_sender(response_sender).gateway(backend_gateway.clone()).build()));
+        let listener_event = BackendGatewayEvent::Deleted(Box::new(
+            DeletedContext::builder().response_sender(response_sender).gateway(backend_gateway.clone()).build(),
+        ));
 
         let _ = self.validate_references_channel_sender.send(ReferenceValidateRequest::DeleteGateway { gateway: backend_gateway }).await;
 
@@ -234,13 +277,16 @@ impl GatewayResourceHandler<Gateway> {
     }
 
     async fn on_new_or_changed(&self, _: ResourceKey, kube_gateway: &Arc<Gateway>, _: &State) -> Result<Action> {
-        let maybe_gateway = common::Gateway::try_from(&**kube_gateway);
+        let maybe_gateway = common::Gateway::try_from((&**kube_gateway, self.gateway_backend_type.clone()));
 
         let Ok(backend_gateway) = maybe_gateway else {
             warn!("Misconfigured  gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
+
         let kube_gateway = (**kube_gateway).clone();
+        info!("Saving gateway type");
+        let _ = self.state.save_gateway_type(backend_gateway.key().clone(), self.gateway_backend_type.clone());
 
         let _ = self
             .validate_references_channel_sender
@@ -275,10 +321,10 @@ impl GatewayResourceHandler<Gateway> {
                     }
 
                     return Ok(Action::requeue(RECONCILE_LONG_WAIT));
-                } else if conditions
-                    .iter()
-                    .any(|c| c.type_ == constants::GatewayConditionType::Programmed.to_string() && c.status == constants::GatewayConditionReason::Pending.to_string())
-                {
+                } else if conditions.iter().any(|c| {
+                    c.type_ == constants::GatewayConditionType::Programmed.to_string()
+                        && c.status == constants::GatewayConditionReason::Pending.to_string()
+                }) {
                     return self.on_new_or_changed(gateway_id, resource, state).await;
                 }
             }
