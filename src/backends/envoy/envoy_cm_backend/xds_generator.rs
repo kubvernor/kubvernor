@@ -115,7 +115,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
 
     fn generate_envoy_representation(&self) -> BTreeMap<i32, EnvoyListener> {
         let gateway = self.effective_gateway;
-        let envoy_listeners = gateway.listeners().fold(BTreeMap::<i32, EnvoyListener>::new(), |mut acc, listener| {
+        gateway.listeners().fold(BTreeMap::<i32, EnvoyListener>::new(), |mut acc, listener| {
             let port = listener.port();
             let listener_name = listener.name().to_owned();
             let listener_hostname = listener.hostname().cloned();
@@ -159,8 +159,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
             }
 
             acc
-        });
-        envoy_listeners
+        })
     }
 
     fn generate_virtual_hosts(gateway_name: String, listener: &Listener) -> EnvoyListener {

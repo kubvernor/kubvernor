@@ -48,7 +48,7 @@ impl<'a> ResourceGenerator<'a> {
 
     pub fn generate_bindings_and_listeners(&self) -> BTreeMap<Bind, Vec<Listener>> {
         let gateway = self.effective_gateway;
-        let listeners = gateway.listeners().fold(BTreeMap::<Bind, Vec<Listener>>::new(), |mut acc, listener| {
+        gateway.listeners().fold(BTreeMap::<Bind, Vec<Listener>>::new(), |mut acc, listener| {
             let port = listener.port();
             let listener_name = listener.name().to_owned();
             let gateway_name = gateway.name().to_owned();
@@ -74,8 +74,7 @@ impl<'a> ResourceGenerator<'a> {
                 acc.insert(bind, vec![agentgateway_listener]);
             }
             acc
-        });
-        listeners
+        })
     }
 
     pub fn generate_routes_and_backends_and_policies(

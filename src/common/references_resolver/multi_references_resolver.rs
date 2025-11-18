@@ -194,8 +194,7 @@ where
     }
 
     pub async fn get_reference(&self, resource_key: &ResourceKey) -> Option<R> {
-        let resolved_backend_references = { self.references.lock().await.get(resource_key).cloned() };
-        resolved_backend_references
+        self.references.lock().await.get(resource_key).cloned()
     }
 
     pub async fn resolve(&self) {
