@@ -305,28 +305,28 @@ impl GatewayResourceHandler<Gateway> {
     async fn on_status_changed(&self, gateway_id: ResourceKey, resource: &Arc<Gateway>, state: &State) -> Result<Action> {
         let controller_name = &self.controller_name;
         let gateway_class_name = &self.gateway_class_name;
-        if let Some(status) = &resource.status {
-            if let Some(conditions) = &status.conditions {
-                if conditions.iter().any(|c| c.type_ == constants::GatewayConditionType::Ready.to_string()) {
-                    let () = state.save_gateway(gateway_id.clone(), resource).expect("We expect the lock to work");
-                    common::add_finalizer_to_gateway_class(&self.gateway_class_patcher, gateway_class_name, controller_name).await;
-                    let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
-                        finalizers.iter().any(|f| f == controller_name)
-                    } else {
-                        false
-                    };
+        if let Some(status) = &resource.status
+            && let Some(conditions) = &status.conditions
+        {
+            if conditions.iter().any(|c| c.type_ == constants::GatewayConditionType::Ready.to_string()) {
+                let () = state.save_gateway(gateway_id.clone(), resource).expect("We expect the lock to work");
+                common::add_finalizer_to_gateway_class(&self.gateway_class_patcher, gateway_class_name, controller_name).await;
+                let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
+                    finalizers.iter().any(|f| f == controller_name)
+                } else {
+                    false
+                };
 
-                    if !has_finalizer {
-                        let () = common::add_finalizer(&self.gateway_patcher, &gateway_id, controller_name).await;
-                    }
-
-                    return Ok(Action::requeue(RECONCILE_LONG_WAIT));
-                } else if conditions.iter().any(|c| {
-                    c.type_ == constants::GatewayConditionType::Programmed.to_string()
-                        && c.status == constants::GatewayConditionReason::Pending.to_string()
-                }) {
-                    return self.on_new_or_changed(gateway_id, resource, state).await;
+                if !has_finalizer {
+                    let () = common::add_finalizer(&self.gateway_patcher, &gateway_id, controller_name).await;
                 }
+
+                return Ok(Action::requeue(RECONCILE_LONG_WAIT));
+            } else if conditions.iter().any(|c| {
+                c.type_ == constants::GatewayConditionType::Programmed.to_string()
+                    && c.status == constants::GatewayConditionReason::Pending.to_string()
+            }) {
+                return self.on_new_or_changed(gateway_id, resource, state).await;
             }
         }
         Err(ControllerError::ResourceHasWrongStatus)

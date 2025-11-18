@@ -132,8 +132,7 @@ impl AdsClients {
     fn get_clients_by_gateway_id(&self, gateway_id: &str) -> Vec<AdsClient> {
         debug!("get_clients_by_gateway_id {gateway_id}");
         let clients = self.ads_clients.lock().expect("We expect the lock to work");
-        let clients = clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect();
-        clients
+        clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect()
     }
 
     fn get_client_by_client_id(&self, client_id: SocketAddr) -> Option<AdsClient> {
@@ -473,13 +472,12 @@ async fn fetch_gateway_id_by_node_id(client: kube::Client, node: &EnvoyNode) -> 
     let id = &node.id;
     let namespace = &node.cluster;
     let api_client: kube::api::Api<Pod> = Api::namespaced(client, namespace);
-    if let Ok(pod) = api_client.get(id).await {
-        if let Some(labels) = pod.metadata.labels {
-            if let Some(gateway_id) = labels.get("app") {
-                debug!("create_gateway_id_from_node_id:: Node id {id} {gateway_id:?}");
-                return Some(create_id(gateway_id, namespace));
-            }
-        }
+    if let Ok(pod) = api_client.get(id).await
+        && let Some(labels) = pod.metadata.labels
+        && let Some(gateway_id) = labels.get("app")
+    {
+        debug!("create_gateway_id_from_node_id:: Node id {id} {gateway_id:?}");
+        return Some(create_id(gateway_id, namespace));
     }
     None
 }

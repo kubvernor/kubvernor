@@ -211,8 +211,7 @@ impl AdsClients {
     fn get_clients_by_gateway_id(&self, gateway_id: &str) -> Vec<AdsClient> {
         debug!("get_clients_by_gateway_id {gateway_id}");
         let clients = self.ads_clients.lock().expect("We expect the lock to work");
-        let clients = clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect();
-        clients
+        clients.iter().filter(|client| client.gateway_id == Some(gateway_id.to_owned())).cloned().collect()
     }
 
     fn get_client_by_client_id(&self, client_id: SocketAddr) -> Option<AdsClient> {
@@ -225,13 +224,13 @@ impl AdsClients {
         debug!("update_client {:?} {gateway_id}", client.client_id);
         if client.gateway_id.is_none() {
             info!("update_client {:?} {gateway_id}  Initial connection - Uupdating all resources", client.client_id);
-            client.set_gateway_id(&gateway_id);
+            client.set_gateway_id(gateway_id);
 
             {
                 if let Some(resources) = self.managed_resources.lock().expect("We expect the lock to work").get(gateway_id) {
                     debug!("update_client {:?} {gateway_id} - Updating resources {:?}", client.client_id, resources);
-                    client.resources = resources.all_resources.clone();
-                    client.workloads = resources.all_workloads.clone();
+                    client.resources.clone_from(&resources.all_resources);
+                    client.workloads.clone_from(&resources.all_workloads);
                 } else {
                     debug!("update_client {:?} {gateway_id} - No resources", client.client_id);
                 }
@@ -251,7 +250,7 @@ impl AdsClients {
         let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
         managed_resources
             .entry(gateway_id.to_owned())
-            .and_modify(|e| e.all_resources = resources.clone())
+            .and_modify(|e| e.all_resources.clone_from(&resources))
             .or_insert(ManagedResources { all_resources: resources, all_workloads: vec![] });
     }
 
@@ -260,11 +259,11 @@ impl AdsClients {
         let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
         managed_resources
             .entry(gateway_id.to_owned())
-            .and_modify(|e| e.all_workloads = workloads.clone())
+            .and_modify(|e| e.all_workloads.clone_from(&workloads))
             .or_insert(ManagedResources { all_resources: vec![], all_workloads: workloads });
     }
 
-    fn update_client_and_resources(&self, client: &AdsClient, resources: Vec<Resource>) {
+    fn update_client_and_resources(&self, client: &AdsClient, resources: &[Resource]) {
         debug!("update_client_and_resources {:?} {:?}", client.client_id, client.gateway_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
@@ -276,12 +275,12 @@ impl AdsClients {
         if let Some(gateway_id) = client.gateway_id.as_ref() {
             managed_resources
                 .entry(gateway_id.clone())
-                .and_modify(|m| m.all_resources = resources.clone())
-                .or_insert(ManagedResources { all_resources: resources.clone(), all_workloads: vec![] });
+                .and_modify(|m| m.all_resources.clone_from_slice(resources))
+                .or_insert(ManagedResources { all_resources: resources.to_vec(), all_workloads: vec![] });
         }
     }
 
-    fn update_client_and_workloads(&self, client: &AdsClient, workloads: Vec<Address>) {
+    fn update_client_and_workloads(&self, client: &AdsClient, workloads: &[Address]) {
         debug!("update_client_and_workloads {:?} {:?}", client.client_id, client.gateway_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
@@ -293,8 +292,8 @@ impl AdsClients {
         if let Some(gateway_id) = client.gateway_id.as_ref() {
             managed_resources
                 .entry(gateway_id.clone())
-                .and_modify(|m| m.all_workloads = workloads.clone())
-                .or_insert(ManagedResources { all_resources: vec![], all_workloads: workloads.clone() });
+                .and_modify(|m| m.all_workloads.clone_from_slice(workloads))
+                .or_insert(ManagedResources { all_resources: vec![], all_workloads: workloads.to_vec() });
         }
     }
 
@@ -389,7 +388,7 @@ impl AggregateServerService {
                                         removed_resources: to_remove,
                                         ..Default::default()
                                     };
-                                    ads_clients.update_client_and_resources(client, resources.clone());
+                                    ads_clients.update_client_and_resources(client, &resources);
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
                                 }
                             },
@@ -427,7 +426,7 @@ impl AggregateServerService {
                                     };
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
 
-                                    ads_clients.update_client_and_workloads(client,workloads.clone());
+                                    ads_clients.update_client_and_workloads(client,&workloads);
                                 }
                             }
                         }
@@ -664,12 +663,11 @@ async fn fetch_gateway_id_by_node_id(client: kube::Client, node: &Node) -> crate
     let (id, namespace) = parse_agengateway_id(&node.id)?;
     debug!("fetch_gateway_id_by_node_id:: Node id {id} {namespace}");
     let api_client: kube::api::Api<Pod> = Api::namespaced(client, namespace);
-    if let Ok(pod) = api_client.get(id).await {
-        if let Some(labels) = pod.metadata.labels {
-            if let Some(gateway_id) = labels.get("app") {
-                return Ok(create_id(gateway_id, namespace));
-            }
-        }
+    if let Ok(pod) = api_client.get(id).await
+        && let Some(labels) = pod.metadata.labels
+        && let Some(gateway_id) = labels.get("app")
+    {
+        return Ok(create_id(gateway_id, namespace));
     }
     Err("Can't get pod with id".into())
 }

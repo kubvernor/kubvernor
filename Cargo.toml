@@ -86,6 +86,7 @@ strip = false
 pedantic = { level = "warn", priority = -1 }
 #struct_field_names = "allow"
 clone_on_ref_ptr = "warn"
+cast_sign_loss="allow"
 disallowed-methods = "deny"
 doc_markdown = "allow"
 get_unwrap = "warn"

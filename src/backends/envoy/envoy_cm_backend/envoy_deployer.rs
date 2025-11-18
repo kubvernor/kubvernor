@@ -165,13 +165,12 @@ impl EnvoyDeployerChannelHandlerService {
 
     fn find_gateway_addresses(service: &Service) -> Option<Vec<String>> {
         let mut ips = vec![];
-        if let Some(status) = &service.status {
-            if let Some(load_balancer) = &status.load_balancer {
-                if let Some(ingress) = &load_balancer.ingress {
-                    for i in ingress {
-                        ips.push(i.ip.clone());
-                    }
-                }
+        if let Some(status) = &service.status
+            && let Some(load_balancer) = &status.load_balancer
+            && let Some(ingress) = &load_balancer.ingress
+        {
+            for i in ingress {
+                ips.push(i.ip.clone());
             }
         }
         let ips = ips.into_iter().flatten().collect::<Vec<_>>();
@@ -405,11 +404,11 @@ impl EnvoyDeployerChannelHandlerService {
     fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
         let mut all_certificates = BTreeSet::new();
         for listener in listeners {
-            if let Listener::Https(listener_data) = listener {
-                if let Some(TlsType::Terminate(certificates)) = &listener_data.config.tls_type {
-                    for certificate in certificates {
-                        all_certificates.insert(certificate.clone());
-                    }
+            if let Listener::Https(listener_data) = listener
+                && let Some(TlsType::Terminate(certificates)) = &listener_data.config.tls_type
+            {
+                for certificate in certificates {
+                    all_certificates.insert(certificate.clone());
                 }
             }
         }
@@ -533,7 +532,7 @@ const ENVOY_POD_SPEC: &str = r#"
                 }
             ],
             "ports": [
-                
+
             ],
             "readinessProbe": {
                 "httpGet": {

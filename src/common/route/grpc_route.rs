@@ -71,10 +71,7 @@ impl TryFrom<&GRPCRoute> for Route {
             .spec
             .hostnames
             .as_ref()
-            .map(|hostnames| {
-                let hostnames = hostnames.iter().filter(|hostname| hostname.parse::<IpAddr>().is_err()).cloned().collect::<Vec<_>>();
-                hostnames
-            })
+            .map(|hostnames| hostnames.iter().filter(|hostname| hostname.parse::<IpAddr>().is_err()).cloned().collect::<Vec<_>>())
             .unwrap_or(vec![DEFAULT_ROUTE_HOSTNAME.to_owned()]);
 
         let config = RouteConfig {

@@ -22,10 +22,10 @@ impl<'a> HostnameMatchFilter<'a> {
             return true;
         }
 
-        if let Some(hostname) = self.route_hostnames.first() {
-            if hostname == DEFAULT_ROUTE_HOSTNAME {
-                return true;
-            }
+        if let Some(hostname) = self.route_hostnames.first()
+            && hostname == DEFAULT_ROUTE_HOSTNAME
+        {
+            return true;
         }
 
         let listener_hostname = self.listener_hostname.to_owned();

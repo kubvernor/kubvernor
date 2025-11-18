@@ -55,11 +55,6 @@ impl RouteResolver<'_> {
                         route_resolution_status = resolution_status;
                     }
                     rule.backends.clone_from(&new_backends);
-                    // httprouting_configuration
-                    //     .effective_routing_rules
-                    //     .iter_mut()
-                    //     .filter(|r| r.name == rule.name)
-                    //     .for_each(|r| r.backends.clone_from(&new_backends));
                 }
             },
             common::RouteType::Grpc(grpcrouting_configuration) => {
@@ -79,10 +74,10 @@ impl RouteResolver<'_> {
 
     fn backend_remap_port(port: i32, service: Service) -> i32 {
         if let Some(spec) = service.spec {
-            if let (_, Some(cluster_ip)) = (spec.selector, spec.cluster_ip) {
-                if cluster_ip != KUBERNETES_NONE {
-                    return port;
-                }
+            if let (_, Some(cluster_ip)) = (spec.selector, spec.cluster_ip)
+                && cluster_ip != KUBERNETES_NONE
+            {
+                return port;
             }
 
             debug!("Spec cluster IP is NOT set ... remapping ports");

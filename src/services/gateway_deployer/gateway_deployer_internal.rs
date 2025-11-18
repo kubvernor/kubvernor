@@ -29,22 +29,17 @@ pub struct GatewayDeployerServiceInternal<'a> {
 impl GatewayDeployerServiceInternal<'_> {
     pub async fn on_version_not_changed(&mut self, gateway_id: &ResourceKey, gateway_class_name: &str, resource: &Arc<KubeGateway>) {
         let controller_name = &self.controller_name;
-        if let Some(status) = &resource.status {
-            if let Some(conditions) = &status.conditions {
-                if conditions.iter().any(|c| c.type_ == constants::GatewayConditionType::Ready.to_string()) {
-                    self.state.save_gateway(gateway_id.clone(), resource).expect("We expect the lock to work");
-                    common::add_finalizer_to_gateway_class(&self.gateway_class_patcher_channel_sender, gateway_class_name, controller_name)
-                        .await;
-                    let has_finalizer = if let Some(finalizers) = &resource.metadata.finalizers {
-                        finalizers.iter().any(|f| f == controller_name)
-                    } else {
-                        false
-                    };
+        if let Some(status) = &resource.status
+            && let Some(conditions) = &status.conditions
+            && conditions.iter().any(|c| c.type_ == constants::GatewayConditionType::Ready.to_string())
+        {
+            self.state.save_gateway(gateway_id.clone(), resource).expect("We expect the lock to work");
+            common::add_finalizer_to_gateway_class(&self.gateway_class_patcher_channel_sender, gateway_class_name, controller_name).await;
+            let has_finalizer =
+                if let Some(finalizers) = &resource.metadata.finalizers { finalizers.iter().any(|f| f == controller_name) } else { false };
 
-                    if !has_finalizer {
-                        let () = common::add_finalizer(&self.gateway_patcher_channel_sender, gateway_id, controller_name).await;
-                    }
-                }
+            if !has_finalizer {
+                let () = common::add_finalizer(&self.gateway_patcher_channel_sender, gateway_id, controller_name).await;
             }
         }
     }

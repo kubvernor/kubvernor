@@ -286,15 +286,15 @@ fn create_accepted_inference_pool_status(
 }
 
 pub fn clear_all_conditions(mut inference_pool: InferencePool, gateways_ids: &BTreeSet<ResourceKey>) -> InferencePool {
-    if let Some(status) = inference_pool.status.as_mut() {
-        if let Some(parents) = status.parents.as_ref() {
-            let new_parents = parents.iter().filter(|parent| {
-                let key = ResourceKey::from(&parent.parent_ref);
-                gateways_ids.contains(&key)
-            });
+    if let Some(status) = inference_pool.status.as_mut()
+        && let Some(parents) = status.parents.as_ref()
+    {
+        let new_parents = parents.iter().filter(|parent| {
+            let key = ResourceKey::from(&parent.parent_ref);
+            gateways_ids.contains(&key)
+        });
 
-            status.parents = Some(new_parents.cloned().collect());
-        }
+        status.parents = Some(new_parents.cloned().collect());
     }
     inference_pool
 }
