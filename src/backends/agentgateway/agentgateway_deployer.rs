@@ -142,7 +142,7 @@ impl AgentgatewayDeployerChannelHandlerService {
 
                                         let workloads = vec![workload::Address{ r#type: Some(workload::address::Type::Service(workload::Service::default())) }].into_iter().chain(services.clone().into_iter().map(|svc|
                                             workload::Address{ r#type: Some(workload::address::Type::Service(svc))}
-                                        )).chain(services.into_iter().map(|svc| Self::convert_into_workload(svc).into_iter().map(|w| workload::Address{ r#type: Some(workload::address::Type::Workload(w))}).collect::<Vec<_>>()).flatten()).collect();
+                                        )).chain(services.into_iter().flat_map(|svc| Self::convert_into_workload(svc).into_iter().map(|w| workload::Address{ r#type: Some(workload::address::Type::Workload(w))}).collect::<Vec<_>>())).collect();
                                         let _ = stream_resource_sender.send(ServerAction::UpdateWorkloads {
                                             gateway_id: gateway.key().clone(),
                                             workloads,
@@ -256,13 +256,12 @@ impl AgentgatewayDeployerChannelHandlerService {
     }
     fn find_gateway_addresses(service: &Service) -> Option<Vec<String>> {
         let mut ips = vec![];
-        if let Some(status) = &service.status {
-            if let Some(load_balancer) = &status.load_balancer {
-                if let Some(ingress) = &load_balancer.ingress {
-                    for i in ingress {
-                        ips.push(i.ip.clone());
-                    }
-                }
+        if let Some(status) = &service.status
+            && let Some(load_balancer) = &status.load_balancer
+            && let Some(ingress) = &load_balancer.ingress
+        {
+            for i in ingress {
+                ips.push(i.ip.clone());
             }
         }
         let ips = ips.into_iter().flatten().collect::<Vec<_>>();

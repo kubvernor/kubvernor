@@ -164,10 +164,10 @@ pub async fn resolve_namespaces(client: Client) -> BTreeMap<String, BTreeMap<Str
     let mut namespace_map = BTreeMap::new();
     if let Ok(namespaces) = maybe_namespaces {
         for namespace in namespaces.items {
-            if let Some(labels) = namespace.metadata.labels {
-                if let Some(namesapce_name) = labels.get("kubernetes.io/metadata.name") {
-                    namespace_map.insert(namesapce_name.clone(), labels);
-                }
+            if let Some(labels) = namespace.metadata.labels
+                && let Some(namesapce_name) = labels.get("kubernetes.io/metadata.name")
+            {
+                namespace_map.insert(namesapce_name.clone(), labels);
             }
         }
     }

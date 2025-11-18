@@ -157,10 +157,10 @@ impl<'a> RouteListenerMatcher<'a> {
         listeners.filter(move |l| {
             let mut is_allowed = true;
             if let Some(allowed_routes) = &l.allowed_routes {
-                if let Some(allowed_kinds) = &allowed_routes.kinds {
-                    if !allowed_kinds.is_empty() {
-                        is_allowed = allowed_kinds.iter().map(|k| &k.kind).any(|f| f == "HTTPRoute");
-                    }
+                if let Some(allowed_kinds) = &allowed_routes.kinds
+                    && !allowed_kinds.is_empty()
+                {
+                    is_allowed = allowed_kinds.iter().map(|k| &k.kind).any(|f| f == "HTTPRoute");
                 }
 
                 if let Some(GatewayListenersAllowedRoutesNamespaces { from: Some(selector_type), selector }) = &allowed_routes.namespaces {
@@ -169,15 +169,15 @@ impl<'a> RouteListenerMatcher<'a> {
                         GatewayListenersAllowedRoutesNamespacesFrom::Selector => {
                             debug!("Selector {selector:?}");
                             is_allowed = false;
-                            if let Some(selector) = selector {
-                                if let Some(selector_labels) = &selector.match_labels {
-                                    let resolved_namespaces = self.resolved_namespaces.get(&route_key.namespace);
-                                    debug!("Selector labels {resolved_namespaces:#?}");
-                                    if let Some(labels) = resolved_namespaces {
-                                        for (selector_k, selector_v) in selector_labels {
-                                            if labels.get(selector_k) == Some(selector_v) {
-                                                is_allowed = true;
-                                            }
+                            if let Some(selector) = selector
+                                && let Some(selector_labels) = &selector.match_labels
+                            {
+                                let resolved_namespaces = self.resolved_namespaces.get(&route_key.namespace);
+                                debug!("Selector labels {resolved_namespaces:#?}");
+                                if let Some(labels) = resolved_namespaces {
+                                    for (selector_k, selector_v) in selector_labels {
+                                        if labels.get(selector_k) == Some(selector_v) {
+                                            is_allowed = true;
                                         }
                                     }
                                 }

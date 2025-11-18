@@ -79,10 +79,10 @@ impl RouteResolver<'_> {
 
     fn backend_remap_port(port: i32, service: Service) -> i32 {
         if let Some(spec) = service.spec {
-            if let (_, Some(cluster_ip)) = (spec.selector, spec.cluster_ip) {
-                if cluster_ip != KUBERNETES_NONE {
-                    return port;
-                }
+            if let (_, Some(cluster_ip)) = (spec.selector, spec.cluster_ip)
+                && cluster_ip != KUBERNETES_NONE
+            {
+                return port;
             }
 
             debug!("Spec cluster IP is NOT set ... remapping ports");
