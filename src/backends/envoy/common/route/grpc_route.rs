@@ -1,13 +1,13 @@
 use std::cmp;
 
-use gateway_api::grpcroutes::GRPCRouteMatch;
+use gateway_api::grpcroutes::GrpcRouteMatch;
 use tracing::debug;
 
 use crate::common::{Backend, FilterHeaders};
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct GRPCEffectiveRoutingRule {
-    pub route_matcher: GRPCRouteMatch,
+    pub route_matcher: GrpcRouteMatch,
     pub backends: Vec<Backend>,
     pub name: String,
     pub hostnames: Vec<String>,
@@ -23,12 +23,12 @@ impl PartialOrd for GRPCEffectiveRoutingRule {
 }
 
 impl GRPCEffectiveRoutingRule {
-    fn header_matching(this: &GRPCRouteMatch, other: &GRPCRouteMatch) -> std::cmp::Ordering {
+    fn header_matching(this: &GrpcRouteMatch, other: &GrpcRouteMatch) -> std::cmp::Ordering {
         let matcher = super::HeaderComparator::builder().this(this.headers.as_ref()).other(other.headers.as_ref()).build();
         matcher.compare_headers()
     }
 
-    fn method_matching(this: &GRPCRouteMatch, other: &GRPCRouteMatch) -> std::cmp::Ordering {
+    fn method_matching(this: &GrpcRouteMatch, other: &GrpcRouteMatch) -> std::cmp::Ordering {
         match (this.method.as_ref(), other.method.as_ref()) {
             (None, None) => std::cmp::Ordering::Equal,
             (None, Some(_)) => std::cmp::Ordering::Greater,
@@ -45,7 +45,7 @@ impl GRPCEffectiveRoutingRule {
         }
     }
 
-    fn compare_matching(this: &GRPCRouteMatch, other: &GRPCRouteMatch) -> std::cmp::Ordering {
+    fn compare_matching(this: &GrpcRouteMatch, other: &GrpcRouteMatch) -> std::cmp::Ordering {
         let method_match = Self::method_matching(this, other);
         let header_match = Self::header_matching(this, other);
 

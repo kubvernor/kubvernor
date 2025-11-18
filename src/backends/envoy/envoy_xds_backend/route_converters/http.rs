@@ -96,15 +96,15 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
         let path_specifier = effective_routing_rule.route_matcher.path.clone().and_then(|matcher| {
             let value = matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
             matcher.r#type.map(|t| match t {
-                httproutes::HTTPRouteRulesMatchesPathType::Exact => PathSpecifier::Path(value),
-                httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
+                httproutes::HttpRouteRulesMatchesPathType::Exact => PathSpecifier::Path(value),
+                httproutes::HttpRouteRulesMatchesPathType::PathPrefix => {
                     if let Some(val) = matcher.value {
                         if val == "/" { PathSpecifier::Prefix(value) } else { PathSpecifier::PathSeparatedPrefix(value) }
                     } else {
                         PathSpecifier::Prefix(value)
                     }
                 },
-                httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => {
+                httproutes::HttpRouteRulesMatchesPathType::RegularExpression => {
                     PathSpecifier::SafeRegex(RegexMatcher { regex: value, ..Default::default() })
                 },
             })

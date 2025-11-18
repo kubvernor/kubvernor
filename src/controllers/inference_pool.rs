@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gateway_api::httproutes::{HTTPRoute, HTTPRouteRule};
+use gateway_api::httproutes::{HTTPRoute, HttpRouteRule};
 use gateway_api_inference_extension::inferencepools::{
     InferencePool, InferencePoolStatus, InferencePoolStatusParents, InferencePoolStatusParentsParentRef,
 };
@@ -258,7 +258,7 @@ impl InferencePoolControllerHandler<InferencePool> {
 }
 
 fn has_inference_pool(route: &HTTPRoute, inference_pool_key: &ResourceKey) -> bool {
-    let empty_rules: Vec<HTTPRouteRule> = vec![];
+    let empty_rules: Vec<HttpRouteRule> = vec![];
     let routing_rules = route.spec.rules.as_ref().unwrap_or(&empty_rules);
     routing_rules.iter().any(|rr| {
         rr.backend_refs.as_ref().unwrap_or(&vec![]).iter().any(|br| match br.kind.as_ref() {

@@ -311,17 +311,17 @@ fn convert_path_match(
         Some(path_match) => {
             let match_value = path_match.value.clone().unwrap_or_default();
             match path_match.r#type {
-                Some(gateway_api::httproutes::HTTPRouteRulesMatchesPathType::Exact) => {
+                Some(gateway_api::httproutes::HttpRouteRulesMatchesPathType::Exact) => {
                     Some(agentgateway_api_rs::agentgateway::dev::resource::PathMatch {
                         kind: Some(agentgateway_api_rs::agentgateway::dev::resource::path_match::Kind::Exact(match_value)),
                     })
                 },
-                Some(gateway_api::httproutes::HTTPRouteRulesMatchesPathType::PathPrefix) => {
+                Some(gateway_api::httproutes::HttpRouteRulesMatchesPathType::PathPrefix) => {
                     Some(agentgateway_api_rs::agentgateway::dev::resource::PathMatch {
                         kind: Some(agentgateway_api_rs::agentgateway::dev::resource::path_match::Kind::PathPrefix(match_value)),
                     })
                 },
-                Some(gateway_api::httproutes::HTTPRouteRulesMatchesPathType::RegularExpression) => {
+                Some(gateway_api::httproutes::HttpRouteRulesMatchesPathType::RegularExpression) => {
                     Some(agentgateway_api_rs::agentgateway::dev::resource::PathMatch {
                         kind: Some(agentgateway_api_rs::agentgateway::dev::resource::path_match::Kind::Regex(match_value)),
                     })

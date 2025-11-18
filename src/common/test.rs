@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use gateway_api::httproutes::{HTTPRoute, HTTPRouteRule, RouteMatch};
+use gateway_api::httproutes::{HTTPRoute, HttpRouteRule, RouteMatch};
 
 use crate::common::ListenerCondition;
 
@@ -62,7 +62,7 @@ backendRefs:
   - name: infra-backend-v2
     port: 8080
 ";
-    let x: HTTPRouteRule = serde_yaml::from_str(m).unwrap();
+    let x: HttpRouteRule = serde_yaml::from_str(m).unwrap();
     println!("{x:#?}");
 }
 

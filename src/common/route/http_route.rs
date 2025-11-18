@@ -2,7 +2,7 @@ use std::net::IpAddr;
 
 use gateway_api::{
     common::{HTTPFilterType, HTTPHeader, HeaderModifier},
-    httproutes::{HTTPBackendReference, HTTPRoute, HTTPRouteFilter, HTTPRouteRule, RouteMatch},
+    httproutes::{HTTPBackendReference, HTTPRoute, HttpRouteFilter, HttpRouteRule, RouteMatch},
 };
 use kube::ResourceExt;
 
@@ -30,7 +30,7 @@ impl TryFrom<&HTTPRoute> for Route {
         let parents = kube_route.spec.parent_refs.clone();
         let local_namespace = key.namespace.as_str();
 
-        let empty_rules: Vec<HTTPRouteRule> = vec![];
+        let empty_rules: Vec<HttpRouteRule> = vec![];
         let mut has_invalid_backends = false;
         let routing_rules = kube_route.spec.rules.as_ref().unwrap_or(&empty_rules);
         let routing_rules: Vec<HTTPRoutingRule> = routing_rules
@@ -138,7 +138,7 @@ pub struct HTTPRoutingRule {
     pub name: String,
     pub backends: Vec<Backend>,
     pub matching_rules: Vec<RouteMatch>,
-    pub filters: Vec<HTTPRouteFilter>,
+    pub filters: Vec<HttpRouteFilter>,
 }
 
 impl HTTPRoutingRule {

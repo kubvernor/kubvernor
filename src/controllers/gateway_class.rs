@@ -152,6 +152,7 @@ impl GatewayClassResourceHandler<GatewayClass> {
             if #[cfg(feature="standard")] {
                 let new_status = GatewayClassStatus {
                     conditions: Some(conditions),
+                    supported_features: None
                 };
             } else if #[cfg(feature = "experimental")] {
                 let new_status = GatewayClassStatus {
