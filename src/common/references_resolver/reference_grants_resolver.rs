@@ -311,15 +311,19 @@ impl From<&ReferenceGrantTo> for ResourceKey {
 #[cfg(test)]
 mod tests {
     use gateway_api::referencegrants;
+    use http::{Request, Response};
+    use kube::client::Body;
     use kube_core::{ApiResource, ListMeta, ObjectMeta, TypeMeta};
     use referencegrants::ReferenceGrantSpec;
     use tokio::sync::{Mutex, mpsc};
+    use tower_test::mock;
 
     use super::*;
 
     #[tokio::test]
     async fn test_resolver_references() {
-        let client = Client::try_default().await.unwrap();
+        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = Client::new(mock_service, "default");
         let (sender, mut receiver) = mpsc::channel(100);
         let reference_grant_resolver = ReferenceGrantsResolver {
             client,
@@ -442,7 +446,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolver_multiple_references() {
-        let client = Client::try_default().await.unwrap();
+        let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = Client::new(mock_service, "default");
         let (sender, mut receiver) = mpsc::channel(100);
         let reference_grant_resolver = ReferenceGrantsResolver {
             client,
