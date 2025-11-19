@@ -256,11 +256,8 @@ mod tests {
 
     use super::{extract_references, generate_status_for_unknown_gateways};
     use crate::common::{
-        Backend, BackendType, ResourceKey, Route, RouteConfig, ServiceTypeConfig,
-        route::{
-            NotResolvedReason, ResolutionStatus, RouteType,
-            http_route::{HTTPRoutingConfiguration, HTTPRoutingRule},
-        },
+        Backend, BackendType, HTTPRoutingConfiguration, HTTPRoutingRule, NotResolvedReason, ResolutionStatus, ResourceKey, Route,
+        RouteConfig, RouteType, ServiceTypeConfig,
     };
 
     fn create_test_parent_reference(name: &str, namespace: Option<&str>) -> ParentReference {
