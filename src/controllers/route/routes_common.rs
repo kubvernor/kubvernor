@@ -250,12 +250,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-    use std::sync::Arc;
+    use std::{collections::BTreeSet, sync::Arc};
 
-    use gateway_api::common::ParentReference;
-    use gateway_api::gateways::Gateway;
+    use gateway_api::{common::ParentReference, gateways::Gateway};
 
+    use super::{extract_references, generate_status_for_unknown_gateways};
     use crate::common::{
         Backend, BackendType, ResourceKey, Route, RouteConfig, ServiceTypeConfig,
         route::{
@@ -263,8 +262,6 @@ mod tests {
             http_route::{HTTPRoutingConfiguration, HTTPRoutingRule},
         },
     };
-
-    use super::{extract_references, generate_status_for_unknown_gateways};
 
     fn create_test_parent_reference(name: &str, namespace: Option<&str>) -> ParentReference {
         ParentReference {
