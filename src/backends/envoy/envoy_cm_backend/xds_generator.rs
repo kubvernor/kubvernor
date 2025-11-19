@@ -301,15 +301,15 @@ impl<'a> EnvoyXDSGenerator<'a> {
                                 .clone()
                                 .map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v }),
                             match_type: matcher.r#type.map_or(String::new(), |f| match f {
-                                httproutes::HTTPRouteRulesMatchesPathType::Exact => "path".to_owned(),
-                                httproutes::HTTPRouteRulesMatchesPathType::PathPrefix => {
+                                httproutes::HttpRouteRulesMatchesPathType::Exact => "path".to_owned(),
+                                httproutes::HttpRouteRulesMatchesPathType::PathPrefix => {
                                     if let Some(val) = matcher.value {
                                         if val == "/" { "prefix".to_owned() } else { "path_separated_prefix".to_owned() }
                                     } else {
                                         "prefix".to_owned()
                                     }
                                 },
-                                httproutes::HTTPRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
+                                httproutes::HttpRouteRulesMatchesPathType::RegularExpression => "safe_regex".to_owned(),
                             }),
                         }),
                         headers: er.route_matcher.headers.clone().map(|headers| {

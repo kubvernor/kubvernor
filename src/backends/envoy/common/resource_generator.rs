@@ -30,8 +30,8 @@ use envoy_api_rs::{
 };
 use gateway_api::{
     common::HTTPFilterType,
-    grpcroutes::GRPCRouteMatch,
-    httproutes::{HTTPRouteRulesMatchesPathType, PathMatch, RouteMatch},
+    grpcroutes::GrpcRouteMatch,
+    httproutes::{HttpRouteRulesMatchesPathType, PathMatch, RouteMatch},
 };
 use tracing::debug;
 
@@ -54,13 +54,13 @@ fn get_http_default_rules_matches() -> RouteMatch {
     RouteMatch {
         headers: Some(vec![]),
         method: None,
-        path: Some(PathMatch { r#type: Some(HTTPRouteRulesMatchesPathType::PathPrefix), value: Some("/".to_owned()) }),
+        path: Some(PathMatch { r#type: Some(HttpRouteRulesMatchesPathType::PathPrefix), value: Some("/".to_owned()) }),
         query_params: None,
     }
 }
 
-fn get_grpc_default_rules_matches() -> GRPCRouteMatch {
-    GRPCRouteMatch { headers: Some(vec![]), method: None }
+fn get_grpc_default_rules_matches() -> GrpcRouteMatch {
+    GrpcRouteMatch { headers: Some(vec![]), method: None }
 }
 
 impl Listener {

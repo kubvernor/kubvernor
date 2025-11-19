@@ -1,8 +1,8 @@
 use std::net::IpAddr;
 
 use gateway_api::{
-    common::{GRPCFilterType, GRPCRouteFilter, HTTPHeader, HeaderModifier},
-    grpcroutes::{GRPCRoute, GRPCRouteMatch, GRPCRouteRule},
+    common::{GRPCFilterType, GrpcRouteFilter, HTTPHeader, HeaderModifier},
+    grpcroutes::{GRPCRoute, GrpcRouteMatch, GrpcRouteRule},
 };
 use kube::ResourceExt;
 
@@ -27,7 +27,7 @@ impl TryFrom<&GRPCRoute> for Route {
         let parents = kube_route.spec.parent_refs.clone();
         let local_namespace = key.namespace.clone();
 
-        let empty_rules: Vec<GRPCRouteRule> = vec![];
+        let empty_rules: Vec<GrpcRouteRule> = vec![];
         let mut has_invalid_backends = false;
         let routing_rules = kube_route.spec.rules.as_ref().unwrap_or(&empty_rules);
         let routing_rules: Vec<GRPCRoutingRule> = routing_rules
@@ -103,8 +103,8 @@ pub struct GRPCRoutingConfiguration {
 pub struct GRPCRoutingRule {
     pub name: String,
     pub backends: Vec<Backend>,
-    pub matching_rules: Vec<GRPCRouteMatch>,
-    pub filters: Vec<GRPCRouteFilter>,
+    pub matching_rules: Vec<GrpcRouteMatch>,
+    pub filters: Vec<GrpcRouteFilter>,
 }
 
 impl GRPCRoutingRule {

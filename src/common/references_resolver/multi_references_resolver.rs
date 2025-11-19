@@ -19,7 +19,7 @@ pub type RouteToReferenceMapping = BTreeMap<RouteKey, BTreeSet<ReferenceKey>>;
 pub type GatewayToRouteReferenceMapping = BTreeMap<GatewayKey, RouteToReferenceMapping>;
 
 #[derive(Clone, Debug)]
-struct References<R> {
+pub struct References<R> {
     parents: BTreeMap<ResourceKey, usize>,
     resolved_references: BTreeMap<ResourceKey, R>,
 }

@@ -33,14 +33,14 @@ pub fn generate_status_for_unknown_gateways(
     gateways
         .iter()
         .map(|(gateway, _)| ParentRouteStatus {
-            conditions: Some(vec![Condition {
+            conditions: vec![Condition {
                 last_transition_time: Time(Utc::now()),
                 message: CONDITION_MESSAGE.to_owned(),
                 observed_generation: generation,
                 reason: "BackendNotFound".to_owned(),
                 status: "False".to_owned(),
                 type_: "ResolvedRefs".to_owned(),
-            }]),
+            }],
             controller_name: controller_name.to_owned(),
             parent_ref: ParentReference {
                 group: gateway.group.clone(),

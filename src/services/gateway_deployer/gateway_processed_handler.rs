@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
 use gateway_api::{
-    common::{GatewayAddress as CommonGatewayAddress, ParentReference, ParentRouteStatus, RouteStatus},
+    common::{ParentReference, ParentRouteStatus, RouteStatus},
     constants,
-    gateways::Gateway,
+    gateways::{Gateway, GatewayStatusAddresses},
     grpcroutes::GRPCRoute,
     httproutes::HTTPRoute,
 };
@@ -890,7 +890,7 @@ impl GatewayProcessedHandler<'_> {
 
                 for kube_parent in kube_route.spec.parent_refs.clone().unwrap_or_default() {
                     let route_parents = ParentRouteStatus {
-                        conditions: Some(new_conditions.clone()),
+                        conditions: new_conditions.clone(),
                         controller_name: self.controller_name.clone(),
                         parent_ref: ParentReference {
                             namespace: kube_parent.namespace.clone(),
@@ -941,7 +941,7 @@ impl GatewayProcessedHandler<'_> {
 
                 for kube_parent in kube_route.spec.parent_refs.clone().unwrap_or_default() {
                     let route_parents = ParentRouteStatus {
-                        conditions: Some(new_conditions.clone()),
+                        conditions: new_conditions.clone(),
                         controller_name: self.controller_name.clone(),
                         parent_ref: ParentReference {
                             namespace: kube_parent.namespace.clone(),
@@ -970,9 +970,9 @@ impl GatewayProcessedHandler<'_> {
             .addresses()
             .iter()
             .map(|a| match a {
-                GatewayAddress::Hostname(hostname) => CommonGatewayAddress { r#type: None, value: hostname.clone() },
-                GatewayAddress::IPAddress(ip_addr) => CommonGatewayAddress { r#type: None, value: ip_addr.to_string() },
-                GatewayAddress::NamedAddress(addr) => CommonGatewayAddress { r#type: None, value: addr.clone() },
+                GatewayAddress::Hostname(hostname) => GatewayStatusAddresses { r#type: None, value: hostname.clone() },
+                GatewayAddress::IPAddress(ip_addr) => GatewayStatusAddresses { r#type: None, value: ip_addr.to_string() },
+                GatewayAddress::NamedAddress(addr) => GatewayStatusAddresses { r#type: None, value: addr.clone() },
             })
             .collect::<Vec<_>>();
         status.addresses = Some(addresses);
