@@ -534,4 +534,162 @@ mod tests {
         // Invalid backends should be ignored
         assert!(result.is_empty());
     }
+
+    // Tests for CommonRouteHandler::on_new_or_changed
+    use gateway_api::httproutes::HTTPRoute;
+    use tokio::sync::mpsc;
+
+    use super::CommonRouteHandler;
+    use crate::{common::ReferenceValidateRequest, services::patchers::Operation, state::State};
+
+    fn create_test_http_route(name: &str, namespace: &str) -> HTTPRoute {
+        let yaml = format!(
+            r#"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {name}
+  namespace: {namespace}
+spec:
+  parentRefs:
+  - name: test-gateway
+    namespace: {namespace}
+  hostnames:
+  - example.com
+  rules:
+  - backendRefs:
+    - name: test-service
+      port: 8080
+"#
+        );
+        serde_yaml::from_str(&yaml).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_on_new_or_changed_with_unknown_gateway() {
+        let state = State::new();
+        let (route_patcher_sender, mut route_patcher_receiver) = mpsc::channel::<Operation<HTTPRoute>>(10);
+        let (references_validator_sender, mut references_validator_receiver) = mpsc::channel::<ReferenceValidateRequest>(10);
+
+        let http_route = create_test_http_route("test-route", "default");
+        let resource_key = ResourceKey::namespaced("test-route", "default");
+
+        let handler = CommonRouteHandler::builder()
+            .state(state.clone())
+            .resource_key(resource_key.clone())
+            .controller_name("test-controller".to_owned())
+            .resource(Arc::new(http_route))
+            .route_patcher_sender(route_patcher_sender)
+            .references_validator_sender(references_validator_sender)
+            .version(Some("v1".to_owned()))
+            .build();
+
+        let parent_refs = vec![create_test_parent_reference("test-gateway", Some("default"))];
+        let mut saved_status = None;
+
+        let result = handler
+            .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |_state, status| {
+                saved_status = status;
+            })
+            .await;
+
+        // Should succeed even with unknown gateway
+        assert!(result.is_ok());
+
+        // Should have generated status for unknown gateway
+        assert!(saved_status.is_some());
+        let status = saved_status.unwrap();
+        assert_eq!(status.parents.len(), 1);
+        assert_eq!(status.parents[0].parent_ref.name, "test-gateway");
+
+        // Should have sent finalizer operation
+        let operation = route_patcher_receiver.try_recv();
+        assert!(operation.is_ok());
+
+        // Should have sent reference validation request
+        let request = references_validator_receiver.try_recv();
+        assert!(request.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_on_new_or_changed_with_empty_parent_refs() {
+        let state = State::new();
+        let (route_patcher_sender, mut route_patcher_receiver) = mpsc::channel::<Operation<HTTPRoute>>(10);
+        let (references_validator_sender, mut references_validator_receiver) = mpsc::channel::<ReferenceValidateRequest>(10);
+
+        let http_route = create_test_http_route("test-route", "default");
+        let resource_key = ResourceKey::namespaced("test-route", "default");
+
+        let handler = CommonRouteHandler::builder()
+            .state(state.clone())
+            .resource_key(resource_key.clone())
+            .controller_name("test-controller".to_owned())
+            .resource(Arc::new(http_route))
+            .route_patcher_sender(route_patcher_sender)
+            .references_validator_sender(references_validator_sender)
+            .version(Some("v1".to_owned()))
+            .build();
+
+        let parent_refs: Vec<ParentReference> = vec![];
+        let mut saved_status = None;
+
+        let result = handler
+            .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |_state, status| {
+                saved_status = status;
+            })
+            .await;
+
+        // Should succeed with empty parent refs
+        assert!(result.is_ok());
+
+        // Should have empty status
+        assert!(saved_status.is_some());
+        let status = saved_status.unwrap();
+        assert!(status.parents.is_empty());
+
+        // Should have sent finalizer operation
+        let operation = route_patcher_receiver.try_recv();
+        assert!(operation.is_ok());
+
+        // Should have sent reference validation request
+        let request = references_validator_receiver.try_recv();
+        assert!(request.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_on_new_or_changed_with_multiple_unknown_gateways() {
+        let state = State::new();
+        let (route_patcher_sender, _route_patcher_receiver) = mpsc::channel::<Operation<HTTPRoute>>(10);
+        let (references_validator_sender, _references_validator_receiver) = mpsc::channel::<ReferenceValidateRequest>(10);
+
+        let http_route = create_test_http_route("test-route", "default");
+        let resource_key = ResourceKey::namespaced("test-route", "default");
+
+        let handler = CommonRouteHandler::builder()
+            .state(state.clone())
+            .resource_key(resource_key.clone())
+            .controller_name("test-controller".to_owned())
+            .resource(Arc::new(http_route))
+            .route_patcher_sender(route_patcher_sender)
+            .references_validator_sender(references_validator_sender)
+            .version(Some("v1".to_owned()))
+            .build();
+
+        let parent_refs =
+            vec![create_test_parent_reference("gateway-1", Some("default")), create_test_parent_reference("gateway-2", Some("default"))];
+        let mut saved_status = None;
+
+        let result = handler
+            .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |_state, status| {
+                saved_status = status;
+            })
+            .await;
+
+        assert!(result.is_ok());
+
+        // Should have generated status for both unknown gateways
+        assert!(saved_status.is_some());
+        let status = saved_status.unwrap();
+        assert_eq!(status.parents.len(), 2);
+    }
 }
