@@ -258,7 +258,10 @@ mod tests {
 
     use crate::common::{
         Backend, BackendType, ResourceKey, Route, RouteConfig, ServiceTypeConfig,
-        route::{ResolutionStatus, NotResolvedReason, RouteType, http_route::{HTTPRoutingConfiguration, HTTPRoutingRule}},
+        route::{
+            NotResolvedReason, ResolutionStatus, RouteType,
+            http_route::{HTTPRoutingConfiguration, HTTPRoutingRule},
+        },
     };
 
     use super::{extract_references, generate_status_for_unknown_gateways};
@@ -302,12 +305,7 @@ mod tests {
                 hostnames: vec!["example.com".to_owned()],
                 resolution_status: ResolutionStatus::NotResolved(NotResolvedReason::Unknown),
                 route_type: RouteType::Http(HTTPRoutingConfiguration {
-                    routing_rules: vec![HTTPRoutingRule {
-                        name: format!("{}-0", name),
-                        backends,
-                        matching_rules: vec![],
-                        filters: vec![],
-                    }],
+                    routing_rules: vec![HTTPRoutingRule { name: format!("{}-0", name), backends, matching_rules: vec![], filters: vec![] }],
                 }),
             },
         }
@@ -349,10 +347,7 @@ mod tests {
         let controller_name = "test-controller";
         let parent_ref_1 = create_test_parent_reference("gateway-1", Some("ns1"));
         let parent_ref_2 = create_test_parent_reference("gateway-2", Some("ns2"));
-        let gateways: Vec<(&ParentReference, Option<Arc<Gateway>>)> = vec![
-            (&parent_ref_1, None),
-            (&parent_ref_2, None),
-        ];
+        let gateways: Vec<(&ParentReference, Option<Arc<Gateway>>)> = vec![(&parent_ref_1, None), (&parent_ref_2, None)];
         let generation = Some(2);
 
         let result = generate_status_for_unknown_gateways(controller_name, &gateways, generation);
@@ -414,9 +409,7 @@ mod tests {
 
     #[test]
     fn test_extract_references_single_maybe_backend() {
-        let backends = vec![
-            create_test_service_backend("service-1", "default", 8080),
-        ];
+        let backends = vec![create_test_service_backend("service-1", "default", 8080)];
         let route = create_test_route("test-route", "default", backends);
 
         let result = extract_references(&route);
@@ -429,10 +422,8 @@ mod tests {
 
     #[test]
     fn test_extract_references_multiple_maybe_backends() {
-        let backends = vec![
-            create_test_service_backend("service-1", "default", 8080),
-            create_test_service_backend("service-2", "other-ns", 9090),
-        ];
+        let backends =
+            vec![create_test_service_backend("service-1", "default", 8080), create_test_service_backend("service-2", "other-ns", 9090)];
         let route = create_test_route("test-route", "default", backends);
 
         let result = extract_references(&route);
@@ -446,9 +437,7 @@ mod tests {
 
     #[test]
     fn test_extract_references_ignores_resolved_backends() {
-        let backends = vec![
-            create_resolved_service_backend("resolved-service", "default", 8080),
-        ];
+        let backends = vec![create_resolved_service_backend("resolved-service", "default", 8080)];
         let route = create_test_route("test-route", "default", backends);
 
         let result = extract_references(&route);
@@ -475,10 +464,8 @@ mod tests {
 
     #[test]
     fn test_extract_references_duplicate_backends() {
-        let backends = vec![
-            create_test_service_backend("service-1", "default", 8080),
-            create_test_service_backend("service-1", "default", 8080),
-        ];
+        let backends =
+            vec![create_test_service_backend("service-1", "default", 8080), create_test_service_backend("service-1", "default", 8080)];
         let route = create_test_route("test-route", "default", backends);
 
         let result = extract_references(&route);
@@ -491,10 +478,7 @@ mod tests {
 
     #[test]
     fn test_extract_references_different_namespaces_same_name() {
-        let backends = vec![
-            create_test_service_backend("service-1", "ns-a", 8080),
-            create_test_service_backend("service-1", "ns-b", 8080),
-        ];
+        let backends = vec![create_test_service_backend("service-1", "ns-a", 8080), create_test_service_backend("service-1", "ns-b", 8080)];
         let route = create_test_route("test-route", "default", backends);
 
         let result = extract_references(&route);
