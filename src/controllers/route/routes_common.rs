@@ -536,6 +536,8 @@ mod tests {
     }
 
     // Tests for CommonRouteHandler::on_new_or_changed
+    use std::cell::RefCell;
+
     use gateway_api::httproutes::HTTPRoute;
     use tokio::sync::mpsc;
 
@@ -585,11 +587,11 @@ spec:
             .build();
 
         let parent_refs = vec![create_test_parent_reference("test-gateway", Some("default"))];
-        let mut saved_status = None;
+        let saved_status = RefCell::new(None);
 
         let result = handler
             .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |_state, status| {
-                saved_status = status;
+                *saved_status.borrow_mut() = status;
             })
             .await;
 
@@ -597,8 +599,9 @@ spec:
         assert!(result.is_ok());
 
         // Should have generated status for unknown gateway
-        assert!(saved_status.is_some());
-        let status = saved_status.unwrap();
+        let status_ref = saved_status.borrow();
+        assert!(status_ref.is_some());
+        let status = status_ref.as_ref().unwrap();
         assert_eq!(status.parents.len(), 1);
         assert_eq!(status.parents[0].parent_ref.name, "test-gateway");
 
@@ -631,11 +634,11 @@ spec:
             .build();
 
         let parent_refs: Vec<ParentReference> = vec![];
-        let mut saved_status = None;
+        let saved_status = RefCell::new(None);
 
         let result = handler
             .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |_state, status| {
-                saved_status = status;
+                *saved_status.borrow_mut() = status;
             })
             .await;
 
@@ -643,8 +646,9 @@ spec:
         assert!(result.is_ok());
 
         // Should have empty status
-        assert!(saved_status.is_some());
-        let status = saved_status.unwrap();
+        let status_ref = saved_status.borrow();
+        assert!(status_ref.is_some());
+        let status = status_ref.as_ref().unwrap();
         assert!(status.parents.is_empty());
 
         // Should have sent finalizer operation
@@ -677,19 +681,20 @@ spec:
 
         let parent_refs =
             vec![create_test_parent_reference("gateway-1", Some("default")), create_test_parent_reference("gateway-2", Some("default"))];
-        let mut saved_status = None;
+        let saved_status = RefCell::new(None);
 
         let result = handler
             .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |_state, status| {
-                saved_status = status;
+                *saved_status.borrow_mut() = status;
             })
             .await;
 
         assert!(result.is_ok());
 
         // Should have generated status for both unknown gateways
-        assert!(saved_status.is_some());
-        let status = saved_status.unwrap();
+        let status_ref = saved_status.borrow();
+        assert!(status_ref.is_some());
+        let status = status_ref.as_ref().unwrap();
         assert_eq!(status.parents.len(), 2);
     }
 }
