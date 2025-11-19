@@ -536,8 +536,6 @@ mod tests {
     }
 
     // Tests for CommonRouteHandler::on_new_or_changed
-    use std::cell::RefCell;
-
     use gateway_api::httproutes::HTTPRoute;
     use tokio::sync::mpsc;
 
@@ -575,6 +573,8 @@ spec:
 
         let http_route = create_test_http_route("test-route", "default");
         let resource_key = ResourceKey::namespaced("test-route", "default");
+        let http_route_clone = http_route.clone();
+        let route_key_clone = resource_key.clone();
 
         let handler = CommonRouteHandler::builder()
             .state(state.clone())
@@ -587,21 +587,24 @@ spec:
             .build();
 
         let parent_refs = vec![create_test_parent_reference("test-gateway", Some("default"))];
-        let saved_status = RefCell::new(None);
 
         let result = handler
-            .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |_state, status| {
-                *saved_status.borrow_mut() = status;
+            .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |state, status| {
+                let mut route = http_route_clone.clone();
+                route.status = status;
+                state.save_http_route(route_key_clone.clone(), &Arc::new(route)).expect("We expect the lock to work");
             })
             .await;
 
         // Should succeed even with unknown gateway
         assert!(result.is_ok());
 
-        // Should have generated status for unknown gateway
-        let status_ref = saved_status.borrow();
-        assert!(status_ref.is_some());
-        let status = status_ref.as_ref().unwrap();
+        // Verify status was saved to state with unknown gateway status
+        let saved_route = state.get_http_route_by_id(&resource_key).expect("Lock should work");
+        assert!(saved_route.is_some());
+        let saved_route = saved_route.unwrap();
+        assert!(saved_route.status.is_some());
+        let status = saved_route.status.as_ref().unwrap();
         assert_eq!(status.parents.len(), 1);
         assert_eq!(status.parents[0].parent_ref.name, "test-gateway");
 
@@ -689,6 +692,8 @@ spec:
 
         let http_route = create_test_http_route("test-route", "default");
         let resource_key = ResourceKey::namespaced("test-route", "default");
+        let http_route_clone = http_route.clone();
+        let route_key_clone = resource_key.clone();
 
         let handler = CommonRouteHandler::builder()
             .state(state.clone())
@@ -702,20 +707,23 @@ spec:
 
         let parent_refs =
             vec![create_test_parent_reference("gateway-1", Some("default")), create_test_parent_reference("gateway-2", Some("default"))];
-        let saved_status = RefCell::new(None);
 
         let result = handler
-            .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |_state, status| {
-                *saved_status.borrow_mut() = status;
+            .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |state, status| {
+                let mut route = http_route_clone.clone();
+                route.status = status;
+                state.save_http_route(route_key_clone.clone(), &Arc::new(route)).expect("We expect the lock to work");
             })
             .await;
 
         assert!(result.is_ok());
 
-        // Should have generated status for both unknown gateways
-        let status_ref = saved_status.borrow();
-        assert!(status_ref.is_some());
-        let status = status_ref.as_ref().unwrap();
+        // Verify status was saved to state with both unknown gateways
+        let saved_route = state.get_http_route_by_id(&resource_key).expect("Lock should work");
+        assert!(saved_route.is_some());
+        let saved_route = saved_route.unwrap();
+        assert!(saved_route.status.is_some());
+        let status = saved_route.status.as_ref().unwrap();
         assert_eq!(status.parents.len(), 2);
     }
 }
