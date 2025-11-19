@@ -1,4 +1,4 @@
-name: Kubvernor
+name: Kubvernor(fmt, test, release)
 on:
   push:
     branches: ["main"]
@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check format
         run: cargo +nightly fmt --check
-      - name: Build
+      - name: Test
         run: cargo test --all-features
       - name: Build
         run: cargo build --release
