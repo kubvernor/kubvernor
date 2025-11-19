@@ -645,7 +645,7 @@ spec:
         // Should succeed with empty parent refs
         assert!(result.is_ok());
 
-        // Should have empty status
+        // Should have empty status since no parent refs
         let status_ref = saved_status.borrow();
         assert!(status_ref.is_some());
         let status = status_ref.as_ref().unwrap();
@@ -654,10 +654,26 @@ spec:
         // Should have sent finalizer operation
         let operation = route_patcher_receiver.try_recv();
         assert!(operation.is_ok());
+        match operation.unwrap() {
+            Operation::PatchFinalizer(ctx) => {
+                assert_eq!(ctx.resource_key.name, "test-route");
+                assert_eq!(ctx.resource_key.namespace, "default");
+            },
+            _ => panic!("Expected PatchFinalizer operation"),
+        }
 
-        // Should have sent reference validation request
+        // Should have sent reference validation request for route
         let request = references_validator_receiver.try_recv();
         assert!(request.is_ok());
+        match request.unwrap() {
+            ReferenceValidateRequest::AddRoute { route_key, references } => {
+                assert_eq!(route_key.name, "test-route");
+                assert_eq!(route_key.namespace, "default");
+                // Should have one reference for test-service backend
+                assert_eq!(references.len(), 1);
+            },
+            _ => panic!("Expected AddRoute request"),
+        }
     }
 
     #[tokio::test]
