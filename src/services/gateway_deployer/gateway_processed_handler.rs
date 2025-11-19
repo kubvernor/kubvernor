@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
 use gateway_api::{
-    common::{ ParentReference, ParentRouteStatus, RouteStatus},
+    common::{ParentReference, ParentRouteStatus, RouteStatus},
     constants,
-    gateways::{Gateway,GatewayStatusAddresses},
+    gateways::{Gateway, GatewayStatusAddresses},
     grpcroutes::GRPCRoute,
     httproutes::HTTPRoute,
 };
