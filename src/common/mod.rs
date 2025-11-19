@@ -22,7 +22,6 @@ pub use route::{EffectiveRoutingRule, GRPCEffectiveRoutingRule, HttpHeader, NotR
 use tokio::sync::{mpsc, oneshot};
 use tracing::Span;
 use typed_builder::TypedBuilder;
-use uuid::Uuid;
 
 use crate::services::patchers::{FinalizerContext, Operation};
 
@@ -117,26 +116,6 @@ pub enum GatewayAddress {
     Hostname(String),
     IPAddress(IpAddr),
     NamedAddress(String),
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct Label {
-    label: String,
-    value: String,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct Annotation {
-    label: String,
-    value: String,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct DeployedGatewayStatus {
-    pub id: Uuid,
-    pub name: String,
-    pub namespace: String,
-    pub attached_addresses: Vec<String>,
 }
 
 #[derive(Debug)]

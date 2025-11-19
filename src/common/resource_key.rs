@@ -26,14 +26,6 @@ pub struct ResourceKey {
     pub kind: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct BackendResourceKey {
-    pub group: String,
-    namespace: Option<String>,
-    pub name: String,
-    pub kind: String,
-}
-
 #[allow(dead_code)]
 impl ResourceKey {
     pub fn new(name: &str) -> Self {
@@ -209,32 +201,6 @@ impl From<(&HTTPRouteRulesBackendRefs, String)> for ResourceKey {
 impl From<(&GRPCRouteRulesBackendRefs, String)> for ResourceKey {
     fn from((value, gateway_namespace): (&GRPCRouteRulesBackendRefs, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
-
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace,
-            name: value.name.clone(),
-            kind: value.kind.clone().unwrap_or_default(),
-        }
-    }
-}
-
-impl From<&HTTPRouteRulesBackendRefs> for BackendResourceKey {
-    fn from(value: &HTTPRouteRulesBackendRefs) -> Self {
-        let namespace = value.namespace.clone();
-
-        Self {
-            group: DEFAULT_GROUP_NAME.to_owned(),
-            namespace,
-            name: value.name.clone(),
-            kind: value.kind.clone().unwrap_or_default(),
-        }
-    }
-}
-
-impl From<&GRPCRouteRulesBackendRefs> for BackendResourceKey {
-    fn from(value: &GRPCRouteRulesBackendRefs) -> Self {
-        let namespace = value.namespace.clone();
 
         Self {
             group: DEFAULT_GROUP_NAME.to_owned(),

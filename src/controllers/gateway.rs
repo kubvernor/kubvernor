@@ -45,7 +45,7 @@ pub struct GatewayController {
 }
 
 impl GatewayController {
-    pub fn get_controller(&self) -> BoxFuture<()> {
+    pub fn get_controller<'a>(&'a self) -> BoxFuture<'a, ()> {
         let client = self.ctx.client.clone();
         let context = &self.ctx;
 
