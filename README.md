@@ -18,7 +18,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/kubernete
 
 2. Install required CRDs for Gateway API
 ```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
 ```
 
 3. Install Kubvernor CRDs
