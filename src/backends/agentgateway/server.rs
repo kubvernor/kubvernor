@@ -250,7 +250,7 @@ impl AdsClients {
         let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
         managed_resources
             .entry(gateway_id.to_owned())
-            .and_modify(|e| e.all_resources.clone_from_slice(resources))
+            .and_modify(|e| e.all_resources.clone_from(&resources.to_vec()))
             .or_insert(ManagedResources { all_resources: resources.to_vec(), all_workloads: vec![] });
     }
 
@@ -259,7 +259,7 @@ impl AdsClients {
         let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
         managed_resources
             .entry(gateway_id.to_owned())
-            .and_modify(|e| e.all_workloads.clone_from_slice(workloads))
+            .and_modify(|e| e.all_workloads.clone_from(&workloads.to_vec()))
             .or_insert(ManagedResources { all_resources: vec![], all_workloads: workloads.to_vec() });
     }
 
@@ -275,7 +275,7 @@ impl AdsClients {
         if let Some(gateway_id) = client.gateway_id.as_ref() {
             managed_resources
                 .entry(gateway_id.clone())
-                .and_modify(|m| m.all_resources.clone_from_slice(resources))
+                .and_modify(|m| m.all_resources.clone_from(&resources.to_vec()))
                 .or_insert(ManagedResources { all_resources: resources.to_vec(), all_workloads: vec![] });
         }
     }
@@ -292,7 +292,7 @@ impl AdsClients {
         if let Some(gateway_id) = client.gateway_id.as_ref() {
             managed_resources
                 .entry(gateway_id.clone())
-                .and_modify(|m| m.all_workloads.clone_from_slice(workloads))
+                .and_modify(|m| m.all_workloads.clone_from(&workloads.to_vec()))
                 .or_insert(ManagedResources { all_resources: vec![], all_workloads: workloads.to_vec() });
         }
     }
