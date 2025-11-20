@@ -1,6 +1,6 @@
-<div style="text-align: center;">
+<p align="center">
 <img src="assets/kubvernor-logo-final.png" alt="Logo" width="400"/>
-</div>
+</p>
 
 # Kubvernor 
 Generic Gateway API Manager for Kubernetes
