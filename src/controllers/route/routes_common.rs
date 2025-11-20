@@ -247,3 +247,483 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeSet, sync::Arc};
+
+    use gateway_api::{common::ParentReference, gateways::Gateway};
+
+    use super::{extract_references, generate_status_for_unknown_gateways};
+    use crate::common::{
+        Backend, BackendType, HTTPRoutingConfiguration, HTTPRoutingRule, NotResolvedReason, ResolutionStatus, ResourceKey, Route,
+        RouteConfig, RouteType, ServiceTypeConfig,
+    };
+
+    fn create_test_parent_reference(name: &str, namespace: Option<&str>) -> ParentReference {
+        ParentReference {
+            group: Some("gateway.networking.k8s.io".to_owned()),
+            kind: Some("Gateway".to_owned()),
+            name: name.to_owned(),
+            namespace: namespace.map(|s| s.to_owned()),
+            port: Some(80),
+            section_name: Some("http".to_owned()),
+        }
+    }
+
+    fn create_test_service_backend(name: &str, namespace: &str, port: i32) -> Backend {
+        Backend::Maybe(BackendType::Service(ServiceTypeConfig {
+            resource_key: ResourceKey::namespaced(name, namespace),
+            endpoint: format!("{}.{}", name, namespace),
+            port,
+            effective_port: port,
+            weight: 1,
+        }))
+    }
+
+    fn create_resolved_service_backend(name: &str, namespace: &str, port: i32) -> Backend {
+        Backend::Resolved(BackendType::Service(ServiceTypeConfig {
+            resource_key: ResourceKey::namespaced(name, namespace),
+            endpoint: format!("{}.{}", name, namespace),
+            port,
+            effective_port: port,
+            weight: 1,
+        }))
+    }
+
+    fn create_test_route(name: &str, namespace: &str, backends: Vec<Backend>) -> Route {
+        Route {
+            config: RouteConfig {
+                resource_key: ResourceKey::namespaced(name, namespace),
+                parents: Some(vec![create_test_parent_reference("test-gateway", Some(namespace))]),
+                hostnames: vec!["example.com".to_owned()],
+                resolution_status: ResolutionStatus::NotResolved(NotResolvedReason::Unknown),
+                route_type: RouteType::Http(HTTPRoutingConfiguration {
+                    routing_rules: vec![HTTPRoutingRule { name: format!("{}-0", name), backends, matching_rules: vec![], filters: vec![] }],
+                }),
+            },
+        }
+    }
+
+    #[test]
+    fn test_generate_status_for_unknown_gateways_empty() {
+        let controller_name = "test-controller";
+        let gateways: Vec<(&ParentReference, Option<Arc<Gateway>>)> = vec![];
+        let generation = Some(1);
+
+        let result = generate_status_for_unknown_gateways(controller_name, &gateways, generation);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_generate_status_for_unknown_gateways_single() {
+        let controller_name = "test-controller";
+        let parent_ref = create_test_parent_reference("gateway-1", Some("default"));
+        let gateways: Vec<(&ParentReference, Option<Arc<Gateway>>)> = vec![(&parent_ref, None)];
+        let generation = Some(1);
+
+        let result = generate_status_for_unknown_gateways(controller_name, &gateways, generation);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].controller_name, controller_name);
+        assert_eq!(result[0].parent_ref.name, "gateway-1");
+        assert_eq!(result[0].parent_ref.namespace, Some("default".to_owned()));
+        assert_eq!(result[0].conditions.len(), 1);
+        assert_eq!(result[0].conditions[0].reason, "BackendNotFound");
+        assert_eq!(result[0].conditions[0].status, "False");
+        assert_eq!(result[0].conditions[0].type_, "ResolvedRefs");
+        assert_eq!(result[0].conditions[0].observed_generation, Some(1));
+    }
+
+    #[test]
+    fn test_generate_status_for_unknown_gateways_multiple() {
+        let controller_name = "test-controller";
+        let parent_ref_1 = create_test_parent_reference("gateway-1", Some("ns1"));
+        let parent_ref_2 = create_test_parent_reference("gateway-2", Some("ns2"));
+        let gateways: Vec<(&ParentReference, Option<Arc<Gateway>>)> = vec![(&parent_ref_1, None), (&parent_ref_2, None)];
+        let generation = Some(2);
+
+        let result = generate_status_for_unknown_gateways(controller_name, &gateways, generation);
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].parent_ref.name, "gateway-1");
+        assert_eq!(result[0].parent_ref.namespace, Some("ns1".to_owned()));
+        assert_eq!(result[1].parent_ref.name, "gateway-2");
+        assert_eq!(result[1].parent_ref.namespace, Some("ns2".to_owned()));
+    }
+
+    #[test]
+    fn test_generate_status_for_unknown_gateways_with_none_generation() {
+        let controller_name = "test-controller";
+        let parent_ref = create_test_parent_reference("gateway-1", Some("default"));
+        let gateways: Vec<(&ParentReference, Option<Arc<Gateway>>)> = vec![(&parent_ref, None)];
+        let generation = None;
+
+        let result = generate_status_for_unknown_gateways(controller_name, &gateways, generation);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].conditions[0].observed_generation, None);
+    }
+
+    #[test]
+    fn test_generate_status_for_unknown_gateways_preserves_parent_ref_fields() {
+        let controller_name = "test-controller";
+        let parent_ref = ParentReference {
+            group: Some("custom.group.io".to_owned()),
+            kind: Some("CustomGateway".to_owned()),
+            name: "my-gateway".to_owned(),
+            namespace: Some("my-namespace".to_owned()),
+            port: Some(8080),
+            section_name: Some("https".to_owned()),
+        };
+        let gateways: Vec<(&ParentReference, Option<Arc<Gateway>>)> = vec![(&parent_ref, None)];
+        let generation = Some(5);
+
+        let result = generate_status_for_unknown_gateways(controller_name, &gateways, generation);
+
+        assert_eq!(result.len(), 1);
+        let result_parent_ref = &result[0].parent_ref;
+        assert_eq!(result_parent_ref.group, Some("custom.group.io".to_owned()));
+        assert_eq!(result_parent_ref.kind, Some("CustomGateway".to_owned()));
+        assert_eq!(result_parent_ref.name, "my-gateway");
+        assert_eq!(result_parent_ref.namespace, Some("my-namespace".to_owned()));
+        assert_eq!(result_parent_ref.port, Some(8080));
+        assert_eq!(result_parent_ref.section_name, Some("https".to_owned()));
+    }
+
+    #[test]
+    fn test_extract_references_empty_backends() {
+        let route = create_test_route("test-route", "default", vec![]);
+
+        let result = extract_references(&route);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_references_single_maybe_backend() {
+        let backends = vec![create_test_service_backend("service-1", "default", 8080)];
+        let route = create_test_route("test-route", "default", backends);
+
+        let result = extract_references(&route);
+
+        assert_eq!(result.len(), 1);
+        let key = result.iter().next().unwrap();
+        assert_eq!(key.name, "service-1");
+        assert_eq!(key.namespace, "default");
+    }
+
+    #[test]
+    fn test_extract_references_multiple_maybe_backends() {
+        let backends =
+            vec![create_test_service_backend("service-1", "default", 8080), create_test_service_backend("service-2", "other-ns", 9090)];
+        let route = create_test_route("test-route", "default", backends);
+
+        let result = extract_references(&route);
+
+        assert_eq!(result.len(), 2);
+        let keys: Vec<_> = result.iter().collect();
+        let names: BTreeSet<_> = keys.iter().map(|k| k.name.as_str()).collect();
+        assert!(names.contains("service-1"));
+        assert!(names.contains("service-2"));
+    }
+
+    #[test]
+    fn test_extract_references_ignores_resolved_backends() {
+        let backends = vec![create_resolved_service_backend("resolved-service", "default", 8080)];
+        let route = create_test_route("test-route", "default", backends);
+
+        let result = extract_references(&route);
+
+        // Resolved backends should be ignored since extract_references only looks for Backend::Maybe
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_references_mixed_backend_types() {
+        let backends = vec![
+            create_test_service_backend("maybe-service", "default", 8080),
+            create_resolved_service_backend("resolved-service", "default", 9090),
+        ];
+        let route = create_test_route("test-route", "default", backends);
+
+        let result = extract_references(&route);
+
+        // Only Maybe backends should be extracted
+        assert_eq!(result.len(), 1);
+        let key = result.iter().next().unwrap();
+        assert_eq!(key.name, "maybe-service");
+    }
+
+    #[test]
+    fn test_extract_references_duplicate_backends() {
+        let backends =
+            vec![create_test_service_backend("service-1", "default", 8080), create_test_service_backend("service-1", "default", 8080)];
+        let route = create_test_route("test-route", "default", backends);
+
+        let result = extract_references(&route);
+
+        // BTreeSet should deduplicate
+        assert_eq!(result.len(), 1);
+        let key = result.iter().next().unwrap();
+        assert_eq!(key.name, "service-1");
+    }
+
+    #[test]
+    fn test_extract_references_different_namespaces_same_name() {
+        let backends = vec![create_test_service_backend("service-1", "ns-a", 8080), create_test_service_backend("service-1", "ns-b", 8080)];
+        let route = create_test_route("test-route", "default", backends);
+
+        let result = extract_references(&route);
+
+        // Same name in different namespaces should be unique
+        assert_eq!(result.len(), 2);
+        let namespaces: BTreeSet<_> = result.iter().map(|k| k.namespace.as_str()).collect();
+        assert!(namespaces.contains("ns-a"));
+        assert!(namespaces.contains("ns-b"));
+    }
+
+    #[test]
+    fn test_extract_references_with_not_allowed_backend() {
+        let backend = Backend::NotAllowed(BackendType::Service(ServiceTypeConfig {
+            resource_key: ResourceKey::namespaced("not-allowed-service", "default"),
+            endpoint: "not-allowed-service.default".to_owned(),
+            port: 8080,
+            effective_port: 8080,
+            weight: 1,
+        }));
+        let route = create_test_route("test-route", "default", vec![backend]);
+
+        let result = extract_references(&route);
+
+        // NotAllowed backends should be ignored
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_references_with_unresolved_backend() {
+        let backend = Backend::Unresolved(BackendType::Service(ServiceTypeConfig {
+            resource_key: ResourceKey::namespaced("unresolved-service", "default"),
+            endpoint: "unresolved-service.default".to_owned(),
+            port: 8080,
+            effective_port: 8080,
+            weight: 1,
+        }));
+        let route = create_test_route("test-route", "default", vec![backend]);
+
+        let result = extract_references(&route);
+
+        // Unresolved backends should be ignored
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_references_with_invalid_backend() {
+        let backend = Backend::Invalid(BackendType::Service(ServiceTypeConfig {
+            resource_key: ResourceKey::namespaced("invalid-service", "default"),
+            endpoint: "invalid-service.default".to_owned(),
+            port: 8080,
+            effective_port: 8080,
+            weight: 1,
+        }));
+        let route = create_test_route("test-route", "default", vec![backend]);
+
+        let result = extract_references(&route);
+
+        // Invalid backends should be ignored
+        assert!(result.is_empty());
+    }
+
+    // Tests for CommonRouteHandler::on_new_or_changed
+    use gateway_api::httproutes::HTTPRoute;
+    use tokio::sync::mpsc;
+
+    use super::CommonRouteHandler;
+    use crate::{common::ReferenceValidateRequest, services::patchers::Operation, state::State};
+
+    fn create_test_http_route(name: &str, namespace: &str) -> HTTPRoute {
+        let yaml = format!(
+            r#"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {name}
+  namespace: {namespace}
+spec:
+  parentRefs:
+  - name: test-gateway
+    namespace: {namespace}
+  hostnames:
+  - example.com
+  rules:
+  - backendRefs:
+    - name: test-service
+      port: 8080
+"#
+        );
+        serde_yaml::from_str(&yaml).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_on_new_or_changed_with_unknown_gateway() {
+        let state = State::new();
+        let (route_patcher_sender, mut route_patcher_receiver) = mpsc::channel::<Operation<HTTPRoute>>(10);
+        let (references_validator_sender, mut references_validator_receiver) = mpsc::channel::<ReferenceValidateRequest>(10);
+
+        let http_route = create_test_http_route("test-route", "default");
+        let resource_key = ResourceKey::namespaced("test-route", "default");
+        let http_route_clone = http_route.clone();
+        let route_key_clone = resource_key.clone();
+
+        let handler = CommonRouteHandler::builder()
+            .state(state.clone())
+            .resource_key(resource_key.clone())
+            .controller_name("test-controller".to_owned())
+            .resource(Arc::new(http_route))
+            .route_patcher_sender(route_patcher_sender)
+            .references_validator_sender(references_validator_sender)
+            .version(Some("v1".to_owned()))
+            .build();
+
+        let parent_refs = vec![create_test_parent_reference("test-gateway", Some("default"))];
+
+        let result = handler
+            .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |state, status| {
+                let mut route = http_route_clone.clone();
+                route.status = status;
+                state.save_http_route(route_key_clone.clone(), &Arc::new(route)).expect("We expect the lock to work");
+            })
+            .await;
+
+        // Should succeed even with unknown gateway
+        assert!(result.is_ok());
+
+        // Verify status was saved to state with unknown gateway status
+        let saved_route = state.get_http_route_by_id(&resource_key).expect("Lock should work");
+        assert!(saved_route.is_some());
+        let saved_route = saved_route.unwrap();
+        assert!(saved_route.status.is_some());
+        let status = saved_route.status.as_ref().unwrap();
+        assert_eq!(status.parents.len(), 1);
+        assert_eq!(status.parents[0].parent_ref.name, "test-gateway");
+
+        // Should have sent finalizer operation
+        let operation = route_patcher_receiver.try_recv();
+        assert!(operation.is_ok());
+
+        // Should have sent reference validation request
+        let request = references_validator_receiver.try_recv();
+        assert!(request.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_on_new_or_changed_with_empty_parent_refs() {
+        let state = State::new();
+        let (route_patcher_sender, mut route_patcher_receiver) = mpsc::channel::<Operation<HTTPRoute>>(10);
+        let (references_validator_sender, mut references_validator_receiver) = mpsc::channel::<ReferenceValidateRequest>(10);
+
+        let http_route = create_test_http_route("test-route", "default");
+        let resource_key = ResourceKey::namespaced("test-route", "default");
+        let http_route_clone = http_route.clone();
+
+        let handler = CommonRouteHandler::builder()
+            .state(state.clone())
+            .resource_key(resource_key.clone())
+            .controller_name("test-controller".to_owned())
+            .resource(Arc::new(http_route))
+            .route_patcher_sender(route_patcher_sender)
+            .references_validator_sender(references_validator_sender)
+            .version(Some("v1".to_owned()))
+            .build();
+
+        let parent_refs: Vec<ParentReference> = vec![];
+        let route_key_clone = resource_key.clone();
+
+        let result = handler
+            .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |state, status| {
+                let mut route = http_route_clone.clone();
+                route.status = status;
+                state.save_http_route(route_key_clone.clone(), &Arc::new(route)).expect("We expect the lock to work");
+            })
+            .await;
+
+        // Should succeed with empty parent refs
+        assert!(result.is_ok());
+
+        // Verify status was saved to state
+        let saved_route = state.get_http_route_by_id(&resource_key).expect("Lock should work");
+        assert!(saved_route.is_some());
+        let saved_route = saved_route.unwrap();
+        assert!(saved_route.status.is_some());
+        let status = saved_route.status.as_ref().unwrap();
+        assert!(status.parents.is_empty());
+
+        // Should have sent finalizer operation
+        let operation = route_patcher_receiver.try_recv();
+        assert!(operation.is_ok());
+        match operation.unwrap() {
+            Operation::PatchFinalizer(ctx) => {
+                assert_eq!(ctx.resource_key.name, "test-route");
+                assert_eq!(ctx.resource_key.namespace, "default");
+            },
+            _ => panic!("Expected PatchFinalizer operation"),
+        }
+
+        // Should have sent reference validation request for route
+        let request = references_validator_receiver.try_recv();
+        assert!(request.is_ok());
+        match request.unwrap() {
+            ReferenceValidateRequest::AddRoute { route_key, references } => {
+                assert_eq!(route_key.name, "test-route");
+                assert_eq!(route_key.namespace, "default");
+                // Should have one reference for test-service backend
+                assert_eq!(references.len(), 1);
+            },
+            _ => panic!("Expected AddRoute request"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_on_new_or_changed_with_multiple_unknown_gateways() {
+        let state = State::new();
+        let (route_patcher_sender, _route_patcher_receiver) = mpsc::channel::<Operation<HTTPRoute>>(10);
+        let (references_validator_sender, _references_validator_receiver) = mpsc::channel::<ReferenceValidateRequest>(10);
+
+        let http_route = create_test_http_route("test-route", "default");
+        let resource_key = ResourceKey::namespaced("test-route", "default");
+        let http_route_clone = http_route.clone();
+        let route_key_clone = resource_key.clone();
+
+        let handler = CommonRouteHandler::builder()
+            .state(state.clone())
+            .resource_key(resource_key.clone())
+            .controller_name("test-controller".to_owned())
+            .resource(Arc::new(http_route))
+            .route_patcher_sender(route_patcher_sender)
+            .references_validator_sender(references_validator_sender)
+            .version(Some("v1".to_owned()))
+            .build();
+
+        let parent_refs =
+            vec![create_test_parent_reference("gateway-1", Some("default")), create_test_parent_reference("gateway-2", Some("default"))];
+
+        let result = handler
+            .on_new_or_changed(resource_key.clone(), &parent_refs, Some(1), |state, status| {
+                let mut route = http_route_clone.clone();
+                route.status = status;
+                state.save_http_route(route_key_clone.clone(), &Arc::new(route)).expect("We expect the lock to work");
+            })
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify status was saved to state with both unknown gateways
+        let saved_route = state.get_http_route_by_id(&resource_key).expect("Lock should work");
+        assert!(saved_route.is_some());
+        let saved_route = saved_route.unwrap();
+        assert!(saved_route.status.is_some());
+        let status = saved_route.status.as_ref().unwrap();
+        assert_eq!(status.parents.len(), 2);
+    }
+}

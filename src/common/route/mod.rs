@@ -77,7 +77,7 @@ pub enum RouteType {
 #[derive(Clone, Debug)]
 pub struct RouteConfig {
     pub resource_key: ResourceKey,
-    parents: Option<Vec<ParentReference>>,
+    pub(crate) parents: Option<Vec<ParentReference>>,
     pub hostnames: Vec<String>,
     pub resolution_status: ResolutionStatus,
     pub route_type: RouteType,
