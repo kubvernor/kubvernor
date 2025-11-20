@@ -1,0 +1,52 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="mainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#326CE5;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#5B7FCC;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#CE422B;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- K8s-inspired hexagon -->
+  <path d="M 100 40 L 150 70 L 150 130 L 100 160 L 50 130 L 50 70 Z" 
+        fill="none" 
+        stroke="url(#mainGradient)" 
+        stroke-width="6"
+        stroke-linejoin="round"/>
+  
+  <!-- Outer gateway arch (moved down by 5 units) -->
+  <path d="M 60 125 
+           L 60 90
+           A 20 20 0 0 1 80 70
+           L 120 70
+           A 20 20 0 0 1 140 90
+           L 140 125" 
+        fill="none" 
+        stroke="url(#mainGradient)" 
+        stroke-width="6"
+        stroke-linecap="round"/>
+  
+  <!-- Middle gateway arch (moved down by 5 units) -->
+  <path d="M 70 120 
+           L 70 95
+           A 15 15 0 0 1 85 80
+           L 115 80
+           A 15 15 0 0 1 130 95
+           L 130 120" 
+        fill="none" 
+        stroke="url(#mainGradient)" 
+        stroke-width="6"
+        stroke-linecap="round"/>
+  
+  <!-- Inner gateway arch (moved down by 5 units) -->
+  <path d="M 80 115 
+           L 80 100
+           A 10 10 0 0 1 90 90
+           L 110 90
+           A 10 10 0 0 1 120 100
+           L 120 115" 
+        fill="none" 
+        stroke="url(#mainGradient)" 
+        stroke-width="6"
+        stroke-linecap="round"/>
+</svg>
