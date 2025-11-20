@@ -1,4 +1,8 @@
-# Kubvernor
+<p align="center">
+<img src="assets/kubvernor-logo-final.png" alt="Logo" width="400"/>
+</p>
+
+# Kubvernor 
 Generic Gateway API Manager for Kubernetes
 
 >[!CAUTION]
