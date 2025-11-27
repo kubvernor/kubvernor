@@ -54,11 +54,12 @@ tower-test = "0.4"
 http = "1.3"
 
 [features]
-default = ["standard", "envoy_xds", "agentgateway"]
+default = ["standard", "envoy_xds", "agentgateway","orion"]
 standard = []
 experimental = []
 envoy_xds = []
 envoy_cm = []
+orion = []
 agentgateway = ["dep:agentgateway-api-rs"]
 
 

@@ -24,6 +24,7 @@ pub struct Gateway {
 pub enum GatewayImplementationType {
     Envoy,
     Agentgateway,
+    Orion,
 }
 
 impl TryFrom<Option<&String>> for GatewayImplementationType {
