@@ -109,7 +109,11 @@ impl GatewayController {
                     if let Ok(configuration) = configuration_api.get(&config_reference.name).await {
                         debug!("reconcile_gateway: {controller_name} {name} retrieved configuration {:?}", configuration);
                         let Ok(backend_type) = GatewayImplementationType::try_from(configuration.spec.backendtype.as_ref()) else {
-                            return Err(ControllerError::InvalidPayload("Uid must be present".to_owned()));
+                            info!(
+                                "reconcile_gateway: {controller_name} {name} Invalid backend type {:?}",
+                                configuration.spec.backendtype.as_ref()
+                            );
+                            return Err(ControllerError::InvalidPayload("Invalid backend type".to_owned()));
                         };
                         configured_backend_type = backend_type;
                     } else {

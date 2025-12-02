@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::HashMap,
     fmt::Display,
     net::SocketAddr,
     ops::AddAssign,
@@ -29,6 +29,7 @@ use tokio_stream::{
     wrappers::{ReceiverStream, TcpListenerStream},
 };
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use crate::{
     backends::envoy::envoy_xds_backend::model::TypeUrl,
@@ -63,6 +64,11 @@ pub struct AckVersions {
     listener: u32,
 }
 
+struct Delta<T> {
+    to_add: Vec<T>,
+    to_remove: Vec<String>,
+}
+
 impl AddAssign<u32> for AckVersions {
     fn add_assign(&mut self, rhs: u32) {
         self.cluster += rhs;
@@ -85,43 +91,66 @@ impl AckVersions {
 
 #[derive(Debug, Clone)]
 struct AdsClient {
-    sender: mpsc::Sender<Result<DiscoveryResponse, Status>>,
+    sender: mpsc::Sender<Result<DeltaDiscoveryResponse, Status>>,
     ack_versions: AckVersions,
     client_id: SocketAddr,
     gateway_id: Option<String>,
+    listeners: Vec<Resource>,
+    clusters: Vec<Resource>,
 }
 
 impl AdsClient {
-    fn new(client_id: SocketAddr, sender: mpsc::Sender<Result<DiscoveryResponse, Status>>) -> Self {
-        Self { sender, client_id, gateway_id: None, ack_versions: AckVersions::default() }
+    fn new(client_id: SocketAddr, sender: mpsc::Sender<Result<DeltaDiscoveryResponse, Status>>) -> Self {
+        Self { sender, client_id, gateway_id: None, ack_versions: AckVersions::default(), listeners: vec![], clusters: vec![] }
     }
 
     fn update_from(&mut self, value: &AdsClient) {
         self.ack_versions = value.ack_versions.clone();
         self.gateway_id.clone_from(&value.gateway_id);
+        self.listeners.clone_from(&value.listeners);
+        self.clusters.clone_from(&value.clusters);
     }
     fn versions(&self) -> &AckVersions {
         &self.ack_versions
     }
 
-    fn versions_mut(&mut self) -> &mut AckVersions {
-        &mut self.ack_versions
-    }
-
     fn set_gateway_id(&mut self, gateway_id: &str) {
         self.gateway_id = Some(gateway_id.to_owned());
     }
+
+    fn cache_listeners_and_calculate_delta(&mut self, new_listeners: Vec<Resource>) -> Delta<Resource> {
+        let cached_resources = &self.listeners;
+        let to_add = difference(&new_listeners, cached_resources);
+        let to_remove = difference(cached_resources, &new_listeners);
+
+        let to_remove = to_remove.into_iter().map(|r| r.name).collect();
+
+        self.listeners = new_listeners;
+        Delta { to_add, to_remove }
+    }
+
+    fn cache_clusters_and_calculate_delta(&mut self, new_clusters: Vec<Resource>) -> Delta<Resource> {
+        let cached_workloads = &self.clusters;
+        let to_add = difference(&new_clusters, cached_workloads);
+        let to_remove = difference(cached_workloads, &new_clusters);
+
+        let to_remove = to_remove.into_iter().map(|r| r.name).collect();
+
+        self.clusters = new_clusters;
+        Delta { to_add, to_remove }
+    }
 }
 
-#[derive(Debug, Default)]
-struct ResourcesMapping {
-    cluster: BTreeMap<String, Vec<Resource>>,
-    listener: BTreeMap<String, Vec<Resource>>,
+#[derive(Debug, Clone, Default)]
+struct ManagedResources {
+    all_listeners: Vec<Resource>,
+    all_clusters: Vec<Resource>,
 }
 
 #[derive(Debug, Clone, Default)]
 struct AdsClients {
     ads_clients: Arc<Mutex<Vec<AdsClient>>>,
+    managed_resources: Arc<Mutex<HashMap<String, ManagedResources>>>,
 }
 
 impl AdsClients {
@@ -136,24 +165,85 @@ impl AdsClients {
     }
 
     fn get_client_by_client_id(&self, client_id: SocketAddr) -> Option<AdsClient> {
-        debug!("get_client_by_client_id {client_id:?}");
+        debug!("get_client_by_client_id {client_id}");
         let clients = self.ads_clients.lock().expect("We expect the lock to work");
         clients.iter().find(|client| client.client_id == client_id).cloned()
     }
 
-    fn update_client(&self, client: &AdsClient) {
-        debug!("update_client {:?} {:?}", client.client_id, client.gateway_id);
+    fn update_client(&self, client: &mut AdsClient, gateway_id: &str) {
+        debug!("update_client {:?} {gateway_id}", client.client_id);
+        if client.gateway_id.is_none() {
+            info!("update_client {:?} {gateway_id}  Initial connection - Uupdating all resources", client.client_id);
+            client.set_gateway_id(gateway_id);
+
+            {
+                if let Some(resources) = self.managed_resources.lock().expect("We expect the lock to work").get(gateway_id) {
+                    debug!("update_client {:?} {gateway_id} - Updating resources {:?}", client.client_id, resources);
+                    client.listeners.clone_from(&resources.all_listeners);
+                    client.clusters.clone_from(&resources.all_clusters);
+                } else {
+                    debug!("update_client {:?} {gateway_id} - No resources", client.client_id);
+                }
+            }
+        }
+
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             local_client.update_from(client);
         } else {
-            debug!("update_client No client {:?} {:?}", client.client_id, client.gateway_id);
+            debug!("update_client No client {:?} {gateway_id}", client.client_id);
+        }
+    }
+
+    fn update_managed_listeners(&self, gateway_id: &str, listeners: &[Resource]) {
+        debug!("update_managed_listeners {gateway_id}");
+        let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
+        managed_resources
+            .entry(gateway_id.to_owned())
+            .and_modify(|e| e.all_listeners.clone_from(&listeners.to_vec()))
+            .or_insert(ManagedResources { all_listeners: listeners.to_vec(), all_clusters: vec![] });
+    }
+
+    fn update_managed_clusters(&self, gateway_id: &str, clusters: &[Resource]) {
+        debug!("update_managed_clusters {gateway_id}");
+        let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
+        managed_resources
+            .entry(gateway_id.to_owned())
+            .and_modify(|e| e.all_clusters.clone_from(&clusters.to_vec()))
+            .or_insert(ManagedResources { all_listeners: vec![], all_clusters: clusters.to_vec() });
+    }
+
+    fn update_client_and_listeners(&self, client: &AdsClient, listeners: &[Resource]) {
+        debug!("update_client_and_listeners {:?} {:?}", client.client_id, client.gateway_id);
+        let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
+        if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
+            local_client.update_from(client);
+        } else {
+            debug!("update_client_and_listeners {:?} {:?} - No client", client.client_id, client.gateway_id);
+        }
+
+        if let Some(gateway_id) = client.gateway_id.as_ref() {
+            self.update_managed_listeners(gateway_id, listeners);
+        }
+    }
+
+    fn update_client_and_clusters(&self, client: &AdsClient, clusters: &[Resource]) {
+        debug!("update_client_and_clusters {:?} {:?}", client.client_id, client.gateway_id);
+        let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
+        if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
+            local_client.update_from(client);
+        } else {
+            debug!("update_client_and_clusters {:?} {:?} - No client", client.client_id, client.gateway_id);
+        }
+        if let Some(gateway_id) = client.gateway_id.as_ref() {
+            self.update_managed_clusters(gateway_id, clusters);
         }
     }
 
     fn add_or_replace_client(&self, mut client: AdsClient) {
         debug!("add_or_replace_client {:?} {:?}", client.client_id, client.gateway_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
+
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             let versions = local_client.versions().clone();
             client.ack_versions = versions;
@@ -168,6 +258,12 @@ impl AdsClients {
     fn remove_client(&self, client_id: SocketAddr) {
         debug!("remove_client {:?}", client_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
+        if let Some(client) = clients.iter().find(|client| client.client_id == client_id).as_ref()
+            && let Some(gateway_id) = client.gateway_id.as_ref()
+        {
+            debug!("remove_client : Managed resources {:?} {:?}", client_id, gateway_id);
+            self.managed_resources.lock().expect("We expect the lock to work").remove(gateway_id);
+        }
 
         clients.retain(|f| f.client_id != client_id);
     }
@@ -177,85 +273,79 @@ pub type ResourceAction = ServerAction;
 
 pub struct AggregateServer {
     kube_client: kube::Client,
-    ads_channels: Arc<Mutex<ResourcesMapping>>,
     ads_clients: AdsClients,
+    nonces: Arc<Mutex<lru_time_cache::LruCache<Uuid, Uuid>>>,
 }
 
 #[derive(Debug)]
 pub struct AggregateServerService {
-    ads_channels: Arc<Mutex<ResourcesMapping>>,
     ads_clients: AdsClients,
     stream_resources_rx: Receiver<ServerAction>,
 }
 
 impl AggregateServer {
-    fn new(kube_client: kube::Client, ads_channels: Arc<Mutex<ResourcesMapping>>, ads_clients: AdsClients) -> Self {
-        Self { kube_client, ads_channels, ads_clients }
+    fn new(kube_client: kube::Client, ads_clients: AdsClients) -> Self {
+        Self {
+            kube_client,
+            ads_clients,
+            nonces: Arc::new(Mutex::new(lru_time_cache::LruCache::<Uuid, Uuid>::with_expiry_duration_and_capacity(
+                std::time::Duration::from_secs(30),
+                1000,
+            ))),
+        }
     }
 }
 impl AggregateServerService {
-    fn new(stream_resources_rx: Receiver<ServerAction>, ads_channels: Arc<Mutex<ResourcesMapping>>, ads_clients: AdsClients) -> Self {
-        Self { ads_channels, ads_clients, stream_resources_rx }
+    fn new(stream_resources_rx: Receiver<ServerAction>, ads_clients: AdsClients) -> Self {
+        Self { ads_clients, stream_resources_rx }
     }
 
     pub async fn start(self) {
         let mut stream_resources_rx = self.stream_resources_rx;
-        let ads_channels = self.ads_channels;
         let ads_clients = self.ads_clients;
         loop {
             tokio::select! {
                     Some(event) = stream_resources_rx.recv() => {
                         info!("{event}");
                         match event{
-                            ServerAction::UpdateClusters{ gateway_id: gateway_key, resources, ack_version } => {
+                            ServerAction::UpdateClusters{ gateway_id: gateway_key, resources, ack_version: _ } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
-
-
-                                {
-                                    let mut channels = ads_channels.lock().expect("We expect lock to work");
-                                    channels.cluster.insert(gateway_id.clone(), resources.clone());
-                                };
-
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
-                                info!("Sending cluster discovery response {gateway_id} clients {}", clients.len());
+                                info!("Sending resources DELTA discovery response {gateway_id} clients {}", clients.len());
+                                ads_clients.update_managed_clusters(&gateway_id, &resources);
+
                                 for client in &mut clients{
-                                    let response = DiscoveryResponse {
+                                    let Delta{to_add, to_remove} = client.cache_clusters_and_calculate_delta(resources.clone());
+                                    debug!("Sending resources DELTA discovery response for client {} {to_add:?} {to_remove:?}", client.client_id);
+                                    let response = DeltaDiscoveryResponse {
                                         type_url: TypeUrl::Cluster.to_string(),
-                                        resources: resources.iter().map(|resource| resource.resource.clone().expect("We expect this to work")).collect(),
+                                        resources: to_add.clone(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
-                                        version_info: ack_version.to_string(),
+                                        removed_resources: to_remove,
                                         ..Default::default()
                                     };
+                                    ads_clients.update_client_and_clusters(client, &resources);
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                    client.versions_mut().cluster = ack_version;
-                                    ads_clients.update_client(client);
                                 }
                             },
-                            ServerAction::UpdateListeners{ gateway_id: gateway_key, resources, ack_version } => {
+                            ServerAction::UpdateListeners{ gateway_id: gateway_key, resources, ack_version: _ } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
-
-
-                                {
-                                    let mut channels = ads_channels.lock().expect("We expect lock to work");
-                                    channels.listener.insert(gateway_id.clone(), resources.clone());
-
-                                };
-
-
-
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
-                                info!("Sending listener discovery response {gateway_id} clients {}", clients.len());
+                                info!("Sending resources DELTA discovery response {gateway_id} clients {}", clients.len());
+                                ads_clients.update_managed_listeners(&gateway_id, &resources);
+
                                 for client in &mut clients{
-                                    let response = DiscoveryResponse {
+                                    let Delta{to_add, to_remove} = client.cache_listeners_and_calculate_delta(resources.clone());
+                                    debug!("Sending resources DELTA discovery response for client {} {to_add:?} {to_remove:?}", client.client_id);
+                                    let response = DeltaDiscoveryResponse {
                                         type_url: TypeUrl::Listener.to_string(),
-                                        resources: resources.iter().map(|resource| resource.resource.clone().expect("We expect this to work")).collect(),
+                                        resources: to_add.clone(),
                                         nonce: uuid::Uuid::new_v4().to_string(),
-                                        version_info: ack_version.to_string(),
+                                        removed_resources: to_remove,
                                         ..Default::default()
                                     };
+                                    ads_clients.update_client_and_listeners(client, &resources);
                                     let _  = client.sender.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                    client.versions_mut().listener = ack_version;
-                                    ads_clients.update_client(client);
                                 }
                             },
 
@@ -271,7 +361,7 @@ impl AggregateServerService {
 
 type AggregatedDiscoveryServiceResult<T> = std::result::Result<Response<T>, Status>;
 
-#[envoy_api_rs::tonic::async_trait]
+#[agentgateway_api_rs::tonic::async_trait]
 impl AggregatedDiscoveryService for AggregateServer {
     type StreamAggregatedResourcesStream = Pin<Box<dyn Stream<Item = std::result::Result<DiscoveryResponse, Status>> + Send>>;
 
@@ -281,164 +371,134 @@ impl AggregatedDiscoveryService for AggregateServer {
     ) -> AggregatedDiscoveryServiceResult<Self::StreamAggregatedResourcesStream> {
         info!("AggregateServer::stream_aggregated_resources client connected from: {:?}", req);
 
+        return Err(Status::aborted("AggregateServer::stream_aggregated_resources not supported"));
+    }
+
+    type DeltaAggregatedResourcesStream = Pin<Box<dyn Stream<Item = std::result::Result<DeltaDiscoveryResponse, Status>> + Send>>;
+
+    #[allow(clippy::too_many_lines)]
+    async fn delta_aggregated_resources(
+        &self,
+        req: envoy_api_rs::tonic::Request<envoy_api_rs::tonic::Streaming<DeltaDiscoveryRequest>>,
+    ) -> AggregatedDiscoveryServiceResult<Self::DeltaAggregatedResourcesStream> {
+        info!("AggregateServer::delta_aggregated_resources client connected from: {:?}", req.remote_addr());
         let Some(client_ip) = req.remote_addr() else {
             return Err(Status::aborted("Invalid remote IP address"));
         };
 
         let (tx, rx) = mpsc::channel(128);
+        let nonces = Arc::clone(&self.nonces);
         let kube_client = self.kube_client.clone();
-        let ads_channels = Arc::clone(&self.ads_channels);
-        self.ads_clients.add_or_replace_client(AdsClient::new(client_ip, tx.clone()));
-
         let ads_clients = self.ads_clients.clone();
+
         let mut incoming_stream = req.into_streaming_request().into_inner();
 
+        self.ads_clients.add_or_replace_client(AdsClient::new(client_ip, tx.clone()));
         tokio::spawn(async move {
-            let tx = tx.clone();
             while let Some(item) = incoming_stream.next().await {
-                if let Ok(request) = item {
-                    if let Some(status) = request.error_detail {
-                        warn!("Got error... skipping  {status:?}");
-                        continue;
-                    }
-                    let Some(node) = request.node.as_ref() else {
-                        warn!("Node is empty");
-                        continue;
-                    };
-
-                    let Some(gateway_id) = fetch_gateway_id_by_node_id(kube_client.clone(), node).await else {
-                        warn!("Node id is invalid {:?}", node.id);
-                        continue;
-                    };
-
-                    let first_connect = request.version_info.is_empty();
-
-                    let incoming_version = if first_connect {
-                        0
-                    } else {
-                        let Ok(incoming_version): std::result::Result<u32, _> = request.version_info.parse() else {
-                            warn!("Version is invalid {}", request.version_info);
+                match item {
+                    Ok(discovery_request) => {
+                        info!("AggregateServer::delta_aggregated_resources {discovery_request:?}");
+                        if let Some(status) = discovery_request.error_detail {
+                            warn!("Got error... skipping  {status:?}");
                             continue;
+                        }
+
+                        let maybe_nonce = if discovery_request.response_nonce.is_empty() {
+                            None
+                        } else {
+                            let uuid = Uuid::parse_str(&discovery_request.response_nonce);
+                            Some(uuid)
                         };
-                        incoming_version
-                    };
 
-                    let Some(mut ads_client) = ads_clients.get_client_by_client_id(client_ip) else {
-                        warn!("Can't find any clients for this ip  {:?}", node.id);
-                        continue;
-                    };
-                    ads_client.set_gateway_id(&gateway_id);
-                    ads_clients.update_client(&ads_client);
-                    info!(
-                        "Server : Got discovery request {:?} incoming version {} current_versions {:?} first connect {} from gateway id {gateway_id} {}",
-                        client_ip, incoming_version, ads_client.ack_versions, first_connect, request.type_url,
-                    );
-
-                    match TypeUrl::try_from(request.type_url.as_str()) {
-                        Ok(TypeUrl::Cluster) => {
-                            let ack_version = ads_client.versions().cluster;
-                            if !first_connect && incoming_version == ack_version {
-                                debug!("Versions match... ignoring");
-                            } else {
-                                let resources = {
-                                    let resource_mappings = ads_channels.lock().expect("We expect the lock to work");
-                                    resource_mappings.cluster.get(&gateway_id).cloned()
+                        match maybe_nonce {
+                            Some(Err(_)) => {
+                                info!("Nonce set but we can't parse it");
+                            },
+                            Some(Ok(nonce)) => {
+                                debug!(
+                                    "AggregateServer::delta_aggregated_resources Got ack/nack for {nonce} {:?}",
+                                    discovery_request.error_detail
+                                );
+                            },
+                            None => {
+                                let Some(node) = discovery_request.node.as_ref() else {
+                                    warn!("Node is empty");
+                                    continue;
                                 };
 
-                                info!(
-                                    "Adding tx for cluster gateway id {gateway_id} ack version {ack_version} resources {:?}",
-                                    resources.as_ref().map(std::vec::Vec::len)
-                                );
-
-                                if let Some(resources) = resources {
-                                    if !resources.is_empty() {
-                                        ads_clients.update_client(&ads_client);
-                                    }
-                                    let ack_version = ads_client.ack_versions.cluster;
-                                    let response = DiscoveryResponse {
-                                        type_url: TypeUrl::Cluster.to_string(),
-                                        resources: resources
-                                            .iter()
-                                            .map(|resource| resource.resource.clone().expect("We would expect this to work"))
-                                            .collect(),
-                                        nonce: uuid::Uuid::new_v4().to_string(),
-                                        version_info: ack_version.to_string(),
-
-                                        ..Default::default()
-                                    };
-                                    let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                }
-                            }
-                        },
-                        Ok(TypeUrl::Listener) => {
-                            let ack_version = ads_client.versions().listener;
-                            if !first_connect && incoming_version == ack_version {
-                                debug!("Versions match... ignoring");
-                            } else {
-                                let resources = {
-                                    let channels = ads_channels.lock().expect("We expect the lock to work");
-                                    channels.listener.get(&gateway_id).cloned()
+                                let Some(mut ads_client) = ads_clients.get_client_by_client_id(client_ip) else {
+                                    warn!("Can't find any clients for this ip {:?}", node.id);
+                                    continue;
                                 };
 
+                                let maybe_gateway_id = fetch_gateway_id_by_node_id(kube_client.clone(), node).await;
+                                let Ok(gateway_id) = maybe_gateway_id else {
+                                    warn!("Node id is invalid {:?} {maybe_gateway_id:?}", node.id);
+                                    continue;
+                                };
+
+                                debug!("Updating client {client_ip} {gateway_id}");
+                                ads_clients.update_client(&mut ads_client, &gateway_id);
+
+                                let nonce = uuid::Uuid::new_v4();
+                                nonces.lock().expect("We do expect this to work").insert(nonce, nonce);
+
                                 info!(
-                                    "Adding tx for listener gateway id {gateway_id} ack version {ack_version} resources {:?}",
-                                    resources.as_ref().map(std::vec::Vec::len)
+                                    "Sending resources INITIAL discovery response {gateway_id} client {} {} {} ",
+                                    ads_client.client_id,
+                                    ads_client.listeners.len(),
+                                    ads_client.clusters.len()
                                 );
 
-                                if let Some(resources) = &resources {
-                                    for v in resources {
-                                        debug!("Updating resource {} {:?}", v.name, v.resource_name);
-                                    }
+                                match TypeUrl::try_from(discovery_request.type_url.as_str()) {
+                                    Ok(TypeUrl::Listener) => {
+                                        let response = DeltaDiscoveryResponse {
+                                            type_url: TypeUrl::Listener.to_string(),
+                                            resources: ads_client.listeners.clone(),
+                                            nonce: uuid::Uuid::new_v4().to_string(),
+
+                                            ..Default::default()
+                                        };
+                                        let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                    },
+
+                                    Ok(TypeUrl::Cluster) => {
+                                        info!("Sending workloads INITIAL discovery response {gateway_id} client {}", ads_client.client_id);
+                                        let response = DeltaDiscoveryResponse {
+                                            type_url: TypeUrl::Cluster.to_string().to_owned(),
+                                            resources: ads_client.clusters.clone(),
+                                            nonce: uuid::Uuid::new_v4().to_string(),
+                                            ..Default::default()
+                                        };
+                                        let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                    },
+                                    _ => {
+                                        warn!("Unknown resource type {}", discovery_request.type_url);
+                                        let response = DeltaDiscoveryResponse {
+                                            type_url: discovery_request.type_url.clone(),
+                                            resources: vec![],
+                                            nonce: uuid::Uuid::new_v4().to_string(),
+                                            ..Default::default()
+                                        };
+                                        let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
+                                    },
                                 }
+                            },
+                        }
+                    },
 
-                                if let Some(resources) = resources {
-                                    if !resources.is_empty() {
-                                        ads_clients.update_client(&ads_client);
-                                    }
-                                    let ack_version = ads_client.ack_versions.listener;
-
-                                    let response = DiscoveryResponse {
-                                        type_url: TypeUrl::Listener.to_string(),
-                                        resources: resources
-                                            .iter()
-                                            .map(|resource| resource.resource.clone().expect("We expect this to work"))
-                                            .collect(),
-                                        nonce: uuid::Uuid::new_v4().to_string(),
-                                        version_info: ack_version.to_string(),
-
-                                        ..Default::default()
-                                    };
-                                    let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
-                                }
-                            }
-                        },
-                        _ => {
-                            warn!("Unknown resource type");
-                        },
-                    }
-                } else {
-                    warn!("Discovery request error {:?}", item.err());
+                    Err(e) => {
+                        warn!("AggregateServer::delta_aggregated_resources Discovery request error {:?}", e);
+                    },
                 }
             }
-
-            info!("Server side closed... removing client {client_ip}");
+            info!("AggregateServer::delta_aggregated_resources Server side closed... removing client");
             ads_clients.remove_client(client_ip);
         });
 
         let output_stream = ReceiverStream::new(rx);
-        Ok(Response::new(Box::pin(output_stream) as Self::StreamAggregatedResourcesStream))
-    }
-
-    type DeltaAggregatedResourcesStream = Pin<Box<dyn Stream<Item = std::result::Result<DeltaDiscoveryResponse, Status>> + Send>>;
-
-    async fn delta_aggregated_resources(
-        &self,
-        req: envoy_api_rs::tonic::Request<envoy_api_rs::tonic::Streaming<DeltaDiscoveryRequest>>,
-    ) -> AggregatedDiscoveryServiceResult<Self::DeltaAggregatedResourcesStream> {
-        info!("AggregateServer::delta_aggregated_resources");
-        info!("client connected from: {:?}", req.remote_addr());
-
-        Err(Status::unimplemented("Delta stream not implemented at the moment"))
+        Ok(Response::new(Box::pin(output_stream) as Self::DeltaAggregatedResourcesStream))
     }
 }
 
@@ -448,10 +508,9 @@ pub async fn start_aggregate_server(
     stream_resources_rx: Receiver<ResourceAction>,
 ) -> crate::Result<()> {
     let stream = TcpListenerStream::new(TcpListener::bind(server_address.to_ips().as_slice()).await?);
-    let channels = Arc::new(Mutex::new(ResourcesMapping::default()));
     let ads_clients = AdsClients::new();
-    let service = AggregateServerService::new(stream_resources_rx, Arc::clone(&channels), ads_clients.clone());
-    let server = AggregateServer::new(kube_client, channels, ads_clients);
+    let service = AggregateServerService::new(stream_resources_rx, ads_clients.clone());
+    let server = AggregateServer::new(kube_client, ads_clients);
     let aggregate_server = AggregatedDiscoveryServiceServer::new(server);
     let server = Server::builder().concurrency_limit_per_connection(256).add_service(aggregate_server).serve_with_incoming(stream).boxed();
 
@@ -468,7 +527,7 @@ pub async fn start_aggregate_server(
     Ok(())
 }
 
-async fn fetch_gateway_id_by_node_id(client: kube::Client, node: &EnvoyNode) -> Option<String> {
+async fn fetch_gateway_id_by_node_id(client: kube::Client, node: &EnvoyNode) -> crate::Result<String> {
     let id = &node.id;
     let namespace = &node.cluster;
     let api_client: kube::api::Api<Pod> = Api::namespaced(client, namespace);
@@ -477,11 +536,25 @@ async fn fetch_gateway_id_by_node_id(client: kube::Client, node: &EnvoyNode) -> 
         && let Some(gateway_id) = labels.get("app")
     {
         debug!("create_gateway_id_from_node_id:: Node id {id} {gateway_id:?}");
-        return Some(create_id(gateway_id, namespace));
+        return Ok(create_id(gateway_id, namespace));
     }
-    None
+    Err("Invalid node id format".into())
 }
 
 fn create_gateway_id(gateway_id: &ResourceKey) -> String {
     create_id(&gateway_id.name, &gateway_id.namespace)
+}
+
+/// Visits the values representing the difference, i.e., the values that are in self but not in other.
+fn difference<T>(this: &[T], other: &[T]) -> Vec<T>
+where
+    T: PartialEq + Clone,
+{
+    let mut out = vec![];
+    for t in this {
+        if !other.contains(t) {
+            out.push(t.clone());
+        }
+    }
+    out
 }

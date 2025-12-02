@@ -29,6 +29,11 @@ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/downloa
 ```bash
 kubectl apply -f kubernetes/kubvernor-crds.yaml
 ```
+
+3. Configure Kubvernor
+```bash
+kubectl apply -f kubernetes/kubvernor-config.yaml
+```
     
 > [!NOTE]
 > 4. **(Optionally)** install CRDs for Gateway API Inference Extension
@@ -55,12 +60,16 @@ cat <<EOF > config.yaml
 controller_name: kubvernor.com/proxy-controller  
 envoy_gateway_control_plane:
   address:
-     hostname: CONTROL_PLANE_ADDRESS
-     port: 50051
+    hostname: CONTROL_PLANE_ADDRESS
+    port: 50051
 agentgateway_gateway_control_plane:
   address:
     hostname: CONTROL_PLANE_ADDRESS
     port: 50052
+orion_gateway_control_plane:
+    address:
+    hostname: CONTROL_PLANE_ADDRESS
+    port: 50053    
 EOF
 
 ```

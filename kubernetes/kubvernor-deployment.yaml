@@ -66,6 +66,10 @@ spec:
       port: 50052
       targetPort: 50052
       protocol: TCP
+    - name: orion
+      port: 50053
+      targetPort: 50053
+      protocol: TCP
   type: ClusterIP
   selector:
     app: kubvernor-control-plane
@@ -86,6 +90,10 @@ data:
       address:
         hostname: kubvernor-control-plane.kubvernor
         port: 50052
+    orion_gateway_control_plane:
+      address:
+        hostname: kubvernor-control-plane.kubvernor
+        port: 50053
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -121,6 +129,13 @@ metadata:
 spec:
   backendtype: agentgateway
 ---
+apiVersion: kubvernor.gateway.api/v1
+kind: KubvernorConfig
+metadata:
+  name: kubvernor-config-orion
+spec:
+  backendtype: orion
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:
@@ -138,6 +153,17 @@ metadata:
   name: kubvernor-gateway
 spec:
   controllerName: kubvernor.com/proxy-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kubvernor-orionproxy_gateway
+spec:
+  controllerName: kubvernor.com/proxy-controller
+  parametersRef:
+    group: kubvernor.gateway.api
+    kind: KubvernorConfig
+    name: kubvernor-config-orion
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass

@@ -3,6 +3,8 @@ name = "kubvernor"
 version = "0.2.0"
 edition = "2024"
 
+rust-version = "1.91.1"
+
 [dependencies]
 atomic-take = "1.1.0"
 futures = "0.3"

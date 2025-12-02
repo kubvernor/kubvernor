@@ -33,6 +33,7 @@ impl TryFrom<Option<&String>> for GatewayImplementationType {
     fn try_from(value: Option<&String>) -> Result<Self, Self::Error> {
         match value.map(std::string::String::as_str) {
             Some("agentgateway") => Ok(GatewayImplementationType::Agentgateway),
+            Some("orion") => Ok(GatewayImplementationType::Orion),
             Some("envoy") | None => Ok(GatewayImplementationType::Envoy),
             Some(_) => Err("Invalid backend type ".into()),
         }
