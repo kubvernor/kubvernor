@@ -6,7 +6,7 @@ metadata:
   # finalizers:
   #   - kubevernor.com/proxy-controller
 spec:
-  gatewayClassName: kubvernor-orion-gateway
+  gatewayClassName: kubvernor-orionproxy-gateway
   listeners:
     - name: http-1080
       protocol: HTTP

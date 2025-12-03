@@ -316,7 +316,7 @@ impl AggregateServerService {
 
                                 for client in &mut clients{
                                     let Delta{to_add, to_remove} = client.cache_clusters_and_calculate_delta(resources.clone());
-                                    debug!("Sending resources DELTA discovery response for client {} {to_add:?} {to_remove:?}", client.client_id);
+                                    debug!("Sending resources DELTA clusters discovery response for client {} {to_add:?} {to_remove:?}", client.client_id);
                                     let response = DeltaDiscoveryResponse {
                                         type_url: TypeUrl::Cluster.to_string(),
                                         resources: to_add.clone(),
@@ -336,7 +336,7 @@ impl AggregateServerService {
 
                                 for client in &mut clients{
                                     let Delta{to_add, to_remove} = client.cache_listeners_and_calculate_delta(resources.clone());
-                                    debug!("Sending resources DELTA discovery response for client {} {to_add:?} {to_remove:?}", client.client_id);
+                                    debug!("Sending resources DELTA listeners discovery response for client {} {to_add:?} {to_remove:?}", client.client_id);
                                     let response = DeltaDiscoveryResponse {
                                         type_url: TypeUrl::Listener.to_string(),
                                         resources: to_add.clone(),
@@ -399,10 +399,6 @@ impl AggregatedDiscoveryService for AggregateServer {
                 match item {
                     Ok(discovery_request) => {
                         info!("AggregateServer::delta_aggregated_resources {discovery_request:?}");
-                        if let Some(status) = discovery_request.error_detail {
-                            warn!("Got error... skipping  {status:?}");
-                            continue;
-                        }
 
                         let maybe_nonce = if discovery_request.response_nonce.is_empty() {
                             None
@@ -420,8 +416,15 @@ impl AggregatedDiscoveryService for AggregateServer {
                                     "AggregateServer::delta_aggregated_resources Got ack/nack for {nonce} {:?}",
                                     discovery_request.error_detail
                                 );
+                                if let Some(status) = discovery_request.error_detail {
+                                    warn!("Got error... skipping  {status:?}");
+                                }
                             },
                             None => {
+                                if let Some(status) = discovery_request.error_detail {
+                                    warn!("got unsolicited error/no nonce  {status:?}");
+                                    continue;
+                                }
                                 let Some(node) = discovery_request.node.as_ref() else {
                                     warn!("Node is empty");
                                     continue;
@@ -466,7 +469,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                                     Ok(TypeUrl::Cluster) => {
                                         info!("Sending workloads INITIAL discovery response {gateway_id} client {}", ads_client.client_id);
                                         let response = DeltaDiscoveryResponse {
-                                            type_url: TypeUrl::Cluster.to_string().to_owned(),
+                                            type_url: TypeUrl::Cluster.to_string(),
                                             resources: ads_client.clusters.clone(),
                                             nonce: uuid::Uuid::new_v4().to_string(),
                                             ..Default::default()
