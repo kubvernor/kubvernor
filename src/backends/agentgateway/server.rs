@@ -10,7 +10,7 @@ use std::{
 use agentgateway_api_rs::{
     agentgateway::dev::{
         resource::{Resource, resource::Kind},
-        workload::{self, Address},
+        workload::{self, Address, address::Type},
     },
     envoy::service::discovery::v3::{
         DeltaDiscoveryRequest, DeltaDiscoveryResponse, DiscoveryRequest, DiscoveryResponse, Node,
@@ -131,46 +131,43 @@ impl AdsClient {
     }
 
     fn cache_resources_and_calculate_delta(&mut self, new_resources: Vec<Resource>) -> Delta<Resource> {
+        fn get_resource_name(kind: &Kind) -> String {
+            match kind {
+                Kind::Bind(bind) => "bind/".to_owned() + &bind.key,
+                Kind::Listener(listener) => "listener/".to_owned() + &listener.key,
+                Kind::Route(route) => "route/".to_owned() + &route.key,
+                Kind::Backend(backend) => "backend/".to_owned() + &backend.name,
+                Kind::Policy(policy) => "policy/".to_owned() + &policy.name,
+                Kind::TcpRoute(tcp_route) => "tcproute/".to_owned() + &tcp_route.key,
+            }
+        }
+
         let cached_resources = &self.resources;
         let to_add = difference(&new_resources, cached_resources);
-        let to_remove = difference(cached_resources, &new_resources);
 
-        let to_remove = to_remove
-            .into_iter()
-            .filter_map(|r| {
-                r.kind.map(|kind| match kind {
-                    Kind::Bind(bind) => "bind/".to_owned() + &bind.key,
-                    Kind::Listener(listener) => "listener/".to_owned() + &listener.key,
-                    Kind::Route(route) => "route/".to_owned() + &route.key,
-                    Kind::Backend(backend) => "backend/".to_owned() + &backend.name,
-                    Kind::Policy(policy) => "policy/".to_owned() + &policy.name,
-                    Kind::TcpRoute(tcp_route) => "tcproute/".to_owned() + &tcp_route.key,
-                })
-            })
-            .collect();
+        let to_remove = difference(
+            &cached_resources.iter().filter_map(|r| r.kind.as_ref().map(get_resource_name)).collect::<Vec<_>>(),
+            &new_resources.iter().filter_map(|r| r.kind.as_ref().map(get_resource_name)).collect::<Vec<_>>(),
+        );
 
         self.resources = new_resources;
         Delta { to_add, to_remove }
     }
 
     fn cache_workloads_and_calculate_delta(&mut self, new_workloads: Vec<Address>) -> Delta<Address> {
+        fn get_address_name(addr_type: &Type) -> String {
+            match addr_type {
+                Type::Workload(workload) => "address/".to_owned() + &workload.uid,
+                Type::Service(service) => format!("address/{}/{}", service.name, service.namespace),
+            }
+        }
+
         let cached_workloads = &self.workloads;
         let to_add = difference(&new_workloads, cached_workloads);
-        let to_remove = difference(cached_workloads, &new_workloads);
-
-        let to_remove = to_remove
-            .into_iter()
-            .filter_map(|r| {
-                r.r#type.map(|workloads_type| match workloads_type {
-                    agentgateway_api_rs::agentgateway::dev::workload::address::Type::Workload(workload) => {
-                        "address/".to_owned() + &workload.uid
-                    },
-                    agentgateway_api_rs::agentgateway::dev::workload::address::Type::Service(service) => {
-                        format!("address/{}/{}", service.name, service.namespace)
-                    },
-                })
-            })
-            .collect();
+        let to_remove = difference(
+            &cached_workloads.iter().filter_map(|r| r.r#type.as_ref().map(get_address_name)).collect::<Vec<_>>(),
+            &new_workloads.iter().filter_map(|r| r.r#type.as_ref().map(get_address_name)).collect::<Vec<_>>(),
+        );
 
         self.workloads = new_workloads;
         Delta { to_add, to_remove }
@@ -524,14 +521,6 @@ impl AggregatedDiscoveryService for AggregateServer {
                                 let nonce = uuid::Uuid::new_v4();
                                 nonces.lock().expect("We do expect this to work").insert(nonce, nonce);
 
-                                // if ads_client.resources.is_empty() {
-                                //     info!(
-                                //         "Initial connection from {gateway_id} {} {} - updating all resources",
-                                //         ads_client.client_id, client_ip
-                                //     );
-                                //     ads_clients.update_client_resources(&mut ads_client);
-                                // }
-
                                 info!(
                                     "Sending resources INITIAL discovery response {gateway_id} client {} {} {} ",
                                     ads_client.client_id,
@@ -674,4 +663,72 @@ async fn fetch_gateway_id_by_node_id(client: kube::Client, node: &Node) -> crate
 
 fn create_gateway_id(gateway_id: &ResourceKey) -> String {
     create_id(&gateway_id.name, &gateway_id.namespace)
+}
+
+#[cfg(test)]
+mod tests {
+    use agentgateway_api_rs::agentgateway::dev::{resource::resource::Kind, workload::Service};
+    use tokio::sync;
+
+    use crate::backends::agentgateway::server::AdsClient;
+
+    #[test]
+    fn test_client_resource_caching() {
+        let sock_addr = "127.0.0.1:8000".parse().unwrap();
+        let (sender, _receiver) = sync::mpsc::channel(100);
+        let mut client = AdsClient::new(sock_addr, sender);
+
+        let new_resources = vec![agentgateway_api_rs::agentgateway::dev::resource::Resource {
+            kind: Some(Kind::Listener(agentgateway_api_rs::agentgateway::dev::resource::Listener {
+                key: "blah".to_owned(),
+                name: "blah".to_owned(),
+                bind_key: "key1".to_owned(),
+                ..Default::default()
+            })),
+        }];
+        let delta = client.cache_resources_and_calculate_delta(new_resources);
+        assert_eq!(1, delta.to_add.len());
+        assert_eq!(0, delta.to_remove.len());
+        let updated_resources = vec![agentgateway_api_rs::agentgateway::dev::resource::Resource {
+            kind: Some(Kind::Listener(agentgateway_api_rs::agentgateway::dev::resource::Listener {
+                key: "blah".to_owned(),
+                name: "blah".to_owned(),
+                bind_key: "key2".to_owned(),
+                ..Default::default()
+            })),
+        }];
+        let delta = client.cache_resources_and_calculate_delta(updated_resources);
+        assert_eq!(1, delta.to_add.len());
+        assert_eq!(0, delta.to_remove.len());
+    }
+
+    #[test]
+    fn test_client_workload_caching() {
+        let sock_addr = "127.0.0.1:8000".parse().unwrap();
+        let (sender, _receiver) = sync::mpsc::channel(100);
+        let mut client = AdsClient::new(sock_addr, sender);
+
+        let new_resources = vec![agentgateway_api_rs::agentgateway::dev::workload::Address {
+            r#type: Some(agentgateway_api_rs::agentgateway::dev::workload::address::Type::Service(Service {
+                name: "svc1".to_owned(),
+                namespace: "namespace1".to_owned(),
+                hostname: "hostname1".to_owned(),
+                ..Default::default()
+            })),
+        }];
+        let delta = client.cache_workloads_and_calculate_delta(new_resources);
+        assert_eq!(1, delta.to_add.len());
+        assert_eq!(0, delta.to_remove.len());
+        let updated_resources = vec![agentgateway_api_rs::agentgateway::dev::workload::Address {
+            r#type: Some(agentgateway_api_rs::agentgateway::dev::workload::address::Type::Service(Service {
+                name: "svc1".to_owned(),
+                namespace: "namespace1".to_owned(),
+                hostname: "hostname2".to_owned(),
+                ..Default::default()
+            })),
+        }];
+        let delta = client.cache_workloads_and_calculate_delta(updated_resources);
+        assert_eq!(1, delta.to_add.len());
+        assert_eq!(0, delta.to_remove.len());
+    }
 }

@@ -120,13 +120,25 @@ impl AdsClient {
 
     fn cache_listeners_and_calculate_delta(&mut self, new_listeners: Vec<Resource>) -> Delta<Resource> {
         let cached_resources = &self.listeners;
+
         let to_add = difference(&new_listeners, cached_resources);
-        let to_remove = difference(cached_resources, &new_listeners);
+        let to_remove = difference(
+            &cached_resources.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            &new_listeners.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        );
+        debug!(
+            "cache_listeners_and_calculate_delta cached resources {} {} {} {}",
+            cached_resources.len(),
+            new_listeners.len(),
+            to_add.len(),
+            to_remove.len()
+        );
 
-        let to_remove = to_remove.into_iter().map(|r| r.name).collect();
+        //let to_remove = to_remove.into_iter().map(|r| r.name).collect();
 
+        let delta = Delta { to_add, to_remove: to_remove.into_iter().map(|n| n.to_owned()).collect() };
         self.listeners = new_listeners;
-        Delta { to_add, to_remove }
+        delta
     }
 
     fn cache_clusters_and_calculate_delta(&mut self, new_clusters: Vec<Resource>) -> Delta<Resource> {
@@ -560,4 +572,44 @@ where
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::difference;
+
+    #[test]
+    fn test_the_difference() {
+        let this = vec![1, 2, 3, 4, 5, 6];
+        let other = vec![];
+        let diff: Vec<i32> = difference(&this, &other);
+        assert_eq!(diff, this);
+
+        let this = vec![1, 2, 3, 4];
+        let other = vec![1, 2, 3, 4, 5, 6];
+
+        let diff: Vec<i32> = difference(&this, &other);
+        assert_eq!(diff, Vec::<i32>::new());
+
+        let this = vec![1, 2, 3, 4, 5, 6];
+        let other = vec![1, 2, 3, 4];
+
+        let diff: Vec<i32> = difference(&this, &other);
+        assert_eq!(diff, vec![5, 6]);
+
+        let this = vec![1, 2, 3, 4, 5, 6];
+        let other = vec![3, 4];
+
+        let diff: Vec<i32> = difference(&this, &other);
+        assert_eq!(diff, vec![1, 2, 5, 6]);
+    }
+
+    #[test]
+    fn test_caching_difference() {
+        let this = vec![1];
+        let other = vec![1];
+
+        let diff: Vec<i32> = difference(&this, &other);
+        assert_eq!(diff, Vec::<i32>::new());
+    }
 }
