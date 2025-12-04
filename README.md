@@ -119,7 +119,7 @@ curl -vki -H 'Host: service-one.com' http://GATEWAY_ADDRESS:1080/data
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api-inference-extension/refs/tags/v1.1.0/config/manifests/vllm/sim-deployment.yaml
-helm install vllm-llama3-8b-instruct  --set inferencePool.modelServers.matchLabels.app=vllm-llama3-8b-instruct  --version v1.1.0  oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool
+helm install vllm-llama3-8b-instruct  --set inferencePool.modelServers.matchLabels.app=vllm-llama3-8b-instruct  --set inferenceExtension.image.pullPolicy=IfNotPresent --version v1.1.0  oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool
 ```
 
 2. Deploy Gateway API Inference Extension Routes

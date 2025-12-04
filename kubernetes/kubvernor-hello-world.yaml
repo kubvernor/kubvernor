@@ -71,7 +71,7 @@ metadata:
   # finalizers:
   #   - kubevernor.com/proxy-controller
 spec:
-  gatewayClassName: kubvernor-orion-gateway
+  gatewayClassName: kubvernor-orionproxy-gateway
   listeners:
     - name: http-1080
       protocol: HTTP
@@ -114,6 +114,31 @@ spec:
   hostnames:
     - "www.service-one.com"
     - "*.service-one.com"
+    - "service-one.com"
+  rules:
+    - backendRefs:
+        - name: echo-service
+          port: 9080
+      matches:
+        - path:
+            type: PathPrefix
+            value: /login
+        - path:
+            type: PathPrefix
+            value: /data
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: orion-route-service-one
+spec:
+  parentRefs:
+    - name: oriongateway-one
+      port: 1080
+
+  hostnames:
+    - "www.service-one.com"
     - "service-one.com"
   rules:
     - backendRefs:
