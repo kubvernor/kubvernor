@@ -70,7 +70,7 @@ use crate::{
     },
     common::{
         self, BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress,
-        Listener, ResourceKey, TlsType,
+        GatewayImplementationType, Listener, ResourceKey, TlsType,
     },
 };
 
@@ -329,7 +329,7 @@ struct Resources {
 fn create_resources(gateway: &Gateway) -> Resources {
     let mut listener_resources = vec![];
     let mut secret_resources = vec![];
-    let mut resource_generator = ResourceGenerator::new(gateway);
+    let mut resource_generator = ResourceGenerator::new(gateway, GatewayImplementationType::Envoy);
 
     let listeners = resource_generator.generate_envoy_listeners().values();
 

@@ -35,9 +35,11 @@ spec:
             - /kubvernor_config/config.yaml
           ports:
             - name: envoy
-              containerPort: 55010
+              containerPort: 50051
             - name: agentgateway
-              containerPort: 55011
+              containerPort: 50052
+            - name: orion
+              containerPort: 50053
           volumeMounts:
             - name: kubvernor-config
               mountPath: /kubvernor_config
