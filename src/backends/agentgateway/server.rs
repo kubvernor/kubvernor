@@ -312,12 +312,12 @@ impl AdsClients {
     fn remove_client(&self, client_id: SocketAddr) {
         debug!("remove_client {:?}", client_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
-        if let Some(client) = clients.iter().find(|client| client.client_id == client_id).as_ref()
-            && let Some(gateway_id) = client.gateway_id.as_ref()
-        {
-            debug!("remove_client : Managed resources {:?} {:?}", client_id, gateway_id);
-            self.managed_resources.lock().expect("We expect the lock to work").remove(gateway_id);
-        }
+        // if let Some(client) = clients.iter().find(|client| client.client_id == client_id).as_ref()
+        //     && let Some(gateway_id) = client.gateway_id.as_ref()
+        // {
+        //     // debug!("remove_client : Managed resources {:?} {:?}", client_id, gateway_id);
+        //     // self.managed_resources.lock().expect("We expect the lock to work").remove(gateway_id);
+        // }
 
         clients.retain(|f| f.client_id != client_id);
     }

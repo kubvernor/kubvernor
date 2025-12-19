@@ -270,12 +270,12 @@ impl AdsClients {
     fn remove_client(&self, client_id: SocketAddr) {
         debug!("remove_client {:?}", client_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
-        if let Some(client) = clients.iter().find(|client| client.client_id == client_id).as_ref()
-            && let Some(gateway_id) = client.gateway_id.as_ref()
-        {
-            debug!("remove_client : Managed resources {:?} {:?}", client_id, gateway_id);
-            self.managed_resources.lock().expect("We expect the lock to work").remove(gateway_id);
-        }
+        // if let Some(client) = clients.iter().find(|client| client.client_id == client_id).as_ref()
+        //     && let Some(gateway_id) = client.gateway_id.as_ref()
+        // {
+        //     //debug!("remove_client : Managed resources {:?} {:?}", client_id, gateway_id);
+        //     //self.managed_resources.lock().expect("We expect the lock to work").remove(gateway_id);
+        // }
 
         clients.retain(|f| f.client_id != client_id);
     }
@@ -323,7 +323,7 @@ impl AggregateServerService {
                             ServerAction::UpdateClusters{ gateway_id: gateway_key, resources, ack_version: _ } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
-                                info!("Sending resources DELTA discovery response {gateway_id} clients {}", clients.len());
+                                info!("Sending cluster resources DELTA discovery response {gateway_id} clients {}", clients.len());
                                 ads_clients.update_managed_clusters(&gateway_id, &resources);
 
                                 for client in &mut clients{
@@ -343,7 +343,7 @@ impl AggregateServerService {
                             ServerAction::UpdateListeners{ gateway_id: gateway_key, resources, ack_version: _ } => {
                                 let gateway_id = create_gateway_id(&gateway_key);
                                 let mut clients = ads_clients.get_clients_by_gateway_id(&gateway_id);
-                                info!("Sending resources DELTA discovery response {gateway_id} clients {}", clients.len());
+                                info!("Sending listener resources DELTA discovery response {gateway_id} clients {}", clients.len());
                                 ads_clients.update_managed_listeners(&gateway_id, &resources);
 
                                 for client in &mut clients{
@@ -459,15 +459,13 @@ impl AggregatedDiscoveryService for AggregateServer {
                                 let nonce = uuid::Uuid::new_v4();
                                 nonces.lock().expect("We do expect this to work").insert(nonce, nonce);
 
-                                info!(
-                                    "Sending resources INITIAL discovery response {gateway_id} client {} {} {} ",
-                                    ads_client.client_id,
-                                    ads_client.listeners.len(),
-                                    ads_client.clusters.len()
-                                );
-
                                 match TypeUrl::try_from(discovery_request.type_url.as_str()) {
                                     Ok(TypeUrl::Listener) => {
+                                        info!(
+                                            "Sending listeners INITIAL discovery response {gateway_id} client {} {} ",
+                                            ads_client.client_id,
+                                            ads_client.listeners.len(),
+                                        );
                                         let response = DeltaDiscoveryResponse {
                                             type_url: TypeUrl::Listener.to_string(),
                                             resources: ads_client.listeners.clone(),
@@ -479,7 +477,11 @@ impl AggregatedDiscoveryService for AggregateServer {
                                     },
 
                                     Ok(TypeUrl::Cluster) => {
-                                        info!("Sending workloads INITIAL discovery response {gateway_id} client {}", ads_client.client_id);
+                                        info!(
+                                            "Sending clusters INITIAL discovery response {gateway_id} client {} {}",
+                                            ads_client.client_id,
+                                            ads_client.clusters.len()
+                                        );
                                         let response = DeltaDiscoveryResponse {
                                             type_url: TypeUrl::Cluster.to_string(),
                                             resources: ads_client.clusters.clone(),
