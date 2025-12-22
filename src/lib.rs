@@ -180,13 +180,13 @@ pub async fn start(configuration: Configuration) -> Result<()> {
     let resolver_service = ReferenceValidatorService::builder()
         .controller_name(configuration.controller_name.clone())
         .client(client.clone())
-        .reference_validate_channel_receiver(reference_validate_channel_receiver)
-        .gateway_deployer_channel_sender(gateway_deployer_channel_sender.clone())
         .state(state.clone())
+        .reference_validate_channel_receiver(reference_validate_channel_receiver)
         .secrets_resolver(secrets_resolver.clone())
         .backend_references_resolver(backend_references_resolver.clone())
         .reference_grants_resolver(reference_grants_resolver.clone())
         .inference_pool_patcher_sender(inference_pool_patcher_channel_sender.clone())
+        .gateway_deployer_channel_sender(gateway_deployer_channel_sender.clone())
         .build();
 
     let mut gateway_patcher_service =
