@@ -37,6 +37,7 @@ static_resources:
                         response_header_mode: SKIP
                       failure_mode_allow: true
                       allow_mode_override: true
+                      send_body_without_waiting_for_header_response: true
                       grpc_service:
                         google_grpc:
                           target_uri: https://192.168.1.10:9002
@@ -76,7 +77,6 @@ static_resources:
                                   #   stat_prefix: "dkjfkdjfkdj"
                                   envoy_grpc:
                                     cluster_name: cluster_ext_svc
-
                                 failure_mode_allow: false
                           route:
                             cluster: cluster_http

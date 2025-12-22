@@ -355,6 +355,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 })),
                 ..Default::default()
             }),
+            send_body_without_waiting_for_header_response: true,
             message_timeout: Some(DurationConverter::from(std::time::Duration::from_secs(2))),
             failure_mode_allow: true,
             allow_mode_override: true,
