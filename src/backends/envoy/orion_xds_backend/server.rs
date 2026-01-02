@@ -136,7 +136,7 @@ impl AdsClient {
 
         //let to_remove = to_remove.into_iter().map(|r| r.name).collect();
 
-        let delta = Delta { to_add, to_remove: to_remove.into_iter().map(|n| n.to_owned()).collect() };
+        let delta = Delta { to_add, to_remove: to_remove.into_iter().map(std::borrow::ToOwned::to_owned).collect() };
         self.listeners = new_listeners;
         delta
     }

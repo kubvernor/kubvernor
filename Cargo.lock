@@ -4,8 +4,8 @@ version = 4
 
 [[package]]
 name = "agentgateway-api-rs"
-version = "0.1.1"
-source = "git+https://github.com/kubvernor/agentgateway-api-rs#9919389f3de800d7fc20629f2fbe0219bd3952fb"
+version = "0.11.0"
+source = "git+https://github.com/kubvernor/agentgateway-api-rs#480075d48abd51257322cf78de3075f96bfe172c"
 dependencies = [
  "glob",
  "prost 0.13.5",

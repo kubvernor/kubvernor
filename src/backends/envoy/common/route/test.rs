@@ -80,7 +80,7 @@ pub fn test_headers_sorting_rules() {
 
 #[test]
 pub fn test_path_sorting_rules() {
-    let mut rules = vec![
+    let mut rules = [
         HTTPEffectiveRoutingRule {
             route_matcher: RouteMatch {
                 path: Some(PathMatch { r#type: Some(HttpRouteRulesMatchesPathType::Exact), value: Some("/".to_owned()) }),
@@ -114,7 +114,7 @@ pub fn test_path_sorting_rules() {
 
 #[test]
 pub fn test_path_prefix_sorting_rules() {
-    let mut rules = vec![
+    let mut rules = [
         HTTPEffectiveRoutingRule {
             route_matcher: RouteMatch {
                 path: Some(PathMatch { r#type: Some(HttpRouteRulesMatchesPathType::PathPrefix), value: Some("/".to_owned()) }),
@@ -148,7 +148,7 @@ pub fn test_path_prefix_sorting_rules() {
 
 #[test]
 pub fn test_path_mixed_sorting_rules() {
-    let mut rules = vec![
+    let mut rules = [
         HTTPEffectiveRoutingRule {
             route_matcher: RouteMatch {
                 path: Some(PathMatch { r#type: Some(HttpRouteRulesMatchesPathType::PathPrefix), value: Some("/".to_owned()) }),
@@ -198,7 +198,7 @@ pub fn test_path_mixed_sorting_rules() {
 
 #[test]
 pub fn test_paths_and_headers_sorting_rules() {
-    let mut rules = vec![
+    let mut rules = [
         HTTPEffectiveRoutingRule {
             route_matcher: RouteMatch {
                 path: Some(PathMatch { r#type: Some(HttpRouteRulesMatchesPathType::Exact), value: Some("/".to_owned()) }),
@@ -225,7 +225,7 @@ pub fn test_paths_and_headers_sorting_rules() {
 
 #[test]
 pub fn test_path_sorting_rules_extended() {
-    let mut rules = vec![
+    let mut rules = [
         HTTPEffectiveRoutingRule {
             route_matcher: RouteMatch {
                 path: Some(PathMatch { r#type: Some(HttpRouteRulesMatchesPathType::Exact), value: Some("/match/exact/one".to_owned()) }),

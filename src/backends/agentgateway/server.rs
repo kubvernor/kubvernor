@@ -8,14 +8,12 @@ use std::{
 };
 
 use agentgateway_api_rs::{
-    agentgateway::dev::{
-        resource::{Resource, resource::Kind},
-        workload::{self, Address, address::Type},
-    },
+    agentgateway::dev::resource::{Resource, resource::Kind},
     envoy::service::discovery::v3::{
         DeltaDiscoveryRequest, DeltaDiscoveryResponse, DiscoveryRequest, DiscoveryResponse, Node,
         aggregated_discovery_service_server::{AggregatedDiscoveryService, AggregatedDiscoveryServiceServer},
     },
+    istio::workload,
 };
 use envoy_api_rs::tonic::{IntoStreamingRequest, Response, Status, transport::Server};
 use futures::FutureExt;
@@ -49,11 +47,15 @@ fn print_resource(res: &Resource) -> String {
             Kind::Bind(bind) => format!("Resource: Bind key={}", bind.key),
             Kind::Listener(listener) => format!("Resource: Listener bind_key={} listener_key={} ", listener.bind_key, listener.key),
             Kind::Route(route) => format!("Resource: Route listener_key={} route_key={} {route:?}", route.listener_key, route.key),
-            Kind::Backend(backend) => format!("Resource: Backend backend_name={} {backend:?}", backend.name),
-            Kind::Policy(policy) => format!("Resource: Policy policy_name={}", policy.name),
+            Kind::Backend(backend) => format!("Resource: Backend backend_name={} {backend:?}", backend.key),
+            Kind::Policy(policy) => format!("Resource: Policy policy_name={}", policy.key),
             Kind::TcpRoute(tcp_route) => {
                 format!("Resource: TCPRoute listener_name={} tcp_route_key={}", tcp_route.listener_key, tcp_route.key)
             },
+            Kind::Workload(workload) => {
+                format!("Resource: Workload workload_name={} ", workload.workload_name)
+            },
+            Kind::Service(service) => format!("Resource: Service  {}/{}", service.name, service.namespace),
         },
         None => "Unknown".to_owned(),
     }
@@ -136,9 +138,11 @@ impl AdsClient {
                 Kind::Bind(bind) => "bind/".to_owned() + &bind.key,
                 Kind::Listener(listener) => "listener/".to_owned() + &listener.key,
                 Kind::Route(route) => "route/".to_owned() + &route.key,
-                Kind::Backend(backend) => "backend/".to_owned() + &backend.name,
-                Kind::Policy(policy) => "policy/".to_owned() + &policy.name,
+                Kind::Backend(backend) => "backend/".to_owned() + &backend.key,
+                Kind::Policy(policy) => "policy/".to_owned() + &policy.key,
                 Kind::TcpRoute(tcp_route) => "tcproute/".to_owned() + &tcp_route.key,
+                Kind::Workload(workload) => format!("workload/{}/{}", workload.name, workload.namespace),
+                Kind::Service(service) => format!("service/{}/{}", service.name, service.namespace),
             }
         }
 
@@ -154,11 +158,11 @@ impl AdsClient {
         Delta { to_add, to_remove }
     }
 
-    fn cache_workloads_and_calculate_delta(&mut self, new_workloads: Vec<Address>) -> Delta<Address> {
-        fn get_address_name(addr_type: &Type) -> String {
+    fn cache_workloads_and_calculate_delta(&mut self, new_workloads: Vec<workload::Address>) -> Delta<workload::Address> {
+        fn get_address_name(addr_type: &workload::address::Type) -> String {
             match addr_type {
-                Type::Workload(workload) => "address/".to_owned() + &workload.uid,
-                Type::Service(service) => format!("address/{}/{}", service.name, service.namespace),
+                workload::address::Type::Workload(workload) => "address/".to_owned() + &workload.uid,
+                workload::address::Type::Service(service) => format!("address/{}/{}", service.name, service.namespace),
             }
         }
 
@@ -191,7 +195,7 @@ where
 #[derive(Debug, Clone, Default)]
 struct ManagedResources {
     all_resources: Vec<Resource>,
-    all_workloads: Vec<Address>,
+    all_workloads: Vec<workload::Address>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -251,7 +255,7 @@ impl AdsClients {
             .or_insert(ManagedResources { all_resources: resources.to_vec(), all_workloads: vec![] });
     }
 
-    fn update_managed_workloads(&self, gateway_id: &str, workloads: &[Address]) {
+    fn update_managed_workloads(&self, gateway_id: &str, workloads: &[workload::Address]) {
         debug!("update_managed_workloads {gateway_id}");
         let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
         managed_resources
@@ -277,7 +281,7 @@ impl AdsClients {
         }
     }
 
-    fn update_client_and_workloads(&self, client: &AdsClient, workloads: &[Address]) {
+    fn update_client_and_workloads(&self, client: &AdsClient, workloads: &[workload::Address]) {
         debug!("update_client_and_workloads {:?} {:?}", client.client_id, client.gateway_id);
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
@@ -406,8 +410,8 @@ impl AggregateServerService {
 
                                     let resources: Vec<_> = to_add_workloads.into_iter().map(|address|
                                         agentgateway_api_rs::envoy::service::discovery::v3::Resource{
-                                            name:"type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
-                                            resource:Some(AnyTypeConverter::from(("type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
+                                            name:"type.googleapis.com/istio.workload.Address".to_owned(),
+                                            resource:Some(AnyTypeConverter::from(("type.googleapis.com/istio.workload.Address".to_owned(),
                                             address
                                         ))),..Default::default()})
                                     .collect();
@@ -415,7 +419,7 @@ impl AggregateServerService {
                                     let removed_resources = to_remove_workloads;
 
                                     let response = DeltaDiscoveryResponse {
-                                        type_url: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
+                                        type_url: "type.googleapis.com/istio.workload.Address".to_owned(),
                                         resources,
                                         nonce: uuid::Uuid::new_v4().to_string(),
                                         removed_resources,
@@ -551,17 +555,17 @@ impl AggregatedDiscoveryService for AggregateServer {
                                         let _ = tx.send(std::result::Result::<_, Status>::Ok(response)).await;
                                     },
 
-                                    "type.googleapis.com/agentgateway.dev.workload.Address" => {
+                                    "type.googleapis.com/istio.workload.Address" => {
                                         info!("Sending workloads INITIAL discovery response {gateway_id} client {}", ads_client.client_id);
                                         let response = DeltaDiscoveryResponse {
-                                            type_url: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
+                                            type_url: "type.googleapis.com/istio.workload.Address".to_owned(),
                                             resources: ads_client
                                                 .workloads
                                                 .iter()
                                                 .map(|address| agentgateway_api_rs::envoy::service::discovery::v3::Resource {
-                                                    name: "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
+                                                    name: "type.googleapis.com/istio.workload.Address".to_owned(),
                                                     resource: Some(AnyTypeConverter::from((
-                                                        "type.googleapis.com/agentgateway.dev.workload.Address".to_owned(),
+                                                        "type.googleapis.com/istio.workload.Address".to_owned(),
                                                         address.clone(),
                                                     ))),
                                                     ..Default::default()
@@ -667,7 +671,10 @@ fn create_gateway_id(gateway_id: &ResourceKey) -> String {
 
 #[cfg(test)]
 mod tests {
-    use agentgateway_api_rs::agentgateway::dev::{resource::resource::Kind, workload::Service};
+    use agentgateway_api_rs::{
+        agentgateway::dev::resource::{ListenerName, resource::Kind},
+        istio::workload,
+    };
     use tokio::sync;
 
     use crate::backends::agentgateway::server::AdsClient;
@@ -681,7 +688,12 @@ mod tests {
         let new_resources = vec![agentgateway_api_rs::agentgateway::dev::resource::Resource {
             kind: Some(Kind::Listener(agentgateway_api_rs::agentgateway::dev::resource::Listener {
                 key: "blah".to_owned(),
-                name: "blah".to_owned(),
+                name: Some(ListenerName {
+                    gateway_name: "blah".to_owned(),
+                    gateway_namespace: "blah".to_owned(),
+                    listener_name: "blah".to_owned(),
+                    listener_set: None,
+                }),
                 bind_key: "key1".to_owned(),
                 ..Default::default()
             })),
@@ -692,7 +704,12 @@ mod tests {
         let updated_resources = vec![agentgateway_api_rs::agentgateway::dev::resource::Resource {
             kind: Some(Kind::Listener(agentgateway_api_rs::agentgateway::dev::resource::Listener {
                 key: "blah".to_owned(),
-                name: "blah".to_owned(),
+                name: Some(ListenerName {
+                    gateway_name: "blah".to_owned(),
+                    gateway_namespace: "blah".to_owned(),
+                    listener_name: "blah".to_owned(),
+                    listener_set: None,
+                }),
                 bind_key: "key2".to_owned(),
                 ..Default::default()
             })),
@@ -708,8 +725,8 @@ mod tests {
         let (sender, _receiver) = sync::mpsc::channel(100);
         let mut client = AdsClient::new(sock_addr, sender);
 
-        let new_resources = vec![agentgateway_api_rs::agentgateway::dev::workload::Address {
-            r#type: Some(agentgateway_api_rs::agentgateway::dev::workload::address::Type::Service(Service {
+        let new_resources = vec![workload::Address {
+            r#type: Some(workload::address::Type::Service(workload::Service {
                 name: "svc1".to_owned(),
                 namespace: "namespace1".to_owned(),
                 hostname: "hostname1".to_owned(),
@@ -719,8 +736,8 @@ mod tests {
         let delta = client.cache_workloads_and_calculate_delta(new_resources);
         assert_eq!(1, delta.to_add.len());
         assert_eq!(0, delta.to_remove.len());
-        let updated_resources = vec![agentgateway_api_rs::agentgateway::dev::workload::Address {
-            r#type: Some(agentgateway_api_rs::agentgateway::dev::workload::address::Type::Service(Service {
+        let updated_resources = vec![workload::Address {
+            r#type: Some(workload::address::Type::Service(workload::Service {
                 name: "svc1".to_owned(),
                 namespace: "namespace1".to_owned(),
                 hostname: "hostname2".to_owned(),

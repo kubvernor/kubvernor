@@ -1,12 +1,14 @@
 use std::{collections::BTreeMap, net::IpAddr};
 
-use agentgateway_api_rs::agentgateway::dev::{
-    resource::{
-        self, BackendPolicySpec, BackendReference, Listener, Policy, PolicyTarget, Route, RouteBackend, StaticBackend,
+use agentgateway_api_rs::{
+    agentgateway::dev::resource::{
+        self, BackendPolicySpec, BackendReference, Listener, Policy, PolicyTarget, ResourceName, Route, RouteBackend, RouteName,
+        StaticBackend, TypedResourceName,
         backend::{self},
         backend_policy_spec, policy,
+        policy_target::ServiceTarget,
     },
-    workload::{self, LoadBalancing, NetworkAddress},
+    istio::workload::{LoadBalancing, NetworkAddress, Port, Service},
 };
 use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
 use tracing::{info, warn};
@@ -52,15 +54,15 @@ impl<'a> ResourceGenerator<'a> {
             let port = listener.port();
             let listener_name = listener.name().to_owned();
             let gateway_name = gateway.name().to_owned();
+            let gateway_namespace = gateway.namespace().to_owned();
 
             let bind = Bind { key: create_bind_name(port), port: port as u32 };
             let maybe_added = acc.get_mut(&bind);
 
             let agentgateway_listener = Listener {
                 key: listener_name.clone(),
-                name: listener_name,
+                name: Some(resource::ListenerName { gateway_name, gateway_namespace, listener_name, listener_set: None }),
                 bind_key: create_bind_name(port),
-                gateway_name,
                 hostname: listener.hostname().cloned().unwrap_or_default(),
                 protocol: listener.protocol().into(),
                 tls: None,
@@ -79,9 +81,9 @@ impl<'a> ResourceGenerator<'a> {
 
     pub fn generate_routes_and_backends_and_policies(
         &self,
-    ) -> (Vec<resource::Route>, Vec<resource::Backend>, Vec<resource::Policy>, Vec<workload::Service>) {
+    ) -> (Vec<resource::Route>, Vec<resource::Backend>, Vec<resource::Policy>, Vec<Service>) {
         let mut backends = BTreeMap::<String, resource::Backend>::new();
-        let mut backend_services = BTreeMap::<String, workload::Service>::new();
+        let mut backend_services = BTreeMap::<String, Service>::new();
         let mut backend_policies = BTreeMap::<String, Policy>::new();
         let gateway = self.effective_gateway;
         let routes = gateway
@@ -135,10 +137,17 @@ impl<'a> ResourceGenerator<'a> {
                                 let epp_backends = epp_backends.into_iter().flatten().collect::<Vec<_>>();
                                 backends.extend(epp_backends);
                                 Route {
+                                    name: Some(RouteName {
+                                        kind: match route.route_type() {
+                                            common::RouteType::Http(_) => "HTTP".to_owned(),
+                                            common::RouteType::Grpc(_) => "GRPC".to_owned(),
+                                        },
+                                        name: route.name().to_owned(),
+                                        namespace: route.namespace().to_owned(),
+                                        rule_name: Some(routing_rule.name.clone()),
+                                    }),
                                     key: route.name().to_owned(),
                                     listener_key: l.name().to_owned(),
-                                    rule_name: routing_rule.name.clone(),
-                                    route_name: route.name().to_owned(),
                                     hostnames: route.hostnames().to_vec(),
                                     matches: routing_rule.matching_rules.iter().map(convert_route_match).collect(),
                                     backends: routing_rule.backends.iter().filter_map(create_route_backend).collect(),
@@ -154,7 +163,7 @@ impl<'a> ResourceGenerator<'a> {
             routes,
             backends.into_values().collect::<Vec<resource::Backend>>(),
             backend_policies.into_values().collect::<Vec<resource::Policy>>(),
-            backend_services.into_values().collect::<Vec<workload::Service>>(),
+            backend_services.into_values().collect::<Vec<Service>>(),
         )
     }
 }
@@ -184,10 +193,12 @@ fn create_route_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentg
         Backend::Resolved(BackendType::InferencePool(config)) => Some(RouteBackend {
             backend: Some(agentgateway_api_rs::agentgateway::dev::resource::BackendReference {
                 port: if config.target_ports.is_empty() { config.port as u32 } else { config.target_ports[0] as u32 },
-                kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Service(format!(
-                    "{}/{}",
-                    config.resource_key.namespace, config.endpoint
-                ))),
+                kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Service(
+                    resource::backend_reference::Service {
+                        namespace: backend.resource_key().namespace.clone(),
+                        hostname: config.endpoint.clone(),
+                    },
+                )),
             }),
             weight: config.weight,
             backend_policies: vec![],
@@ -203,9 +214,13 @@ fn create_backends(backend: &Backend) -> Vec<Option<(String, resource::Backend)>
             vec![Some((
                 name.clone(),
                 resource::Backend {
-                    name,
+                    name: Some(ResourceName {
+                        name: backend.resource_key().name.clone(),
+                        namespace: backend.resource_key().namespace.clone(),
+                    }),
                     kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.port })),
                     inline_policies: vec![],
+                    key: name,
                 },
             ))]
         },
@@ -213,20 +228,20 @@ fn create_backends(backend: &Backend) -> Vec<Option<(String, resource::Backend)>
     }
 }
 
-fn create_backend_services(backend: &Backend) -> Option<(String, workload::Service)> {
+fn create_backend_services(backend: &Backend) -> Option<(String, Service)> {
     match backend {
         Backend::Resolved(BackendType::InferencePool(config)) => {
             let name = format!("{}/{}", config.resource_key.namespace, config.endpoint);
             Some((
                 name.clone(),
-                workload::Service {
+                Service {
                     name: config.resource_key.name.clone(),
                     namespace: config.resource_key.namespace.clone(),
                     hostname: config.endpoint.clone(),
                     ports: config
                         .target_ports
                         .iter()
-                        .map(|p| workload::Port { service_port: *p as u32, target_port: *p as u32, app_protocol: 0 })
+                        .map(|p| Port { service_port: *p as u32, target_port: *p as u32, app_protocol: 0 })
                         .collect(),
                     addresses: config.endpoints.as_ref().map_or_else(std::vec::Vec::new, |endpoints| {
                         endpoints
@@ -283,21 +298,28 @@ fn create_inference_policies(
                 })),
             })),
 
-            name: policy_name.to_owned(),
+            name: Some(TypedResourceName { name: backend.name.clone(), namespace: backend.namespace.clone(), kind: backend.kind.clone() }),
             target: Some(PolicyTarget {
-                kind: Some(resource::policy_target::Kind::Service(format!("{}/{}", backend.namespace, conf.endpoint))),
+                //format!("{}/{}", backend.namespace, conf.endpoint)
+                kind: Some(resource::policy_target::Kind::Service(ServiceTarget {
+                    namespace: backend.namespace.clone(),
+                    hostname: conf.endpoint.clone(),
+                    port: None,
+                })),
             }),
+            key: policy_name.to_owned(),
         },
         conf.inference_config.as_ref().map(|inference_config| {
             (
                 epp_backend_name.clone(),
                 resource::Backend {
-                    name: epp_backend_name,
+                    name: Some(ResourceName { name: backend.name.clone(), namespace: backend.namespace.clone() }),
                     kind: Some(backend::Kind::Static(StaticBackend {
-                        host: inference_config.extension_ref().name.clone(),
+                        host: format!("https://{}", inference_config.extension_ref().name),
                         port: inference_config.extension_ref().port.as_ref().map_or_else(|| 9002, |f| f.number),
                     })),
                     inline_policies: vec![],
+                    key: epp_backend_name,
                 },
             )
         }),
