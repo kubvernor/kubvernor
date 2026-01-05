@@ -315,10 +315,28 @@ fn create_inference_policies(
                 resource::Backend {
                     name: Some(ResourceName { name: backend.name.clone(), namespace: backend.namespace.clone() }),
                     kind: Some(backend::Kind::Static(StaticBackend {
-                        host: format!("https://{}", inference_config.extension_ref().name),
+                        host: inference_config.extension_ref().name.clone(),
                         port: inference_config.extension_ref().port.as_ref().map_or_else(|| 9002, |f| f.number),
                     })),
-                    inline_policies: vec![],
+                    inline_policies: vec![
+                        BackendPolicySpec {
+                            kind: Some(backend_policy_spec::Kind::BackendTls(backend_policy_spec::BackendTls {
+                                cert: None,
+                                key: None,
+                                root: None,
+                                verification: backend_policy_spec::backend_tls::VerificationMode::InsecureAll.into(),
+                                hostname: None,
+                                verify_subject_alt_names: vec![],
+                                alpn: None,
+                            })),
+                        },
+                        BackendPolicySpec {
+                            kind: Some(backend_policy_spec::Kind::BackendHttp(backend_policy_spec::BackendHttp {
+                                version: backend_policy_spec::backend_http::HttpVersion::Http2.into(),
+                                request_timeout: None,
+                            })),
+                        },
+                    ],
                     key: epp_backend_name,
                 },
             )
