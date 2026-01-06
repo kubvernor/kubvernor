@@ -3,9 +3,9 @@ use std::{
     sync::LazyLock,
 };
 
-use agentgateway_api_rs::agentgateway::dev::{
-    resource::{Bind, Listener, Resource, resource::Kind},
-    workload::{self},
+use agentgateway_api_rs::{
+    agentgateway::dev::resource::{Bind, Listener, Resource, resource::Kind},
+    istio::workload,
 };
 use futures::FutureExt;
 use itertools::Itertools;
@@ -88,8 +88,10 @@ impl AgentgatewayDeployerChannelHandlerService {
 
                                         let bindings = bindings_and_listeners.keys().cloned().map(|b|
                                             Bind{
-                                                key: b.key,
-                                                port: b.port}
+                                                key:b.key,port:b.port,
+                                                protocol: 0, //http,
+                                                tunnel_protocol: 0 //direct
+                                            }
                                             ).collect::<Vec<_>>();
                                         let listeners: Vec<Listener> = bindings_and_listeners.values().flatten().cloned().collect();
 
@@ -508,7 +510,7 @@ const AGENTGATEWAY_POD_SPEC: &str = r#"
             "command": [
                 "/app/agentgateway"
             ],
-            "image": "ghcr.io/agentgateway/agentgateway:latest",
+            "image": "ghcr.io/agentgateway/agentgateway:0.11.0",
             "imagePullPolicy": "IfNotPresent",
             "name": "agentgateway",
             "env": [

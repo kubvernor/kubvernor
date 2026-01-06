@@ -36,15 +36,17 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 cfg_if::cfg_if! {
     if #[cfg(feature="envoy_xds")] {
-        use backends::envoy::envoy_xds_backend::EnvoyDeployerChannelHandlerService;
+        use backends::envoy::EnvoyDeployerChannelHandlerService;
     } else if #[cfg(feature = "envoy_cm")] {
-        use backends::envoy_cm_backend::EnvoyDeployerChannelHandlerService;
+        use backends::envoy::EnvoyCMDeployerChannelHandlerService;
     } else {
 
     }
 }
 #[cfg(feature = "agentgateway")]
 use backends::agentgateway::AgentgatewayDeployerChannelHandlerService;
+#[cfg(feature = "orion")]
+use backends::envoy::OrionDeployerChannelHandlerService;
 use controllers::{
     gateway::{self, GatewayController},
     gateway_class::GatewayClassController,
@@ -98,6 +100,7 @@ pub struct Configuration {
     pub enable_open_telemetry: Option<bool>,
     envoy_gateway_control_plane: Option<EnvoyGatewayControlPlaneConfiguration>,
     agentgateway_gateway_control_plane: Option<AgentgatewayGatewayControlPlaneConfiguration>,
+    orion_gateway_control_plane: Option<EnvoyGatewayControlPlaneConfiguration>,
 }
 
 #[derive(Error, Debug)]
@@ -143,6 +146,11 @@ pub async fn start(configuration: Configuration) -> Result<()> {
     #[cfg(feature = "agentgateway")]
     backend_deployer_channel_senders.insert(GatewayImplementationType::Agentgateway, agentgateway_backend_deployer_channel_sender);
 
+    #[cfg(feature = "orion")]
+    let (orion_backend_deployer_channel_sender, orion_backend_deployer_channel_receiver) = mpsc::channel(1024);
+    #[cfg(feature = "orion")]
+    backend_deployer_channel_senders.insert(GatewayImplementationType::Orion, orion_backend_deployer_channel_sender);
+
     let secrets_resolver = SecretsResolver::builder().reference_resolver(client.clone(), reference_validate_channel_sender.clone()).build();
 
     let backend_references_resolver = BackendReferenceResolver::builder()
@@ -172,13 +180,13 @@ pub async fn start(configuration: Configuration) -> Result<()> {
     let resolver_service = ReferenceValidatorService::builder()
         .controller_name(configuration.controller_name.clone())
         .client(client.clone())
-        .reference_validate_channel_receiver(reference_validate_channel_receiver)
-        .gateway_deployer_channel_sender(gateway_deployer_channel_sender.clone())
         .state(state.clone())
+        .reference_validate_channel_receiver(reference_validate_channel_receiver)
         .secrets_resolver(secrets_resolver.clone())
         .backend_references_resolver(backend_references_resolver.clone())
         .reference_grants_resolver(reference_grants_resolver.clone())
         .inference_pool_patcher_sender(inference_pool_patcher_channel_sender.clone())
+        .gateway_deployer_channel_sender(gateway_deployer_channel_sender.clone())
         .build();
 
     let mut gateway_patcher_service =
@@ -324,6 +332,21 @@ pub async fn start(configuration: Configuration) -> Result<()> {
             .client(client.clone())
             .control_plane_config(control_plane_config.clone())
             .backend_deploy_request_channel_receiver(envoy_backend_deployer_channel_receiver)
+            .backend_response_channel_sender(backend_response_channel_sender.clone())
+            .build();
+
+        services.push(service.start().boxed());
+    }
+
+    #[cfg(feature = "orion")]
+    if let Some(control_plane_config) = configuration.orion_gateway_control_plane {
+        let control_plane_config =
+            ControlPlaneConfig { listening_socket: control_plane_config.address, controller_name: configuration.controller_name.clone() };
+
+        let service = OrionDeployerChannelHandlerService::builder()
+            .client(client.clone())
+            .control_plane_config(control_plane_config.clone())
+            .backend_deploy_request_channel_receiver(orion_backend_deployer_channel_receiver)
             .backend_response_channel_sender(backend_response_channel_sender.clone())
             .build();
 

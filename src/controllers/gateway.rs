@@ -109,7 +109,11 @@ impl GatewayController {
                     if let Ok(configuration) = configuration_api.get(&config_reference.name).await {
                         debug!("reconcile_gateway: {controller_name} {name} retrieved configuration {:?}", configuration);
                         let Ok(backend_type) = GatewayImplementationType::try_from(configuration.spec.backendtype.as_ref()) else {
-                            return Err(ControllerError::InvalidPayload("Uid must be present".to_owned()));
+                            info!(
+                                "reconcile_gateway: {controller_name} {name} Invalid backend type {:?}",
+                                configuration.spec.backendtype.as_ref()
+                            );
+                            return Err(ControllerError::InvalidPayload("Invalid backend type".to_owned()));
                         };
                         configured_backend_type = backend_type;
                     } else {
@@ -124,20 +128,12 @@ impl GatewayController {
                 return Err(ControllerError::UnknownGatewayClass(gateway_class_name.clone()));
             }
 
-            if !state
-                .get_gateway_classes()
-                .expect("We expect the lock to work")
-                .into_iter()
-                .any(|gc| gc.metadata.name == Some(gateway_class_name.clone()))
-            {
-                warn!("reconcile_gateway: {controller_name} {name} Unknown gateway class name {gateway_class_name}");
-                return Err(ControllerError::UnknownGatewayClass(gateway_class_name.clone()));
-            }
             (gateway_class_name.clone(), configured_backend_type)
         };
 
         let maybe_stored_gateway = state.get_gateway(&resource_key).expect("We expect the lock to work");
 
+        info!("reconcile_gateway: {controller_name} {name} {backend_type:?} {maybe_stored_gateway:?}");
         let handler = GatewayResourceHandler::builder()
             .state(ctx.state.clone())
             .resource_key(resource_key)
@@ -257,7 +253,7 @@ impl GatewayResourceHandler<Gateway> {
         let maybe_gateway = common::Gateway::try_from(&**kube_gateway);
 
         let Ok(mut backend_gateway) = maybe_gateway else {
-            warn!("Misconfigured  gateway {maybe_gateway:?}");
+            warn!("Misconfigured gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
 
@@ -280,7 +276,7 @@ impl GatewayResourceHandler<Gateway> {
         let maybe_gateway = common::Gateway::try_from((&**kube_gateway, self.gateway_backend_type.clone()));
 
         let Ok(backend_gateway) = maybe_gateway else {
-            warn!("Misconfigured  gateway {maybe_gateway:?}");
+            warn!("Misconfigured gateway {maybe_gateway:?}");
             return Err(ControllerError::InvalidPayload("Misconfigured gateway".to_owned()));
         };
 

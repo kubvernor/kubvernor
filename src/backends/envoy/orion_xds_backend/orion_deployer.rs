@@ -83,14 +83,14 @@ pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templat
 });
 
 #[derive(TypedBuilder)]
-pub struct EnvoyDeployerChannelHandlerService {
+pub struct OrionDeployerChannelHandlerService {
     control_plane_config: ControlPlaneConfig,
     client: Client,
     backend_deploy_request_channel_receiver: Receiver<BackendGatewayEvent>,
     backend_response_channel_sender: Sender<BackendGatewayResponse>,
 }
 
-impl EnvoyDeployerChannelHandlerService {
+impl OrionDeployerChannelHandlerService {
     pub async fn start(mut self) -> crate::Result<()> {
         let (stream_resource_sender, stream_resource_receiver) = mpsc::channel::<ServerAction>(1024);
         let control_plane_config = self.control_plane_config.clone();
@@ -98,7 +98,7 @@ impl EnvoyDeployerChannelHandlerService {
         let kube_client = self.client.clone();
         let mut ack_versions = BTreeMap::<ResourceKey, AckVersions>::new();
         let server_socket = control_plane_config.addr();
-        let envoy_deployer_service = async move {
+        let orion_deployer_service = async move {
             info!("Gateways handler started");
             loop {
                 tokio::select! {
@@ -107,7 +107,7 @@ impl EnvoyDeployerChannelHandlerService {
                             match event{
                                 BackendGatewayEvent::Changed(ctx) => {
                                     let gateway = &ctx.gateway;
-                                    info!("EnvoyDeployerChannelHandlerService GatewayChanged {}",gateway.key());
+                                    info!("OrionDeployerChannelHandlerService GatewayChanged {}",gateway.key());
 
                                     let Resources{listeners, clusters, secrets} = create_resources(gateway);
 
@@ -116,7 +116,7 @@ impl EnvoyDeployerChannelHandlerService {
                                         .and_modify(super::server::AckVersions::inc)
                                         .or_default();
 
-                                    let maybe_service = deploy_envoy(&control_plane_config, client.clone(), gateway, &secrets).await;
+                                    let maybe_service = deploy_orion(&control_plane_config, client.clone(), gateway, &secrets).await;
                                     if let Ok(service) = maybe_service{
                                         info!("Service deployed {:?} listeners {} clusters {}", service.metadata.name, listeners.len(), clusters.len());
                                         let _ = stream_resource_sender.send(ServerAction::UpdateClusters{
@@ -142,8 +142,8 @@ impl EnvoyDeployerChannelHandlerService {
                                     let response_sender = boxed.response_sender;
                                     let gateway  = boxed.gateway;
                                     let _ = ack_versions.remove(gateway.key());
-                                    info!("EnvoyDeployerChannelHandlerService GatewayDeleted {}",gateway.key());
-                                    self.delete_envoy(&gateway).await;
+                                    info!("OrionDeployerChannelHandlerService GatewayDeleted {}",gateway.key());
+                                    self.delete_orion(&gateway).await;
                                     let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Deleted(vec![]));
                                     let _res = response_sender.send(BackendGatewayResponse::Deleted(vec![]));
                                 }
@@ -160,7 +160,7 @@ impl EnvoyDeployerChannelHandlerService {
         .boxed();
 
         let xds_service = start_aggregate_server(kube_client, server_socket, stream_resource_receiver).boxed();
-        futures::future::join_all(vec![envoy_deployer_service, xds_service]).await;
+        futures::future::join_all(vec![orion_deployer_service, xds_service]).await;
         Ok(())
     }
 
@@ -176,8 +176,8 @@ impl EnvoyDeployerChannelHandlerService {
         }
     }
 
-    async fn delete_envoy(&self, gateway: &Gateway) {
-        debug!("Deleting Envoy {gateway:?}");
+    async fn delete_orion(&self, gateway: &Gateway) {
+        debug!("Deleting Orion {gateway:?}");
         let service_api: Api<Service> = Api::namespaced(self.client.clone(), gateway.namespace());
         let deployment_api: Api<Deployment> = Api::namespaced(self.client.clone(), gateway.namespace());
         let config_map_api: Api<ConfigMap> = Api::namespaced(self.client.clone(), gateway.namespace());
@@ -275,7 +275,7 @@ impl EnvoyDeployerChannelHandlerService {
     }
 }
 
-async fn deploy_envoy(
+async fn deploy_orion(
     control_plane_config: &ControlPlaneConfig,
     client: Client,
     gateway: &Gateway,
@@ -300,7 +300,12 @@ async fn deploy_envoy(
         bootstrap_content_with_secrets(control_plane_config, secrets).map_err(kube::Error::Service)?
     };
 
-    let envoy_boostrap_config_map = create_envoy_bootstrap_config_map(&bootstrap_cm, gateway, bootstrap_content);
+    let envoy_boostrap_config_map = create_orion_bootstrap_config_map(
+        &bootstrap_cm,
+        gateway,
+        config_content(control_plane_config).map_err(kube::Error::Service)?,
+        bootstrap_content,
+    );
     let _res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&envoy_boostrap_config_map)).await?;
 
     debug!("Created bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
@@ -329,7 +334,7 @@ struct Resources {
 fn create_resources(gateway: &Gateway) -> Resources {
     let mut listener_resources = vec![];
     let mut secret_resources = vec![];
-    let mut resource_generator = ResourceGenerator::new(gateway, GatewayImplementationType::Envoy);
+    let mut resource_generator = ResourceGenerator::new(gateway, GatewayImplementationType::Orion);
 
     let listeners = resource_generator.generate_envoy_listeners().values();
 
@@ -350,6 +355,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 })),
                 ..Default::default()
             }),
+            send_body_without_waiting_for_header_response: true,
             message_timeout: Some(DurationConverter::from(std::time::Duration::from_secs(2))),
             failure_mode_allow: true,
             allow_mode_override: true,
@@ -497,7 +503,7 @@ fn bootstrap_content_with_secrets(control_plane_config: &ControlPlaneConfig, sec
     tera_context.insert("control_plane_host", &control_plane_config.listening_socket.hostname);
     tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port);
 
-    Ok(TEMPLATES.render("envoy-bootstrap-dynamic-with-secrets.yaml.tera", &tera_context)?)
+    Ok(TEMPLATES.render("orion-bootstrap-dynamic-with-secrets.yaml.tera", &tera_context)?)
 }
 
 fn bootstrap_content(control_plane_config: &ControlPlaneConfig) -> Result<String, Error> {
@@ -505,7 +511,12 @@ fn bootstrap_content(control_plane_config: &ControlPlaneConfig) -> Result<String
     tera_context.insert("control_plane_host", &control_plane_config.listening_socket.hostname);
     tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port);
 
-    Ok(TEMPLATES.render("envoy-bootstrap-dynamic.yaml.tera", &tera_context)?)
+    Ok(TEMPLATES.render("orion-bootstrap-dynamic.yaml.tera", &tera_context)?)
+}
+
+fn config_content(_: &ControlPlaneConfig) -> Result<String, Error> {
+    let tera_context = tera::Context::new();
+    Ok(TEMPLATES.render("orion-config.yaml.tera", &tera_context)?)
 }
 
 fn config_map_names(gateway: &Gateway) -> (String, String) {
@@ -521,20 +532,19 @@ fn create_deployment(gateway: &Gateway) -> Deployment {
         .collect();
     labels.insert("app".to_owned(), gateway.name().to_owned());
 
-    let mut pod_spec: PodSpec = serde_json::from_str(ENVOY_POD_SPEC).unwrap_or(PodSpec { ..Default::default() });
+    let mut pod_spec: PodSpec = serde_json::from_str(ORION_POD_SPEC).unwrap_or(PodSpec { ..Default::default() });
     if let Some(container) = pod_spec.containers.first_mut() {
         container.ports = Some(ports);
     }
     let (_, boostrap_cm) = config_map_names(gateway);
     let mut default_volumes = vec![Volume {
-        name: "envoy-config".to_owned(),
+        name: "orion-config".to_owned(),
         config_map: Some(ConfigMapVolumeSource {
             name: boostrap_cm,
-            items: Some(vec![KeyToPath {
-                key: "envoy-bootstrap.yaml".to_owned(),
-                path: "envoy-bootstrap.yaml".to_owned(),
-                ..Default::default()
-            }]),
+            items: Some(vec![
+                KeyToPath { key: "orion-config.yaml".to_owned(), path: "orion-config.yaml".to_owned(), ..Default::default() },
+                KeyToPath { key: "envoy-bootstrap.yaml".to_owned(), path: "envoy-bootstrap.yaml".to_owned(), ..Default::default() },
+            ]),
             ..Default::default()
         }),
         ..Default::default()
@@ -604,9 +614,10 @@ fn create_service(gateway: &Gateway) -> Service {
     }
 }
 
-fn create_envoy_bootstrap_config_map(name: &str, gateway: &Gateway, boostrap_content: String) -> ConfigMap {
+fn create_orion_bootstrap_config_map(name: &str, gateway: &Gateway, orion_config: String, envoy_boostrap_content: String) -> ConfigMap {
     let mut map = BTreeMap::new();
-    map.insert("envoy-bootstrap.yaml".to_owned(), boostrap_content);
+    map.insert("envoy-bootstrap.yaml".to_owned(), envoy_boostrap_content);
+    map.insert("orion-config.yaml".to_owned(), orion_config);
     let mut annotations = BTreeMap::new();
     annotations.insert("gateway-version".to_owned(), Uuid::new_v4().to_string());
     ConfigMap {
@@ -654,14 +665,18 @@ fn generate_virtual_hosts_from_xds(virtual_hosts: &BTreeSet<EnvoyVirtualHost>) -
         .collect()
 }
 
-const ENVOY_POD_SPEC: &str = r#"
+const ORION_POD_SPEC: &str = r#"
 {
     "volumes": [
         {
-            "name": "envoy-config",
+            "name": "orion-config",
             "configMap": {
-                "name": "envoy-cm",
+                "name": "orion-cm",
                 "items": [
+                    {
+                        "key": "orion-config.yaml",
+                        "path": "orion-config.yaml"
+                    },
                     {
                         "key": "envoy-bootstrap.yaml",
                         "path": "envoy-bootstrap.yaml"
@@ -673,25 +688,20 @@ const ENVOY_POD_SPEC: &str = r#"
     "containers": [
         {
             "args": [
-                "-c",
-                "/envoy-config/envoy-bootstrap.yaml",
-                "--service-cluster $(GATEWAY_NAMESPACE)",
-                "--service-node $(ENVOY_POD_NAME)",
-                "--log-level trace"
+                "--config",
+                "/orion-config/orion-config.yaml",
+                "--with-envoy-bootstrap",
+                "/orion-config/envoy-bootstrap.yaml"
             ],
             "command": [
-                "envoy"
+                "/orion"
             ],
-            "image": "docker.io/envoyproxy/envoy:v1.36.4",
+            "image": "ghcr.io/kmesh-net/orion:0.1.0",
             "imagePullPolicy": "IfNotPresent",
-            "name": "envoy",
+            "name": "orion",
             "env": [
                 {
-                    "name": "GRPC_TRACE",
-                    "value": "tcp,http,api"
-                },
-                {
-                    "name": "GATEWAY_NAMESPACE",
+                    "name": "POD_NAMESPACE",
                     "valueFrom": {
                         "fieldRef": {
                             "apiVersion": "v1",
@@ -700,7 +710,7 @@ const ENVOY_POD_SPEC: &str = r#"
                     }
                 },
                 {
-                    "name": "ENVOY_POD_NAME",
+                    "name": "POD_NAME",
                     "valueFrom": {
                         "fieldRef": {
                             "apiVersion": "v1",
@@ -722,13 +732,13 @@ const ENVOY_POD_SPEC: &str = r#"
             },
             "volumeMounts": [
                 {
-                    "name": "envoy-config",
-                    "mountPath": "/envoy-config",
+                    "name": "orion-config",
+                    "mountPath": "/orion-config",
                     "readOnly": true
                 },
                 {
-                    "name": "envoy-secrets",
-                    "mountPath": "/envoy-secrets",
+                    "name": "orion-secrets",
+                    "mountPath": "/orion-secrets",
                     "readOnly": true
                 }
             ]
@@ -781,7 +791,7 @@ fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
         .collect();
 
     vec![Volume {
-        name: "envoy-secrets".to_owned(),
+        name: "orion-secrets".to_owned(),
         projected: Some(ProjectedVolumeSource { sources: Some(secrets), ..Default::default() }),
         ..Default::default()
     }]
