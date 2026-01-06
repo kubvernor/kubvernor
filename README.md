@@ -41,61 +41,13 @@ kubectl apply -f kubernetes/kubvernor-config.yaml
 >kubectl apply -f https://github.com/kubernetes-sigs/gateway-api-inference-extension/releases/download/v1.1.0/manifests.yaml
 >```
 
-## Running from source 
-
-1. Clone the Kubvernor GitHub repository
-```bash
-git clone https://github.com/kubvernor/kubvernor && cd kubvernor
-```
-
-2. Install Protobuf compiler
-``` bash
-apt install -y protobuf-compiler
-```
-  
-3. Compile and run Kubvernor
-
-``` bash
-cat <<EOF > config.yaml
-controller_name: kubvernor.com/proxy-controller  
-envoy_gateway_control_plane:
-  address:
-    hostname: CONTROL_PLANE_ADDRESS
-    port: 50051
-agentgateway_gateway_control_plane:
-  address:
-    hostname: CONTROL_PLANE_ADDRESS
-    port: 50052
-orion_gateway_control_plane:
-    address:
-    hostname: CONTROL_PLANE_ADDRESS
-    port: 50053    
-EOF
-
-```
-where **CONTROL_PLANE_ADDRESS** is an IP or FQDN that the gateway will use to reach the control plane via gRPC/xDS.
-
-```bash
-./run_kubvernor.sh
-```
-
-## Running inside the Kubernetes cluster
-1. Build Kubvernor Docker image (...slowish)
-```bash
-docker build -f docker/Dockerfile --tag kubvernor:main .
-```
-
-2. (If using Kind) then load it into your cluster for example:
-```bash
-kind load docker-image kubvernor:main --name envoy-gateway
-```
-
-3. Deploy Kubvernor
+## Running Inside the Kubernetes Cluster
+1. Deploy Kubvernor
 ```bash
 kubectl apply -f kubernetes/kubvernor-deployment.yaml
 ```
 
-4. All is well if you see a pod in running state
+2. All is well if you see a pod in running state
 ```bash
 kubectl get pod -n kubvernor
 ```
@@ -109,7 +61,7 @@ kubectl apply -f kubernetes/kubvernor-hello-world.yaml
 ```bash
 kubectl get gateway
 ```
-3. Make some calls
+3. Make some requests
 ```bash
 curl -vki -H 'Host: service-one.com' http://GATEWAY_ADDRESS:1080/data
 ```
@@ -119,7 +71,7 @@ curl -vki -H 'Host: service-one.com' http://GATEWAY_ADDRESS:1080/data
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api-inference-extension/refs/tags/v1.1.0/config/manifests/vllm/sim-deployment.yaml
-helm install vllm-llama3-8b-instruct  --set inferencePool.modelServers.matchLabels.app=vllm-llama3-8b-instruct  --set inferenceExtension.image.pullPolicy=IfNotPresent --version v1.1.0  oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool
+helm install vllm-llama3-8b-instruct  --set inferencePool.modelServers.matchLabels.app=vllm-llama3-8b-instruct  --set inferencePool.image.pullPolicy=IfNotPresent --set inferenceExtension.image.pullPolicy=IfNotPresent --version v1.1.0  oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool
 ```
 
 2. Deploy Gateway API Inference Extension Routes
@@ -127,27 +79,25 @@ helm install vllm-llama3-8b-instruct  --set inferencePool.modelServers.matchLabe
 kubectl apply -f kubernetes/kubvernor-hello-inference-world.yaml
 ```
 
-3. Make some calls
+3. Make some requests
 ```bash
-curl -vki -H 'Host: www.inference-one.com' http://GATEWAY_ADDRESS:1080/v1/models
+curl -vki http://GATEWAY_ADDRESS:1080/v1/chat/completions   --header 'Host: www.inference-one.com' -H "Content-Type: application/json"   -d '{"model":"meta-llama/Llama-3.1-8B-Instruct", "messages": [{"role":"user", "content":"What is the story?"}]}'
 ```
 
 
-## Cleanup (kind)
+## Cleanup
 
 ```bash
 kubectl delete -f kubernetes/kubvernor-hello-inference-world.yaml
 kubectl delete -f kubernetes/kubvernor-hello-world.yaml
 kubectl delete -f kubernetes/kubvernor-deployment.yaml
-
-docker stop envoy-gateway-control-plane
-docker rm envoy-gateway-control-plane
-docker network rm kind
+helm uninstall vllm-llama3-8b-instruct
+kubectl delete -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api-inference-extension/refs/tags/v1.1.0/config/manifests/vllm/sim-deployment.yaml
 ```
 
 
 > [!NOTE]
->  ## Running Gateway API Conformance suite
+>  ## Running Gateway API Conformance Suite
 > 1. Run Gateway API Conformance suite
 > 
 >```bash
@@ -162,6 +112,6 @@ docker network rm kind
 >```
 
 
-## Gateway API Conformance reports
+## Gateway API Conformance Reports
 [1.2.1](./conformance/kubvernor-conformance-output-1.2.1.yaml)
 [1.2.0](./conformance/kubvernor-conformance-output-1.2.0.yaml)

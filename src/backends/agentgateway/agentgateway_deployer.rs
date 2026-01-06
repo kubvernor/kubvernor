@@ -3,8 +3,10 @@ use std::{
     sync::LazyLock,
 };
 
-use agentgateway_api_rs::agentgateway::dev::resource::{Bind, Listener, Resource, resource::Kind};
-use agentgateway_api_rs::istio::workload;
+use agentgateway_api_rs::{
+    agentgateway::dev::resource::{Bind, Listener, Resource, resource::Kind},
+    istio::workload,
+};
 use futures::FutureExt;
 use itertools::Itertools;
 use k8s_openapi::{
