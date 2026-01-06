@@ -9,10 +9,12 @@ git config --global http.sslVerify false
 EOF
 WORKDIR /tmp/kubvernor
 COPY .cargo/config.toml ./.cargo/config.toml
-COPY src/ ./src/
-COPY templates/ ./templates/
 COPY Cargo.toml ./Cargo.toml
 COPY Cargo.lock ./Cargo.lock
+COPY kubvernor/ ./kubvernor/
+COPY kubvernor-controller/ ./kubvernor-controller/
+COPY kubvernor-admin/ ./kubvernor-admin/
+COPY templates/ ./templates/
 
 
 RUN \
