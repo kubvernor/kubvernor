@@ -5,56 +5,22 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-atomic-take.workspace = true
-futures.workspace = true
-envoy-api-rs.workspace = true
-gateway-api.workspace = true
-k8s-openapi.workspace = true
-kube.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-schemars.workspace = true
-kube-core.workspace = true
-env_logger.workspace = true
+kubvernor-controller = { path = "../kubvernor-controller", features = ["standard", "envoy_xds", "agentgateway", "orion"] }
 clap.workspace = true
-clap_derive.workspace = true
-uuid.workspace = true
-async-trait.workspace = true
+tokio.workspace = true
+serde_yaml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
-itertools.workspace = true
-tera.workspace = true
-rustls-pki-types.workspace = true
-eater_domainmatcher.workspace = true
-typed-builder.workspace = true
 tracing-opentelemetry.workspace = true
 opentelemetry_sdk.workspace = true
 opentelemetry.workspace = true
 opentelemetry-otlp.workspace = true
-cfg-if.workspace = true
-tokio-stream.workspace = true
-gateway-api-inference-extension.workspace = true
-multiset.workspace = true
-agentgateway-api-rs = { workspace = true, optional = true }
-kubvernor-api.workspace = true
-serde_yaml.workspace = true
-lru_time_cache.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 tower-test.workspace = true
 http.workspace = true
-
-[features]
-default = ["standard", "envoy_xds", "agentgateway","orion"]
-standard = []
-experimental = []
-envoy_xds = []
-envoy_cm = []
-orion = []
-agentgateway = ["dep:agentgateway-api-rs"]
 
 [lints]
 workspace = true

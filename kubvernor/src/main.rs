@@ -1,5 +1,5 @@
 pub(crate) use clap::Parser;
-use kubvernor::{Configuration, start};
+use kubvernor_controller::{Configuration, start};
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
@@ -66,7 +66,7 @@ fn init_logging(configuration: &Configuration) -> Guard {
 }
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() -> kubvernor::Result<()> {
+async fn main() -> kubvernor_controller::Result<()> {
     let args = CommandArgs::parse();
     let configuration: Configuration = serde_yaml::from_str(&std::fs::read_to_string(args.with_config_file)?)?;
     let _guard = init_logging(&configuration);

@@ -1497,6 +1497,46 @@ dependencies = [
 name = "kubvernor"
 version = "0.2.0"
 dependencies = [
+ "clap",
+ "http",
+ "kubvernor-controller",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "serde_yaml",
+ "thiserror 2.0.17",
+ "tokio",
+ "tower-test",
+ "tracing",
+ "tracing-appender",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "kubvernor-admin"
+version = "0.2.0"
+
+[[package]]
+name = "kubvernor-api"
+version = "0.2.0"
+source = "git+https://github.com/kubvernor/kubvernor-api-rs#807a24e0991b89eeb5e08f76465cadaad896e8de"
+dependencies = [
+ "delegate",
+ "k8s-openapi",
+ "kube",
+ "once_cell",
+ "regex-lite",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+]
+
+[[package]]
+name = "kubvernor-controller"
+version = "0.2.0"
+dependencies = [
  "agentgateway-api-rs",
  "async-trait",
  "atomic-take",
@@ -1537,30 +1577,6 @@ dependencies = [
  "typed-builder",
  "uuid",
 ]
-
-[[package]]
-name = "kubvernor-admin"
-version = "0.2.0"
-
-[[package]]
-name = "kubvernor-api"
-version = "0.2.0"
-source = "git+https://github.com/kubvernor/kubvernor-api-rs#807a24e0991b89eeb5e08f76465cadaad896e8de"
-dependencies = [
- "delegate",
- "k8s-openapi",
- "kube",
- "once_cell",
- "regex-lite",
- "schemars",
- "serde",
- "serde_json",
- "serde_yaml",
-]
-
-[[package]]
-name = "kubvernor-controller"
-version = "0.2.0"
 
 [[package]]
 name = "lazy_static"
