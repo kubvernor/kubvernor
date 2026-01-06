@@ -696,7 +696,7 @@ const ORION_POD_SPEC: &str = r#"
             "command": [
                 "/orion"
             ],
-            "image": "docker.io/kmesh-net/orion-proxy:dev",
+            "image": "ghcr.io/kmesh-net/orion:0.1.0",
             "imagePullPolicy": "IfNotPresent",
             "name": "orion",
             "env": [

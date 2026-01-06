@@ -20,7 +20,7 @@ spec:
         app: kubvernor-control-plane
     spec:
       containers:
-        - image: kubvernor:main
+        - image: ghcr.io/kubvernor/kubvernor:0.2.0
           imagePullPolicy: IfNotPresent
           name: kubvernor
           env:

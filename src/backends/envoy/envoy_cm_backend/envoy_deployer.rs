@@ -508,7 +508,7 @@ const ENVOY_POD_SPEC: &str = r#"
             "command": [
                 "envoy"
             ],
-            "image": "docker.io/envoyproxy/envoy:v1.35.0",
+            "image": "docker.io/envoyproxy/envoy:v1.36.4",
             "imagePullPolicy": "IfNotPresent",
             "name": "envoy",
             "env": [
