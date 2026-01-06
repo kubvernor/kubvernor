@@ -1494,7 +1494,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "kubvernor"
+name = "kubvernor-api"
+version = "0.2.0"
+source = "git+https://github.com/kubvernor/kubvernor-api-rs#807a24e0991b89eeb5e08f76465cadaad896e8de"
+dependencies = [
+ "delegate",
+ "k8s-openapi",
+ "kube",
+ "once_cell",
+ "regex-lite",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+]
+
+[[package]]
+name = "kubvernor-controller"
 version = "0.2.0"
 dependencies = [
  "agentgateway-api-rs",
@@ -1536,22 +1552,6 @@ dependencies = [
  "tracing-subscriber",
  "typed-builder",
  "uuid",
-]
-
-[[package]]
-name = "kubvernor-api"
-version = "0.2.0"
-source = "git+https://github.com/kubvernor/kubvernor-api-rs#807a24e0991b89eeb5e08f76465cadaad896e8de"
-dependencies = [
- "delegate",
- "k8s-openapi",
- "kube",
- "once_cell",
- "regex-lite",
- "schemars",
- "serde",
- "serde_json",
- "serde_yaml",
 ]
 
 [[package]]
