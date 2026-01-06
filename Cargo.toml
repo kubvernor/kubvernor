@@ -1,5 +1,5 @@
 [workspace]
-members = ["kubvernor", "kubvernor-api", "kubvernor-controller"]
+members = ["kubvernor", "kubvernor-admin", "kubvernor-controller"]
 resolver = "3"
 
 [workspace.package]

@@ -1,5 +1,5 @@
 [package]
-name = "kubvernor-api"
+name = "kubvernor-admin"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
