@@ -6,8 +6,7 @@ use std::{
 use gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
 use gateway_api_inference_extension::inferencepools::InferencePool;
 
-use crate::common::ResourceKey;
-use kubvernor_common::GatewayImplementationType;
+use kubvernor_common::{GatewayImplementationType, ResourceKey};
 
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]
 pub enum StorageError {
@@ -19,7 +18,7 @@ impl std::fmt::Display for StorageError {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct State {
     gateway_classes: Arc<Mutex<HashMap<ResourceKey, Arc<GatewayClass>>>>,
     gateways: Arc<Mutex<HashMap<ResourceKey, Arc<Gateway>>>>,
