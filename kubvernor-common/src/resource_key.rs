@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use gateway_api::{
     gatewayclasses::{GatewayClass, GatewayClassParametersRef},
     gateways,
@@ -8,8 +10,6 @@ use gateway_api::{
 use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolStatusParentsParentRef};
 use k8s_openapi::api::core::v1::Service;
 use kube::{Resource, ResourceExt};
-
-use std::fmt::Display;
 
 pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";
 pub const DEFAULT_INFERENCE_GROUP_NAME: &str = "inference.networking.k8s.io/v1";

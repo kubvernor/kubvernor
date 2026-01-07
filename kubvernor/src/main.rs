@@ -1,5 +1,4 @@
 pub(crate) use clap::Parser;
-
 use futures::{FutureExt, future};
 use kubvernor_common::configuration::Configuration;
 use opentelemetry::trace::TracerProvider;

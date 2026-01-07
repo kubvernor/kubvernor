@@ -1,9 +1,10 @@
 use std::{fmt::Display, net::SocketAddr};
 
-use crate::Result;
 use serde::Deserialize;
 use thiserror::Error;
 use typed_builder::TypedBuilder;
+
+use crate::Result;
 
 #[derive(Clone, Debug, TypedBuilder, Deserialize)]
 pub struct Address {

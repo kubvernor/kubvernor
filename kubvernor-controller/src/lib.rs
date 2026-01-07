@@ -7,7 +7,6 @@ use kubvernor_common::{
     GatewayImplementationType,
     configuration::{Address, Configuration},
 };
-
 use kubvernor_state::State;
 use services::{
     GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService,
