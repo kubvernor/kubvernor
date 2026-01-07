@@ -1,30 +1,35 @@
 [package]
-name = "kubvernor"
-version.workspace = true
-edition.workspace = true
+edition.workspace      = true
+name                   = "kubvernor"
 rust-version.workspace = true
+version.workspace      = true
 
 [dependencies]
-kubvernor-common = { path = "../kubvernor-common" }
-kubvernor-controller = { path = "../kubvernor-controller", features = ["standard", "envoy_xds", "agentgateway", "orion"] }
-kubvernor-admin = { path = "../kubvernor-admin" }
-tokio.workspace = true
-serde_yaml.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
-tracing-appender.workspace = true
-tracing-opentelemetry.workspace = true
-opentelemetry_sdk.workspace = true
-opentelemetry.workspace = true
-opentelemetry-otlp.workspace = true
-thiserror.workspace = true
 clap = { version = "4.5.52", features = ["derive"] }
 clap_derive = "4.5.49"
-futures.workspace =true
+futures.workspace = true
+kubvernor-admin = { path = "../kubvernor-admin" }
+kubvernor-common = { path = "../kubvernor-common" }
+kubvernor-controller = { path = "../kubvernor-controller", features = [
+  "agentgateway",
+  "envoy_xds",
+  "orion",
+  "standard",
+] }
+opentelemetry.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry_sdk.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-opentelemetry.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
+http.workspace       = true
 tower-test.workspace = true
-http.workspace = true
 
 [lints]
 workspace = true

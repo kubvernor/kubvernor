@@ -1,7 +1,7 @@
-disallowed-methods = []
 allow-expect-in-tests = true
+allow-print-in-tests  = true
 allow-unwrap-in-tests = true
-allow-print-in-tests = true
+disallowed-methods    = []
 
 too-many-arguments-threshold = 5
-too-many-lines-threshold = 150
+too-many-lines-threshold     = 150
