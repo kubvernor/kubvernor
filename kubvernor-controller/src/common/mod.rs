@@ -8,7 +8,7 @@ mod test;
 
 use std::{cmp, collections::BTreeSet, fmt::Display, net::IpAddr};
 
-pub use gateway::{ChangedContext, Gateway, GatewayImplementationType};
+pub use gateway::{ChangedContext, Gateway};
 pub use gateway_api::gateways::Gateway as KubeGateway;
 use gateway_api::{gatewayclasses::GatewayClass, gateways::GatewayListeners};
 use gateway_api_inference_extension::inferencepools::{

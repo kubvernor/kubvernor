@@ -5,14 +5,13 @@ use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
     chrono::Utc,
 };
+use kubvernor_common::GatewayImplementationType;
 use tokio::sync::mpsc::{self};
 use tracing::{debug, error, info};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{
-        self, BackendGatewayEvent, ChangedContext, GatewayImplementationType, KubeGateway, ListenerCondition, ResolvedRefs, ResourceKey,
-    },
+    common::{self, BackendGatewayEvent, ChangedContext, KubeGateway, ListenerCondition, ResolvedRefs, ResourceKey},
     controllers::ControllerError,
     services::patchers::Operation,
     state::State,

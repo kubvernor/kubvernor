@@ -7,6 +7,7 @@ use kube::{
     Api, Client, Resource,
     runtime::{Controller, controller::Action, watcher::Config},
 };
+use kubvernor_common::GatewayImplementationType;
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
@@ -21,7 +22,7 @@ use super::{
     utils::{ResourceCheckerArgs, ResourceState},
 };
 use crate::{
-    common::{self, BackendGatewayEvent, DeletedContext, GatewayImplementationType, ReferenceValidateRequest, RequestContext, ResourceKey},
+    common::{self, BackendGatewayEvent, DeletedContext, ReferenceValidateRequest, RequestContext, ResourceKey},
     services::patchers::{DeleteContext, Operation},
     state::State,
 };

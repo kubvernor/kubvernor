@@ -49,6 +49,7 @@ use kube::{
     api::{DeleteParams, Patch, PatchParams},
 };
 use kube_core::ObjectMeta;
+use kubvernor_common::GatewayImplementationType;
 use tera::Tera;
 use tokio::{
     sync::mpsc::{self, Receiver, Sender},
@@ -70,7 +71,7 @@ use crate::{
     },
     common::{
         self, BackendGatewayEvent, BackendGatewayResponse, Certificate, ChangedContext, ControlPlaneConfig, Gateway, GatewayAddress,
-        GatewayImplementationType, Listener, ResourceKey, TlsType,
+        Listener, ResourceKey, TlsType,
     },
 };
 

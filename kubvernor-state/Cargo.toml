@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+kubvernor-common.workspace = true
 gateway-api.workspace = true
 gateway-api-inference-extension.workspace = true
 thiserror.workspace = true

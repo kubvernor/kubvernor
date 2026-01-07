@@ -6,13 +6,14 @@ use std::{collections::HashMap, sync::Arc};
 use gateway_api::{gatewayclasses::GatewayClass, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
 use gateway_deployer_internal::{GatewayDeployer, GatewayDeployerServiceInternal};
 pub(crate) use gateway_processed_handler::GatewayProcessedHandler;
+use kubvernor_common::GatewayImplementationType;
 use tokio::sync::oneshot;
 use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
     Result,
-    common::{BackendGatewayEvent, BackendGatewayResponse, GatewayDeployRequest, GatewayImplementationType, KubeGateway, RequestContext},
+    common::{BackendGatewayEvent, BackendGatewayResponse, GatewayDeployRequest, KubeGateway, RequestContext},
     services::patchers::{Operation, PatchContext},
     state::State,
 };

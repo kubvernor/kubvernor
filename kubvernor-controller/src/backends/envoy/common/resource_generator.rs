@@ -33,6 +33,7 @@ use gateway_api::{
     grpcroutes::GrpcRouteMatch,
     httproutes::{HttpRouteRulesMatchesPathType, PathMatch, RouteMatch},
 };
+use kubvernor_common::GatewayImplementationType;
 use tracing::{debug, error};
 
 use crate::{
@@ -42,8 +43,8 @@ use crate::{
     },
     common::{
         self, Backend, BackendType, BackendTypeConfig, DEFAULT_ROUTE_HOSTNAME, FilterHeaders, GRPCRoutingConfiguration, GRPCRoutingRule,
-        GatewayImplementationType, HTTPRoutingConfiguration, HTTPRoutingRule, InferencePoolTypeConfig, Listener, ProtocolType, Route,
-        RouteType, ServiceTypeConfig, TlsType,
+        HTTPRoutingConfiguration, HTTPRoutingRule, InferencePoolTypeConfig, Listener, ProtocolType, Route, RouteType, ServiceTypeConfig,
+        TlsType,
     },
     controllers::HostnameMatchFilter,
 };

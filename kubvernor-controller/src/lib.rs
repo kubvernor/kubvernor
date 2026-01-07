@@ -4,7 +4,7 @@ use common::{BackendReferenceResolver, ControlPlaneConfig, ReferenceGrantsResolv
 use futures::FutureExt;
 use kube::Client;
 
-use kubvernor_common::configuration::Configuration;
+use kubvernor_common::{GatewayImplementationType, configuration::Configuration};
 use services::{
     GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService,
     patchers::GRPCRoutePatcherService,
@@ -52,7 +52,7 @@ use controllers::{
     },
 };
 
-use crate::{common::GatewayImplementationType, controllers::inference_pool, services::patchers::InferencePoolPatcherService};
+use crate::{controllers::inference_pool, services::patchers::InferencePoolPatcherService};
 
 const STARTUP_DURATION: Duration = Duration::from_secs(10);
 

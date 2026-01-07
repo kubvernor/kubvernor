@@ -3,6 +3,7 @@ use std::{
     fmt::Display,
 };
 
+use kubvernor_common::GatewayImplementationType;
 use thiserror::Error;
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
@@ -18,26 +19,6 @@ pub struct Gateway {
     listeners: BTreeMap<String, Listener>,
     orphaned_routes: BTreeSet<Route>,
     backend_type: GatewayImplementationType,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
-pub enum GatewayImplementationType {
-    Envoy,
-    Agentgateway,
-    Orion,
-}
-
-impl TryFrom<Option<&String>> for GatewayImplementationType {
-    type Error = crate::Error;
-
-    fn try_from(value: Option<&String>) -> Result<Self, Self::Error> {
-        match value.map(std::string::String::as_str) {
-            Some("agentgateway") => Ok(GatewayImplementationType::Agentgateway),
-            Some("orion") => Ok(GatewayImplementationType::Orion),
-            Some("envoy") | None => Ok(GatewayImplementationType::Envoy),
-            Some(_) => Err("Invalid backend type ".into()),
-        }
-    }
 }
 
 impl PartialEq for Gateway {

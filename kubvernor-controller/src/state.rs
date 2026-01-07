@@ -5,8 +5,9 @@ use std::{
 
 use gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
 use gateway_api_inference_extension::inferencepools::InferencePool;
+use kubvernor_common::GatewayImplementationType;
 
-use crate::common::{GatewayImplementationType, ResourceKey};
+use crate::common::ResourceKey;
 
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]
 pub enum StorageError {
