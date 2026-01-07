@@ -1,0 +1,17 @@
+[package]
+name = "kubvernor-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+typed-builder.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+k8s-openapi.workspace = true
+gateway-api.workspace = true
+gateway-api-inference-extension.workspace = true
+kube.workspace = true
+
+[lints]
+workspace = true

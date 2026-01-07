@@ -1,0 +1,30 @@
+[package]
+name = "kubvernor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kubvernor-common = { path = "../kubvernor-common" }
+kubvernor-controller = { path = "../kubvernor-controller", features = ["standard", "envoy_xds", "agentgateway", "orion"] }
+kubvernor-admin = { path = "../kubvernor-admin" }
+tokio.workspace = true
+serde_yaml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+tracing-opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry.workspace = true
+opentelemetry-otlp.workspace = true
+thiserror.workspace = true
+clap = { version = "4.5.52", features = ["derive"] }
+clap_derive = "4.5.49"
+futures.workspace =true
+
+[dev-dependencies]
+tower-test.workspace = true
+http.workspace = true
+
+[lints]
+workspace = true
