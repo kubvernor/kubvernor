@@ -1,16 +1,14 @@
 condense_wildcard_suffixes = true
-group_imports = "StdExternalCrate"
-style_edition = "2024"
-reorder_imports = true
-imports_granularity = "crate"
-use_small_heuristics = "MAX"
+group_imports              = "StdExternalCrate"
+imports_granularity        = "crate"
+reorder_imports            = true
+style_edition              = "2024"
+use_small_heuristics       = "MAX"
 # In the match branch, if blocks are included, add commas (,) to separate them.
 match_block_trailing_comma = true
-newline_style = "Auto"
+newline_style              = "Auto"
 # Do not merge multiple Derive macros into the same line
 merge_derives = false
 # Set line length
-max_width = 140
-error_on_line_overflow=true
-
-
+error_on_line_overflow = true
+max_width              = 140

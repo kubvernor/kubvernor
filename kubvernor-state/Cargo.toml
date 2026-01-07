@@ -1,0 +1,14 @@
+[package]
+edition.workspace      = true
+name                   = "kubvernor-state"
+rust-version.workspace = true
+version.workspace      = true
+
+[dependencies]
+gateway-api.workspace                     = true
+gateway-api-inference-extension.workspace = true
+kubvernor-common.workspace                = true
+thiserror.workspace                       = true
+
+[lints]
+workspace = true

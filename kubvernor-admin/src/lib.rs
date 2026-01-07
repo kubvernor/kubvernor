@@ -1,0 +1,46 @@
+use std::sync::Arc;
+
+use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
+use kubvernor_common::{Result, configuration::AdminInterfaceConfiguration};
+use serde::{Deserialize, Serialize};
+use tokio::net::TcpListener;
+use tracing::info;
+
+#[derive(Clone)]
+pub struct AppState {
+    // Add any state fields needed for admin operations
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AdminResponse {
+    pub status: String,
+    pub message: String,
+}
+
+pub async fn admin(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
+    let response = AdminResponse { status: "ok".to_owned(), message: "Admin endpoint is running".to_owned() };
+
+    (StatusCode::OK, Json(response))
+}
+
+fn create_router(state: Arc<AppState>) -> Router {
+    Router::new().route("/admin", get(admin)).with_state(state)
+}
+
+#[allow(clippy::too_many_lines)]
+pub async fn start(configuration: Option<AdminInterfaceConfiguration>) -> Result<()> {
+    let state = Arc::new(AppState {});
+    let app = create_router(state);
+    info!("Kubvernor Admin interface... ");
+    if let Some(configuration) = configuration {
+        let listener = TcpListener::bind(configuration.address.to_ip()?).await?;
+        let local_addr = listener.local_addr()?;
+        tracing::info!("Admin server listening on http://{}", local_addr);
+
+        axum::serve(listener, app).await?;
+    } else {
+        info!("Kubvernor Admin interface not configured");
+    }
+
+    Ok(())
+}
