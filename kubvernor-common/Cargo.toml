@@ -1,0 +1,13 @@
+[package]
+name = "kubvernor-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+typed-builder.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,10 +1,10 @@
-// kubvernor-api: API definitions and types for kubvernor
-
 use std::sync::Arc;
 
 use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
+use kubvernor_common::{Result, configuration::AdminInterfaceConfiguration};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tracing::info;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -17,29 +17,30 @@ pub struct AdminResponse {
     pub message: String,
 }
 
-/// Admin handler - GET endpoint
 pub async fn admin(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    let response = AdminResponse { status: "ok".to_string(), message: "Admin endpoint is running".to_string() };
+    let response = AdminResponse { status: "ok".to_owned(), message: "Admin endpoint is running".to_owned() };
 
     (StatusCode::OK, Json(response))
 }
 
-/// Create and return the admin router
-pub fn create_router(state: Arc<AppState>) -> Router {
+fn create_router(state: Arc<AppState>) -> Router {
     Router::new().route("/admin", get(admin)).with_state(state)
 }
 
-/// Start the admin server on the specified port
-pub async fn start_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+#[allow(clippy::too_many_lines)]
+pub async fn start(configuration: Option<AdminInterfaceConfiguration>) -> Result<()> {
     let state = Arc::new(AppState {});
     let app = create_router(state);
+    info!("Kubvernor Admin interface... ");
+    if let Some(configuration) = configuration {
+        let listener = TcpListener::bind(configuration.address.to_ip()?).await?;
+        let local_addr = listener.local_addr()?;
+        tracing::info!("Admin server listening on http://{}", local_addr);
 
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
-    let local_addr = listener.local_addr()?;
-
-    tracing::info!("Admin server listening on http://{}", local_addr);
-
-    axum::serve(listener, app).await?;
+        axum::serve(listener, app).await?;
+    } else {
+        info!("Kubvernor Admin interface not configured");
+    }
 
     Ok(())
 }

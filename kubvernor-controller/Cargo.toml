@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+kubvernor-common.workspace=true
 atomic-take.workspace = true
 futures.workspace = true
 envoy-api-rs.workspace = true
@@ -18,8 +19,6 @@ serde_json.workspace = true
 schemars.workspace = true
 kube-core.workspace = true
 env_logger.workspace = true
-clap.workspace = true
-clap_derive.workspace = true
 uuid.workspace = true
 async-trait.workspace = true
 tracing.workspace = true

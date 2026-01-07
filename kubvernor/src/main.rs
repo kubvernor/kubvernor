@@ -1,5 +1,7 @@
 pub(crate) use clap::Parser;
-use kubvernor_controller::{Configuration, start};
+
+use futures::{FutureExt, future};
+use kubvernor_common::configuration::Configuration;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
@@ -72,5 +74,11 @@ async fn main() -> kubvernor_controller::Result<()> {
     let _guard = init_logging(&configuration);
 
     configuration.validate()?;
-    start(configuration).await
+    let admin_interface_configuration = configuration.admin_interface.clone();
+    let _res = future::join_all(vec![
+        kubvernor_controller::start(configuration).boxed(),
+        kubvernor_admin::start(admin_interface_configuration).boxed(),
+    ])
+    .await;
+    Ok(())
 }

@@ -16,7 +16,6 @@ COPY kubvernor-controller/ ./kubvernor-controller/
 COPY kubvernor-admin/ ./kubvernor-admin/
 COPY templates/ ./templates/
 
-
 RUN \
     --mount=type=cache,id=cargo,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \

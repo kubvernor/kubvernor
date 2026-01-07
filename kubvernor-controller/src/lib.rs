@@ -1,16 +1,10 @@
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Display},
-    net::SocketAddr,
-    sync::Arc,
-    time::Duration,
-    vec,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration, vec};
 
 use common::{BackendReferenceResolver, ControlPlaneConfig, ReferenceGrantsResolver, SecretsResolver};
 use futures::FutureExt;
 use kube::Client;
-use serde::Deserialize;
+
+use kubvernor_common::configuration::Configuration;
 use services::{
     GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService,
     patchers::GRPCRoutePatcherService,
@@ -31,8 +25,9 @@ mod services;
 
 mod state;
 
-pub type Error = Box<dyn std::error::Error + Send + Sync>;
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Error = kubvernor_common::Error;
+pub type Result<T> = kubvernor_common::Result<T>;
+pub type Address = kubvernor_common::configuration::Address;
 
 cfg_if::cfg_if! {
     if #[cfg(feature="envoy_xds")] {
@@ -56,72 +51,10 @@ use controllers::{
         http_route::{self, HttpRouteController},
     },
 };
-use typed_builder::TypedBuilder;
 
 use crate::{common::GatewayImplementationType, controllers::inference_pool, services::patchers::InferencePoolPatcherService};
 
 const STARTUP_DURATION: Duration = Duration::from_secs(10);
-
-#[derive(Clone, Debug, TypedBuilder, Deserialize)]
-pub struct Address {
-    pub hostname: String,
-    pub port: u16,
-}
-
-impl Display for Address {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("{}:{}", self.hostname, self.port).as_str())
-    }
-}
-
-impl Address {
-    fn to_ips(&self) -> Vec<SocketAddr> {
-        if let Ok(socket) = self.to_string().parse::<SocketAddr>() {
-            vec![socket]
-        } else {
-            vec![SocketAddr::from(([0, 0, 0, 0], self.port)), SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], self.port))]
-        }
-    }
-}
-
-#[derive(Debug, TypedBuilder, Deserialize)]
-pub struct EnvoyGatewayControlPlaneConfiguration {
-    address: Address,
-}
-
-#[derive(Debug, TypedBuilder, Deserialize)]
-pub struct AgentgatewayGatewayControlPlaneConfiguration {
-    address: Address,
-}
-
-#[derive(Debug, TypedBuilder, Deserialize)]
-pub struct Configuration {
-    pub controller_name: String,
-    pub enable_open_telemetry: Option<bool>,
-    envoy_gateway_control_plane: Option<EnvoyGatewayControlPlaneConfiguration>,
-    agentgateway_gateway_control_plane: Option<AgentgatewayGatewayControlPlaneConfiguration>,
-    orion_gateway_control_plane: Option<EnvoyGatewayControlPlaneConfiguration>,
-}
-
-#[derive(Error, Debug)]
-enum ConfigurationError {
-    #[error("controller name must be not empty")]
-    ControllerName,
-    #[error("one control plane must be configured")]
-    ControlPlane,
-}
-
-impl Configuration {
-    pub fn validate(&self) -> Result<()> {
-        if self.controller_name.is_empty() {
-            return Err(ConfigurationError::ControllerName.into());
-        }
-        match (&self.agentgateway_gateway_control_plane, &self.envoy_gateway_control_plane) {
-            (None, None) => Err(ConfigurationError::ControlPlane.into()),
-            _ => Ok(()),
-        }
-    }
-}
 
 #[allow(clippy::too_many_lines)]
 pub async fn start(configuration: Configuration) -> Result<()> {
