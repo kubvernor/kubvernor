@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, btree_map::Values},
+    net::IpAddr,
     sync::LazyLock,
 };
 
@@ -497,6 +498,10 @@ fn bootstrap_content_with_secrets(control_plane_config: &ControlPlaneConfig, sec
     }
     tera_context.insert("control_plane_host", &control_plane_config.listening_socket.hostname);
     tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port);
+    tera_context.insert(
+        "resolver_type",
+        if control_plane_config.listening_socket.hostname.parse::<IpAddr>().is_err() { "STRICT_DNS" } else { "STATIC" },
+    );
 
     Ok(TEMPLATES.render("envoy-bootstrap-dynamic-with-secrets.yaml.tera", &tera_context)?)
 }
@@ -505,6 +510,10 @@ fn bootstrap_content(control_plane_config: &ControlPlaneConfig) -> Result<String
     let mut tera_context = tera::Context::new();
     tera_context.insert("control_plane_host", &control_plane_config.listening_socket.hostname);
     tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port);
+    tera_context.insert(
+        "resolver_type",
+        if control_plane_config.listening_socket.hostname.parse::<IpAddr>().is_err() { "STRICT_DNS" } else { "STATIC" },
+    );
 
     Ok(TEMPLATES.render("envoy-bootstrap-dynamic.yaml.tera", &tera_context)?)
 }

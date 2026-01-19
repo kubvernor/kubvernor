@@ -66,6 +66,7 @@ fn get_grpc_default_rules_matches() -> GrpcRouteMatch {
 
 impl Listener {
     fn create_http_effective_route(
+        &self,
         hostnames: &[String],
         routing_configuration: &HTTPRoutingConfiguration,
     ) -> Vec<HTTPEffectiveRoutingRule> {
@@ -79,6 +80,7 @@ impl Listener {
                 }
 
                 matching_rules.into_iter().map(|matcher| HTTPEffectiveRoutingRule {
+                    listener_port: self.port(),
                     route_matcher: matcher.clone(),
                     backends: rr.backends.clone(),
                     name: rr.name.clone(),
@@ -128,7 +130,7 @@ impl Listener {
                 RouteType::Http(configuration) => Some((&r.config.hostnames, configuration)),
                 RouteType::Grpc(_) => None,
             })
-            .flat_map(|(hostnames, config)| Self::create_http_effective_route(hostnames, config))
+            .flat_map(|(hostnames, config)| self.create_http_effective_route(hostnames, config))
             .collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
         matching_rules

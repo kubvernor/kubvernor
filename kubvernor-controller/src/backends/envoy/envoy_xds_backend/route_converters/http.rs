@@ -8,7 +8,8 @@ use envoy_api_rs::{
                 grpc_service::{EnvoyGrpc, TargetSpecifier},
             },
             route::v3::{
-                RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster, redirect_action,
+                RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster,
+                redirect_action::{self, PathRewriteSpecifier, SchemeRewriteSpecifier},
                 route::Action,
                 route_action::{self, ClusterSpecifier},
                 route_match::PathSpecifier,
@@ -23,7 +24,7 @@ use envoy_api_rs::{
     },
     google::protobuf::BoolValue,
 };
-use gateway_api::httproutes;
+use gateway_api::{common::RequestRedirectScheme, httproutes};
 use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
 use tracing::{debug, warn};
 
@@ -147,6 +148,20 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
 
         let action: Action = if let Some(redirect_action) = effective_routing_rule.redirect_filter.clone().map(|f| RedirectAction {
             host_redirect: f.hostname.unwrap_or_default(),
+            scheme_rewrite_specifier: f.scheme.clone().map(|s| match s {
+                gateway_api::common::RequestRedirectScheme::Http => SchemeRewriteSpecifier::SchemeRedirect("http".to_owned()),
+                gateway_api::common::RequestRedirectScheme::Https => SchemeRewriteSpecifier::HttpsRedirect(true),
+            }),
+            path_rewrite_specifier: f.path.map(|p| match p.r#type {
+                gateway_api::common::RequestOperationType::ReplaceFullPath => {
+                    PathRewriteSpecifier::PathRedirect(p.replace_full_path.unwrap_or_default())
+                },
+                gateway_api::common::RequestOperationType::ReplacePrefixMatch => {
+                    PathRewriteSpecifier::PrefixRewrite(p.replace_prefix_match.unwrap_or_default())
+                },
+            }),
+
+            port_redirect: derive_port(f.port, f.scheme, effective_routing_rule.listener_port),
 
             response_code: match f.status_code {
                 Some(302) => redirect_action::RedirectResponseCode::Found.into(),
@@ -171,5 +186,18 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
             ..Default::default()
         };
         effective_routing_rule.add_inference_filters(route)
+    }
+}
+
+fn derive_port(port: Option<i32>, scheme: Option<RequestRedirectScheme>, listener_port: i32) -> u32 {
+    if let Some(port) = port {
+        port as u32
+    } else if let Some(scheme) = scheme {
+        match scheme {
+            RequestRedirectScheme::Https => 443,
+            RequestRedirectScheme::Http => 80,
+        }
+    } else {
+        listener_port as u32
     }
 }

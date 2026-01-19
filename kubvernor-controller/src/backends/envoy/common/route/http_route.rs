@@ -7,6 +7,7 @@ use crate::common::{Backend, FilterHeaders};
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct HTTPEffectiveRoutingRule {
+    pub listener_port: i32,
     pub route_matcher: RouteMatch,
     pub backends: Vec<Backend>,
     pub name: String,
