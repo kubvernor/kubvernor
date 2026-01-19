@@ -282,3 +282,16 @@ fn derive_port(port: Option<i32>, scheme: Option<RequestRedirectScheme>, listene
         listener_port as u32
     }
 }
+
+fn derive_port(port: Option<i32>, scheme: Option<RequestRedirectScheme>, listener_port: i32) -> u32 {
+    if let Some(port) = port {
+        port as u32
+    } else if let Some(scheme) = scheme {
+        match scheme {
+            RequestRedirectScheme::Https => 443,
+            RequestRedirectScheme::Http => 80,
+        }
+    } else {
+        listener_port as u32
+    }
+}
