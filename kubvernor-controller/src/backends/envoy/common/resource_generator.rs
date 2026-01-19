@@ -91,6 +91,10 @@ impl Listener {
                         .filters
                         .iter()
                         .find_map(|f| if f.r#type == HTTPFilterType::RequestRedirect { f.request_redirect.clone() } else { None }),
+                    mirror_filter: rr
+                        .filters
+                        .iter()
+                        .find_map(|f| if f.r#type == HTTPFilterType::RequestMirror { f.request_mirror.clone() } else { None }),
                 })
             })
             .collect()
