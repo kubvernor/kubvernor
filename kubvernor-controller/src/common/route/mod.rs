@@ -47,6 +47,10 @@ impl Route {
         self.config.backends()
     }
 
+    pub fn filter_backends(&self) -> Vec<&Backend> {
+        self.config.filter_backends()
+    }
+
     pub fn config(&self) -> &RouteConfig {
         &self.config
     }
@@ -91,6 +95,17 @@ impl RouteConfig {
             },
             RouteType::Grpc(routing_rules_configuration) => {
                 routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect()
+            },
+        }
+    }
+
+    pub fn filter_backends(&self) -> Vec<&Backend> {
+        match &self.route_type {
+            RouteType::Http(routing_rules_configuration) => {
+                routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.filter_backends).collect()
+            },
+            RouteType::Grpc(routing_rules_configuration) => {
+                routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.filter_backends).collect()
             },
         }
     }

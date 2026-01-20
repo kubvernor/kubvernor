@@ -13,6 +13,7 @@ pub struct HTTPEffectiveRoutingRule {
     pub listener_port: i32,
     pub route_matcher: RouteMatch,
     pub backends: Vec<Backend>,
+    pub filter_backends: Vec<Backend>,
     pub name: String,
     pub hostnames: Vec<String>,
 

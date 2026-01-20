@@ -39,6 +39,7 @@ impl BackendReferenceResolver {
                         route
                             .backends()
                             .iter()
+                            .chain(&route.filter_backends())
                             .filter_map(|b| match b {
                                 Backend::Maybe(backend_type) => Some(backend_type.resource_key()),
                                 _ => None,
@@ -95,6 +96,7 @@ impl BackendReferenceResolver {
                         route
                             .backends()
                             .iter()
+                            .chain(&route.filter_backends())
                             .filter_map(|b| match b {
                                 Backend::Maybe(backend_type) => Some(backend_type.resource_key()),
                                 _ => None,

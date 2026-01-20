@@ -51,16 +51,18 @@ impl RouteResolver<'_> {
         match &mut route_config.route_type {
             common::RouteType::Http(httprouting_configuration) => {
                 for rule in &mut httprouting_configuration.routing_rules {
-                    let (new_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;
+                    let (new_service_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;
                     if resolution_status != ResolutionStatus::Resolved {
                         route_resolution_status = resolution_status;
                     }
-                    rule.backends.clone_from(&new_backends);
-                    // httprouting_configuration
-                    //     .effective_routing_rules
-                    //     .iter_mut()
-                    //     .filter(|r| r.name == rule.name)
-                    //     .for_each(|r| r.backends.clone_from(&new_backends));
+                    let (new_filter_backends, resolution_status) =
+                        self.process_backends(route_resource_key, rule.filter_backends.clone()).await;
+                    if resolution_status != ResolutionStatus::Resolved {
+                        route_resolution_status = resolution_status;
+                    }
+
+                    rule.backends.clone_from(&new_service_backends);
+                    rule.filter_backends.clone_from(&new_filter_backends);
                 }
             },
             common::RouteType::Grpc(grpcrouting_configuration) => {

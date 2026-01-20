@@ -4,14 +4,14 @@ use envoy_api_rs::{
     envoy::{
         config::{
             core::v3::{
-                GrpcService,
+                GrpcService, RuntimeFractionalPercent,
                 grpc_service::{EnvoyGrpc, TargetSpecifier},
             },
             route::v3::{
                 RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster,
                 redirect_action::{self, PathRewriteSpecifier, SchemeRewriteSpecifier},
                 route::Action,
-                route_action::{self, ClusterSpecifier},
+                route_action::{self, ClusterSpecifier, RequestMirrorPolicy},
                 route_match::PathSpecifier,
             },
         },
@@ -20,17 +20,24 @@ use envoy_api_rs::{
             ext_proc_per_route::Override,
             processing_mode::{BodySendMode, HeaderSendMode},
         },
-        r#type::matcher::v3::RegexMatcher,
+        r#type::{
+            matcher::v3::RegexMatcher,
+            v3::{FractionalPercent, fractional_percent},
+        },
     },
     google::protobuf::BoolValue,
 };
 use gateway_api::{common::RequestRedirectScheme, httproutes};
 use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
-use tracing::{debug, warn};
+use kubvernor_common::ResourceKey;
+use tracing::{debug, info, warn};
 
-use crate::backends::envoy::common::{
-    HTTPEffectiveRoutingRule, INFERENCE_EXT_PROC_FILTER_NAME, converters, envoy_route_name, get_inference_extension_configurations,
-    inference_cluster_name,
+use crate::{
+    backends::envoy::common::{
+        HTTPEffectiveRoutingRule, INFERENCE_EXT_PROC_FILTER_NAME, converters, envoy_route_name, get_inference_extension_configurations,
+        inference_cluster_name,
+    },
+    common::DEFAULT_NAMESPACE_NAME,
 };
 
 impl HTTPEffectiveRoutingRule {
@@ -137,12 +144,60 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
                 _ => None,
             }));
 
+        let mirror_policy = effective_routing_rule.mirror_filter.as_ref().map(|mirror_filter| {
+            let mirror_backends: Vec<String> = effective_routing_rule
+                .filter_backends
+                .iter()
+                .filter_map(|b| match b.backend_type() {
+                    crate::common::BackendType::Service(service_type_config) | crate::common::BackendType::Invalid(service_type_config) => {
+                        Some(service_type_config)
+                    },
+                    crate::common::BackendType::InferencePool(_) => None,
+                })
+                .filter(|config| {
+                    debug!("Mirror backend {} {:?}", config.resource_key, mirror_filter.backend_ref);
+                    config.resource_key == ResourceKey::from((&mirror_filter.backend_ref, DEFAULT_NAMESPACE_NAME.to_owned()))
+                })
+                .map(crate::common::BackendTypeConfig::cluster_name)
+                .collect();
+
+            debug!("Mirror backends {mirror_backends:?}");
+
+            let fraction = match (mirror_filter.percent.as_ref(), mirror_filter.fraction.as_ref()) {
+                (None, None) => FractionalPercent { numerator: 100, denominator: fractional_percent::DenominatorType::Hundred.into() },
+                (None, Some(fraction)) => FractionalPercent {
+                    numerator: fraction.numerator as u32,
+                    denominator: fractional_percent::DenominatorType::Hundred.into(),
+                },
+                (Some(percent), None) => {
+                    FractionalPercent { numerator: *percent as u32, denominator: fractional_percent::DenominatorType::Hundred.into() }
+                },
+                (Some(_), Some(_)) => {
+                    warn!("Invalid configuration for mirror filtering ");
+                    FractionalPercent { numerator: 100, denominator: fractional_percent::DenominatorType::Hundred.into() }
+                },
+            };
+
+            mirror_backends
+                .into_iter()
+                .map(|cluster_name| RequestMirrorPolicy {
+                    cluster: cluster_name.clone(),
+                    runtime_fraction: Some(RuntimeFractionalPercent { default_value: Some(fraction), ..Default::default() }),
+                    ..Default::default()
+                })
+                .collect()
+        });
+
+        info!("Mirror policies {:?} {mirror_policy:?}", mirror_policy.as_ref().map(|p: &Vec<_>| p.len()));
+
         let cluster_action = RouteAction {
             cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
             cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
                 clusters: service_cluster_names.into_iter().chain(inference_cluster_names).collect(),
                 ..Default::default()
             })),
+
+            request_mirror_policies: mirror_policy.unwrap_or_default(),
             ..Default::default()
         };
 

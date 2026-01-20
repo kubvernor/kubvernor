@@ -83,6 +83,7 @@ impl Listener {
                     listener_port: self.port(),
                     route_matcher: matcher.clone(),
                     backends: rr.backends.clone(),
+                    filter_backends: rr.filter_backends.clone(),
                     name: rr.name.clone(),
                     hostnames: hostnames.to_vec(),
                     request_headers: rr.filter_headers(),
@@ -235,10 +236,13 @@ impl<'a> ResourceGenerator<'a> {
             .flat_map(|listener| {
                 listener.http_listener_map.iter().flat_map(|evc| {
                     evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
+                        debug!("Cluster  {} {}", r.backends().len(), r.filter_backends().len());
                         let route_type = r.route_type();
                         let backends = r.backends();
-                        let service_backends = backends
-                            .iter()
+                        let service_backends = r.backends();
+                        let filter_backends = r.filter_backends();
+                        let service_backends = service_backends
+                            .into_iter()
                             .filter_map(|b| {
                                 if let Backend::Resolved(
                                     BackendType::Service(backend_service_config) | BackendType::Invalid(backend_service_config),
@@ -252,8 +256,24 @@ impl<'a> ResourceGenerator<'a> {
                             .filter(|b| b.weight() > 0)
                             .map(|r| create_service_cluster(r, route_type, &grpc_http_configuration));
 
+                        let filter_backends = filter_backends
+                            .into_iter()
+                            .filter_map(|b| {
+                                if let Backend::Resolved(
+                                    BackendType::Service(backend_service_config) | BackendType::Invalid(backend_service_config),
+                                ) = b
+                                {
+                                    Some(backend_service_config)
+                                } else {
+                                    debug!("Filter backend not resolved {:?}", b);
+                                    None
+                                }
+                            })
+                            .filter(|b| b.weight() > 0)
+                            .map(|r| create_service_cluster(r, route_type, &grpc_http_configuration));
+
                         let inference_backends = backends
-                            .iter()
+                            .into_iter()
                             .filter_map(|b| {
                                 if let Backend::Resolved(BackendType::InferencePool(backend_service_config)) = b {
                                     Some(backend_service_config)
@@ -264,12 +284,12 @@ impl<'a> ResourceGenerator<'a> {
                             .filter(|b| b.weight > 0)
                             .map(|r| create_inference_cluster(r, route_type));
 
-                        service_backends.chain(inference_backends).collect::<Vec<_>>()
+                        service_backends.chain(inference_backends).chain(filter_backends).collect::<Vec<_>>()
                     })
                 })
             })
             .collect();
-        debug!("Clusters produced {:?}", clusters);
+        debug!("Clusters produced {} {:?}", clusters.len(), clusters);
         let ext_service_clusters = self.inference_clusters.iter().filter_map(|c| self.generate_ext_service_cluster(c));
         debug!("Ext Service Clusters produced {:?}", ext_service_clusters);
         let clusters = clusters.into_iter().chain(ext_service_clusters);
