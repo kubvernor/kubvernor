@@ -166,7 +166,7 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
             let fraction = match (mirror_filter.percent.as_ref(), mirror_filter.fraction.as_ref()) {
                 (None, None) => FractionalPercent { numerator: 100, denominator: fractional_percent::DenominatorType::Hundred.into() },
                 (None, Some(fraction)) => FractionalPercent {
-                    numerator: fraction.numerator as u32,
+                    numerator: ((f64::from(fraction.numerator) / f64::from(fraction.denominator.unwrap_or(100))) * 100.0) as u32,
                     denominator: fractional_percent::DenominatorType::Hundred.into(),
                 },
                 (Some(percent), None) => {
