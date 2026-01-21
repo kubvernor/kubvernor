@@ -100,6 +100,7 @@ impl HTTPEffectiveRoutingRule {
 }
 
 impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
+    #[allow(clippy::cast_possible_truncation)]
     fn from(effective_routing_rule: HTTPEffectiveRoutingRule) -> Self {
         let path_specifier = effective_routing_rule.route_matcher.path.clone().and_then(|matcher| {
             let value = matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
@@ -126,9 +127,12 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
         let route_match = RouteMatch { path_specifier, grpc: None, headers, ..Default::default() };
 
         let request_filter_headers = effective_routing_rule.request_headers.clone();
-
         let request_headers_to_add = super::headers_to_add(request_filter_headers.add, request_filter_headers.set);
         let request_headers_to_remove = request_filter_headers.remove;
+
+        let response_filter_headers = effective_routing_rule.response_headers.clone();
+        let response_headers_to_add = super::headers_to_add(response_filter_headers.add, response_filter_headers.set);
+        let response_headers_to_remove = response_filter_headers.remove;
 
         let service_cluster_names: Vec<_> =
             super::create_cluster_weights(effective_routing_rule.backends.iter().filter_map(|b| match b.backend_type() {
@@ -237,6 +241,8 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
             r#match: Some(route_match),
             request_headers_to_add,
             request_headers_to_remove,
+            response_headers_to_add,
+            response_headers_to_remove,
             action: Some(action),
             ..Default::default()
         };

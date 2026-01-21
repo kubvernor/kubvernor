@@ -86,8 +86,8 @@ impl Listener {
                     filter_backends: rr.filter_backends.clone(),
                     name: rr.name.clone(),
                     hostnames: hostnames.to_vec(),
-                    request_headers: rr.filter_headers(),
-                    response_headers: FilterHeaders::default(),
+                    request_headers: rr.filter_headers(&HTTPFilterType::RequestHeaderModifier),
+                    response_headers: rr.filter_headers(&HTTPFilterType::ResponseHeaderModifier),
                     redirect_filter: rr
                         .filters
                         .iter()

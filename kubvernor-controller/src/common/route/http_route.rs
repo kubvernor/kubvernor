@@ -184,16 +184,20 @@ pub struct HTTPRoutingRule {
 }
 
 impl HTTPRoutingRule {
-    pub fn filter_headers(&self) -> FilterHeaders {
-        fn iter<T: Clone, X>(routing_rule: &HTTPRoutingRule, x: X) -> Vec<T>
+    pub fn filter_headers(&self, filter_type: &HTTPFilterType) -> FilterHeaders {
+        fn iter<T: Clone, X>(routing_rule: &HTTPRoutingRule, x: X, filter_type: &HTTPFilterType) -> Vec<T>
         where
             X: Fn(Option<&HeaderModifier>) -> Option<&Vec<T>>,
         {
             routing_rule
                 .filters
                 .iter()
-                .filter(|f| f.r#type == HTTPFilterType::RequestHeaderModifier)
-                .filter_map(|f| x(f.request_header_modifier.as_ref()))
+                .filter(|f| f.r#type == *filter_type)
+                .filter_map(|f| match filter_type {
+                    HTTPFilterType::RequestHeaderModifier => x(f.request_header_modifier.as_ref()),
+                    HTTPFilterType::ResponseHeaderModifier => x(f.response_header_modifier.as_ref()),
+                    _ => None,
+                })
                 .map(std::iter::IntoIterator::into_iter)
                 .flat_map(std::iter::Iterator::collect::<Vec<_>>)
                 .cloned()
@@ -201,9 +205,9 @@ impl HTTPRoutingRule {
         }
 
         FilterHeaders {
-            add: iter::<HTTPHeader, _>(self, get_add_headers),
-            remove: iter::<String, _>(self, get_remove_headers),
-            set: iter::<HTTPHeader, _>(self, get_set_headers),
+            add: iter::<HTTPHeader, _>(self, get_add_headers, filter_type),
+            remove: iter::<String, _>(self, get_remove_headers, filter_type),
+            set: iter::<HTTPHeader, _>(self, get_set_headers, filter_type),
         }
     }
 }
