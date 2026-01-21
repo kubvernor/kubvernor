@@ -11,7 +11,7 @@ use envoy_api_rs::{
                 RedirectAction, Route as EnvoyRoute, RouteAction, RouteMatch, WeightedCluster,
                 redirect_action::{self, PathRewriteSpecifier, SchemeRewriteSpecifier},
                 route::Action,
-                route_action::{self, ClusterSpecifier, RequestMirrorPolicy},
+                route_action::{self, ClusterSpecifier, HostRewriteSpecifier, RequestMirrorPolicy},
                 route_match::PathSpecifier,
             },
         },
@@ -194,13 +194,19 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
 
         info!("Mirror policies {:?} {mirror_policy:?}", mirror_policy.as_ref().map(|p: &Vec<_>| p.len()));
 
+        let host_rewrite_specifier = effective_routing_rule
+            .rewrite_url_filter
+            .as_ref()
+            .and_then(|f| f.hostname.as_ref().map(|host| HostRewriteSpecifier::HostRewriteLiteral(host.clone())));
+        info!("Hostname rewrite options {:?}", host_rewrite_specifier);
+
         let cluster_action = RouteAction {
             cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
             cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
                 clusters: service_cluster_names.into_iter().chain(inference_cluster_names).collect(),
                 ..Default::default()
             })),
-
+            host_rewrite_specifier,
             request_mirror_policies: mirror_policy.unwrap_or_default(),
             ..Default::default()
         };
@@ -243,6 +249,7 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
             request_headers_to_remove,
             response_headers_to_add,
             response_headers_to_remove,
+
             action: Some(action),
             ..Default::default()
         };

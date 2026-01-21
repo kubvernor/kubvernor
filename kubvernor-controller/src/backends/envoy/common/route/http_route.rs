@@ -1,7 +1,7 @@
 use std::cmp;
 
 use gateway_api::{
-    common::{RequestMirror, RequestRedirect},
+    common::{HttpRouteUrlRewrite, RequestMirror, RequestRedirect},
     httproutes::RouteMatch,
 };
 use tracing::debug;
@@ -22,6 +22,7 @@ pub struct HTTPEffectiveRoutingRule {
 
     pub redirect_filter: Option<RequestRedirect>,
     pub mirror_filter: Option<RequestMirror>,
+    pub rewrite_url_filter: Option<HttpRouteUrlRewrite>,
 }
 
 impl PartialOrd for HTTPEffectiveRoutingRule {

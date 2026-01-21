@@ -88,6 +88,10 @@ impl Listener {
                     hostnames: hostnames.to_vec(),
                     request_headers: rr.filter_headers(&HTTPFilterType::RequestHeaderModifier),
                     response_headers: rr.filter_headers(&HTTPFilterType::ResponseHeaderModifier),
+                    rewrite_url_filter: rr
+                        .filters
+                        .iter()
+                        .find_map(|f| if f.r#type == HTTPFilterType::UrlRewrite { f.url_rewrite.clone() } else { None }),
                     redirect_filter: rr
                         .filters
                         .iter()
