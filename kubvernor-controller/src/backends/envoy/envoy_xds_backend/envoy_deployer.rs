@@ -383,6 +383,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
         let http_connection_manager = HttpConnectionManager {
             stat_prefix: listener_name.clone(),
             codec_type: CodecType::Auto.into(),
+            merge_slashes: true,
             http_filters: vec![external_processor_filter, router_filter],
             route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
                 name: format!("{listener_name}-route"),
@@ -692,7 +693,7 @@ const ENVOY_POD_SPEC: &str = r#"
             "command": [
                 "envoy"
             ],
-            "image": "docker.io/envoyproxy/envoy:v1.36.4",
+            "image": "docker.io/envoyproxy/envoy:v1.37.0",
             "imagePullPolicy": "IfNotPresent",
             "name": "envoy",
             "env": [

@@ -99,11 +99,75 @@ impl HTTPEffectiveRoutingRule {
     }
 }
 
-impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
-    #[allow(clippy::cast_possible_truncation)]
+impl From<HTTPEffectiveRoutingRule> for Vec<EnvoyRoute> {
     fn from(effective_routing_rule: HTTPEffectiveRoutingRule) -> Self {
+        let (full_path_rewrite, prefix_rewrite) = effective_routing_rule
+            .rewrite_url_filter
+            .as_ref()
+            .and_then(|f| {
+                f.path.as_ref().map(|path| match (&path.replace_full_path, &path.replace_prefix_match) {
+                    (None, Some(prefix_match)) => Some((String::new(), prefix_match.clone())),
+                    (Some(full_path), None) => Some((full_path.clone(), String::new())),
+                    (None, None) | (Some(_), Some(_)) => None,
+                })
+            })
+            .flatten()
+            .unwrap_or_default();
+        if prefix_rewrite.is_empty() {
+            vec![EnvoyRoute::from(Holder::from((effective_routing_rule, true)))]
+        } else {
+            vec![
+                EnvoyRoute::from(Holder::from((effective_routing_rule.clone(), false))),
+                EnvoyRoute::from(Holder::from((effective_routing_rule, true))),
+            ]
+        }
+    }
+}
+
+struct Holder {
+    rule: HTTPEffectiveRoutingRule,
+    change: bool,
+}
+impl Holder {
+    fn new(route: HTTPEffectiveRoutingRule, change: bool) -> Self {
+        Self { rule: route, change }
+    }
+}
+
+impl From<(HTTPEffectiveRoutingRule, bool)> for Holder {
+    fn from(value: (HTTPEffectiveRoutingRule, bool)) -> Self {
+        Holder::new(value.0, value.1)
+    }
+}
+
+impl From<Holder> for EnvoyRoute {
+    #[allow(clippy::cast_possible_truncation)]
+    fn from(holder: Holder) -> Self {
+        let Holder { rule: effective_routing_rule, change: update_path } = holder;
+        let (full_path_rewrite, prefix_rewrite) = effective_routing_rule
+            .rewrite_url_filter
+            .as_ref()
+            .and_then(|f| {
+                f.path.as_ref().map(|path| match (&path.replace_full_path, &path.replace_prefix_match) {
+                    (None, Some(prefix_match)) => Some((String::new(), prefix_match.clone())),
+                    (Some(full_path), None) => Some((full_path.clone(), String::new())),
+                    (None, None) | (Some(_), Some(_)) => None,
+                })
+            })
+            .flatten()
+            .unwrap_or_default();
+
+        info!("Path rewrite options: prefix={}, full path rewrite={}", prefix_rewrite, full_path_rewrite);
+        info!("Matcher value {:?}", effective_routing_rule.route_matcher);
+        let prefix_rewrite = if update_path || prefix_rewrite.len() > 1 { prefix_rewrite } else { prefix_rewrite + "/" };
+
         let path_specifier = effective_routing_rule.route_matcher.path.clone().and_then(|matcher| {
-            let value = matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v });
+            let value: String = if update_path {
+                matcher.value.clone().map_or("/".to_owned(), |v| if v.len() > 1 { v.trim_end_matches('/').to_owned() } else { v })
+            } else {
+                matcher.value.clone().unwrap_or("/".to_owned())
+            };
+
             matcher.r#type.map(|t| match t {
                 httproutes::HttpRouteRulesMatchesPathType::Exact => PathSpecifier::Path(value),
                 httproutes::HttpRouteRulesMatchesPathType::PathPrefix => {
@@ -206,7 +270,10 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
                 clusters: service_cluster_names.into_iter().chain(inference_cluster_names).collect(),
                 ..Default::default()
             })),
+
             host_rewrite_specifier,
+            prefix_rewrite,
+            path_rewrite: full_path_rewrite,
             request_mirror_policies: mirror_policy.unwrap_or_default(),
             ..Default::default()
         };

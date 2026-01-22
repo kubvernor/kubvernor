@@ -385,7 +385,7 @@ impl<'a> ResourceGenerator<'a> {
                 .collect();
 
             listener_map.insert(EnvoyVirtualHost {
-                http_routes: http_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
+                http_routes: http_matching_rules.clone().into_iter().flat_map(Vec::<EnvoyRoute>::from).collect(),
                 grpc_routes: grpc_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
                 name: listener.name().to_owned() + "-" + &potential_hostname,
                 effective_hostnames: Self::calculate_effective_hostnames(&resolved, Some(potential_hostname)),
