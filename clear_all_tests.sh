@@ -45,7 +45,7 @@ kubectl patch --namespace gateway-conformance-infra httproute/wildcard-host-matc
 kubectl patch --namespace gateway-conformance-infra httproute/matching --type json --patch='[ { "op": "remove", "path": "/metadata/finalizers" } ]'
 kubectl patch --namespace gateway-conformance-infra grpcroute/grpc-header-matching  --type json --patch='[ { "op": "remove", "path": "/metadata/finalizers" } ]'
 kubectl patch --namespace gateway-conformance-infra grpcroute/exact-matching  --type json --patch='[ { "op": "remove", "path": "/metadata/finalizers" } ]'
-
+kubectl patch --namespace gateway-conformance-infra grpcroute/weighted-backends  --type json --patch='[ { "op": "remove", "path": "/metadata/finalizers" } ]'
 
 
 
