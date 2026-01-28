@@ -332,10 +332,14 @@ struct Resources {
     secrets: Vec<ResourceKey>,
 }
 
+fn calculate_effective_hostnames(hostname: &str) -> Vec<String> {
+    vec![hostname.to_owned()]
+}
+
 fn create_resources(gateway: &Gateway) -> Resources {
     let mut listener_resources = vec![];
     let mut secret_resources = vec![];
-    let mut resource_generator = ResourceGenerator::new(gateway, GatewayImplementationType::Orion);
+    let mut resource_generator = ResourceGenerator::new(gateway, GatewayImplementationType::Orion, Box::new(calculate_effective_hostnames));
 
     let listeners = resource_generator.generate_envoy_listeners().values();
 
@@ -796,4 +800,37 @@ fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
         projected: Some(ProjectedVolumeSource { sources: Some(secrets), ..Default::default() }),
         ..Default::default()
     }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_effective_hostnames() {
+        let routes = vec![];
+        let hostname = Some("*".to_owned());
+        let hostnames = crate::backends::envoy::common::resource_generator::calculate_hostnames_common(
+            &routes,
+            hostname,
+            calculate_effective_hostnames,
+        );
+        assert_eq!(hostnames, vec!["*".to_owned()]);
+        let hostname = Some("host.blah".to_owned());
+        let hostnames: BTreeSet<String> = crate::backends::envoy::common::resource_generator::calculate_hostnames_common(
+            &routes,
+            hostname,
+            calculate_effective_hostnames,
+        )
+        .into_iter()
+        .collect();
+        assert_eq!(hostnames, vec!["host.blah".to_owned(), "host.blah:*".to_owned()].into_iter().collect::<BTreeSet<_>>());
+        let hostname = Some("host.blah".to_owned());
+        let hostnames = crate::backends::envoy::common::resource_generator::calculate_hostnames_common(&routes, hostname, |h| {
+            vec![format!("{h}:*"), h.to_owned()]
+        })
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+        assert_eq!(hostnames, vec!["host.blah".to_owned(), "host.blah:*".to_owned()].into_iter().collect::<BTreeSet<_>>());
+    }
 }

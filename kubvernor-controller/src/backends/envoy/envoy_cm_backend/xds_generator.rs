@@ -206,11 +206,11 @@ impl<'a> EnvoyXDSGenerator<'a> {
     }
 
     fn calculate_potential_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
-        calculate_hostnames_common(routes, listener_hostname, |h| vec![h])
+        calculate_hostnames_common(routes, listener_hostname, |h| vec![h.to_owned()])
     }
 
     fn calculate_effective_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
-        calculate_hostnames_common(routes, listener_hostname, |h| vec![format!("{h}:*"), h])
+        calculate_hostnames_common(routes, listener_hostname, |h| vec![format!("{h}:*"), h.to_owned()])
     }
 
     #[allow(clippy::too_many_lines)]
