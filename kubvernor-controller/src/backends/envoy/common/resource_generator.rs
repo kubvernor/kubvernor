@@ -38,7 +38,8 @@ use tracing::{debug, error};
 
 use crate::{
     backends::envoy::common::{
-        ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory, converters, get_inference_pool_configurations,
+        ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory, converters, enable_ect_proc_filter,
+        get_inference_pool_configurations,
         route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule},
     },
     common::{
@@ -198,6 +199,7 @@ pub struct EnvoyListener {
     pub http_listener_map: BTreeSet<EnvoyVirtualHost>,
     pub tcp_listener_map: BTreeSet<ListenerNameToHostname>,
     pub tls_type: Option<TlsType>,
+    pub enable_ext_proc: bool,
 }
 
 pub type HostnameCalculator = Box<dyn Fn(&str) -> Vec<String>>;
@@ -351,6 +353,7 @@ impl<'a> ResourceGenerator<'a> {
                                 http_listener_map: BTreeSet::new(),
                                 tcp_listener_map: listener_map,
                                 tls_type: None,
+                                enable_ext_proc: false,
                             },
                         );
                     },
@@ -369,6 +372,7 @@ impl<'a> ResourceGenerator<'a> {
         let mut listener_map = BTreeSet::new();
         let potential_hostnames = Self::calculate_potential_hostnames(&resolved, listener.hostname().cloned());
         debug!("generate_virtual_hosts Potential hostnames {potential_hostnames:?}");
+        let mut enable_ext_proc = false;
         for potential_hostname in potential_hostnames {
             let http_matching_rules = listener
                 .http_matching_rules()
@@ -397,6 +401,8 @@ impl<'a> ResourceGenerator<'a> {
                 .chain(http_matching_rules.iter().filter_map(get_inference_pool_configurations))
                 .collect();
 
+            enable_ext_proc |= http_matching_rules.iter().any(enable_ect_proc_filter);
+
             listener_map.insert(EnvoyVirtualHost {
                 http_routes: http_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
                 grpc_routes: grpc_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
@@ -413,6 +419,7 @@ impl<'a> ResourceGenerator<'a> {
             tls_type: listener.config().tls_type.clone(),
             http_listener_map: listener_map,
             tcp_listener_map: BTreeSet::new(),
+            enable_ext_proc,
         }
     }
 

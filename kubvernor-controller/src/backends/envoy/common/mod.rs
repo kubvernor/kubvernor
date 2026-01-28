@@ -125,6 +125,17 @@ pub fn get_inference_pool_configurations(effective_route: &HTTPEffectiveRoutingR
         .map(|conf| InferenceClusterInfo { cluster_name: effective_route.inference_cluster_name(), config: (**conf).clone() })
 }
 
+pub fn enable_ect_proc_filter(effective_route: &HTTPEffectiveRoutingRule) -> bool {
+    effective_route
+        .backends
+        .iter()
+        .find_map(|b| match b.backend_type() {
+            crate::common::BackendType::InferencePool(_) => Some(true),
+            _ => None,
+        })
+        .is_some()
+}
+
 pub fn get_inference_extension_configurations(backends: &[Backend]) -> Vec<&InferencePoolTypeConfig> {
     backends
         .iter()

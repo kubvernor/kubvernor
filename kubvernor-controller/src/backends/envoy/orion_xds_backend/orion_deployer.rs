@@ -345,55 +345,63 @@ fn create_resources(gateway: &Gateway) -> Resources {
     let listeners = resource_generator.generate_envoy_listeners().values();
 
     for listener in listeners {
+        let mut http_filters = vec![];
         let router = Router { ..Default::default() };
-        let ext_processor = ExternalProcessor {
-            processing_mode: Some(ProcessingMode {
-                request_header_mode: HeaderSendMode::Skip.into(),
-                response_header_mode: HeaderSendMode::Skip.into(),
-                ..Default::default()
-            }),
 
-            grpc_service: Some(GrpcService {
-                target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
-                    target_uri: "127.0.0.1:1000".to_owned(),
-                    stat_prefix: listener.name.clone() + "ext_filter_stats",
+        if listener.enable_ext_proc {
+            let ext_processor = ExternalProcessor {
+                processing_mode: Some(ProcessingMode {
+                    request_header_mode: HeaderSendMode::Skip.into(),
+                    response_header_mode: HeaderSendMode::Skip.into(),
                     ..Default::default()
-                })),
+                }),
+
+                grpc_service: Some(GrpcService {
+                    target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
+                        target_uri: "127.0.0.1:1000".to_owned(),
+                        stat_prefix: listener.name.clone() + "ext_filter_stats",
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                }),
+                send_body_without_waiting_for_header_response: true,
+                message_timeout: Some(DurationConverter::from(std::time::Duration::from_secs(2))),
+                failure_mode_allow: true,
+                allow_mode_override: true,
                 ..Default::default()
-            }),
-            send_body_without_waiting_for_header_response: true,
-            message_timeout: Some(DurationConverter::from(std::time::Duration::from_secs(2))),
-            failure_mode_allow: true,
-            allow_mode_override: true,
-            ..Default::default()
-        };
+            };
+
+            let http_connection_manager_ext_processor_any = converters::AnyTypeConverter::from((
+                "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor".to_owned(),
+                &ext_processor,
+            ));
+
+            let external_processor_filter = HttpFilter {
+                name: INFERENCE_EXT_PROC_FILTER_NAME.to_owned(),
+                is_optional: false,
+                disabled: false,
+                config_type: Some(ConfigType::TypedConfig(http_connection_manager_ext_processor_any)),
+            };
+            http_filters.push(external_processor_filter);
+        }
+
         let listener_name = listener.name.clone();
+
         let http_connection_manager_router_filter_any =
             converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.router.v3.Router".to_owned(), &router));
-        let http_connection_manager_ext_processor_any = converters::AnyTypeConverter::from((
-            "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor".to_owned(),
-            &ext_processor,
-        ));
-
         let router_filter = HttpFilter {
             name: format!("{listener_name}-http-connection-manager-route-filter"),
             is_optional: false,
             disabled: false,
             config_type: Some(ConfigType::TypedConfig(http_connection_manager_router_filter_any)),
         };
-
-        let external_processor_filter = HttpFilter {
-            name: INFERENCE_EXT_PROC_FILTER_NAME.to_owned(),
-            is_optional: false,
-            disabled: false,
-            config_type: Some(ConfigType::TypedConfig(http_connection_manager_ext_processor_any)),
-        };
+        http_filters.push(router_filter);
 
         let virtual_hosts = generate_virtual_hosts_from_xds(&listener.http_listener_map);
         let http_connection_manager = HttpConnectionManager {
             stat_prefix: listener_name.clone(),
             codec_type: CodecType::Auto.into(),
-            http_filters: vec![external_processor_filter, router_filter],
+            http_filters,
             route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
                 name: format!("{listener_name}-route"),
                 virtual_hosts,
