@@ -329,7 +329,7 @@ struct Resources {
 }
 
 fn calculate_effective_hostnames(hostname: &str) -> Vec<String> {
-    vec![format!("{hostname}:*")]
+    vec![hostname.to_owned(), format!("{hostname}:*")]
 }
 fn create_resources(gateway: &Gateway) -> Resources {
     let mut listener_resources = vec![];

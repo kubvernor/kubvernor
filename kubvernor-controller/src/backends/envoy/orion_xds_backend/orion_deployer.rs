@@ -841,7 +841,7 @@ mod tests {
         )
         .into_iter()
         .collect();
-        assert_eq!(hostnames, vec!["host.blah".to_owned(), "host.blah:*".to_owned()].into_iter().collect::<BTreeSet<_>>());
+        assert_eq!(hostnames, vec!["host.blah".to_owned()].into_iter().collect::<BTreeSet<_>>());
         let hostname = Some("host.blah".to_owned());
         let hostnames = crate::backends::envoy::common::resource_generator::calculate_hostnames_common(&routes, hostname, |h| {
             vec![format!("{h}:*"), h.to_owned()]
