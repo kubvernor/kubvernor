@@ -156,12 +156,6 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
                 crate::common::BackendType::InferencePool(_) => None,
             }));
 
-        let inference_cluster_names: Vec<_> =
-            super::create_cluster_weights(effective_routing_rule.backends.iter().filter_map(|b| match b.backend_type() {
-                crate::common::BackendType::InferencePool(inference_type_config) => Some(inference_type_config),
-                _ => None,
-            }));
-
         let mirror_policy = effective_routing_rule.mirror_filter.as_ref().map(|mirror_filter| {
             let mirror_backends: Vec<String> = effective_routing_rule
                 .filter_backends
@@ -217,7 +211,7 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
         let cluster_action = RouteAction {
             cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
             cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
-                clusters: service_cluster_names.into_iter().chain(inference_cluster_names).collect(),
+                clusters: service_cluster_names.into_iter().collect(),
                 ..Default::default()
             })),
             host_rewrite_specifier,

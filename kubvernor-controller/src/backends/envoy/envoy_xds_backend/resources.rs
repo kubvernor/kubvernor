@@ -5,11 +5,13 @@ use envoy_api_rs::{
     },
     prost::{self, Message},
 };
+use tracing::debug;
 
 use super::model::TypeUrl;
 use crate::backends::envoy::common::converters;
 
 pub fn create_cluster_resource(cluster: &Cluster) -> Resource {
+    debug!("Envoy cluster {cluster:#?}");
     let any = converters::AnyTypeConverter::from((TypeUrl::Cluster.to_string(), cluster));
     let mut cluster_resource = Resource { ..Default::default() };
     cluster_resource.name.clone_from(&cluster.name);
@@ -19,6 +21,7 @@ pub fn create_cluster_resource(cluster: &Cluster) -> Resource {
 
 pub fn create_listener_resource(listener: &Listener) -> Resource {
     let mut buf: Vec<u8> = vec![];
+    debug!("Envoy listener {listener:#?}");
     listener.encode(&mut buf).expect("We expect this to work");
     let any = prost::bytes::Bytes::from(buf);
     let any = envoy_api_rs::google::protobuf::Any { type_url: TypeUrl::Listener.to_string(), value: any.to_vec() };
