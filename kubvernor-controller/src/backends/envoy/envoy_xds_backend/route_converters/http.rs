@@ -53,8 +53,8 @@ impl HTTPEffectiveRoutingRule {
                 debug!("Inference Pool: setting up external service with {conf:?}");
                 conf.inference_config
                     .as_ref()
-                    .map(|conf| {
-                        let inference_cluster_name = inference_cluster_name(&envoy_route);
+                    .map(|inference_conf| {
+                        let inference_cluster_name = inference_cluster_name(&envoy_route, &conf.resource_key);
                         let ext_proc_route = ExtProcPerRoute {
                             r#override: Some(Override::Overrides(ExtProcOverrides {
                                 processing_mode: Some(ProcessingMode {
@@ -70,7 +70,7 @@ impl HTTPEffectiveRoutingRule {
                                     })),
                                     ..Default::default()
                                 }),
-                                failure_mode_allow: match conf.extension_ref().failure_mode.as_ref() {
+                                failure_mode_allow: match inference_conf.extension_ref().failure_mode.as_ref() {
                                     Some(InferencePoolEndpointPickerRefFailureMode::FailOpen) => Some(BoolValue { value: true }),
                                     Some(InferencePoolEndpointPickerRefFailureMode::FailClose) | None => Some(BoolValue { value: false }),
                                 },

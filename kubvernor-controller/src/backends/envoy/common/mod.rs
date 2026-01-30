@@ -9,6 +9,7 @@ use envoy_api_rs::{
     },
     google::protobuf::Duration,
 };
+use kubvernor_common::ResourceKey;
 pub use route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule};
 
 use crate::{
@@ -101,12 +102,12 @@ impl InferenceClusterInfo {
     }
 }
 
-pub fn inference_cluster_name(envoy_route: &EnvoyRoute) -> String {
-    make_inference_cluster_name(envoy_route.name.clone())
+pub fn inference_cluster_name(envoy_route: &EnvoyRoute, resource_key: &ResourceKey) -> String {
+    make_inference_cluster_name(envoy_route.name.clone(), resource_key)
 }
 
-pub fn make_inference_cluster_name(name: String) -> String {
-    name + "-extsvc"
+pub fn make_inference_cluster_name(name: String, resource_key: &ResourceKey) -> String {
+    name + "-extsvc-" + &resource_key.to_string()
 }
 
 pub fn envoy_route_name(effective_route: &HTTPEffectiveRoutingRule) -> String {
@@ -114,15 +115,16 @@ pub fn envoy_route_name(effective_route: &HTTPEffectiveRoutingRule) -> String {
 }
 
 impl HTTPEffectiveRoutingRule {
-    fn inference_cluster_name(&self) -> String {
-        make_inference_cluster_name(envoy_route_name(self))
+    fn inference_cluster_name(&self, resource_key: &ResourceKey) -> String {
+        make_inference_cluster_name(envoy_route_name(self), resource_key)
     }
 }
 
 pub fn get_inference_pool_configurations(effective_route: &HTTPEffectiveRoutingRule) -> Option<InferenceClusterInfo> {
-    get_inference_extension_configurations(&effective_route.backends)
-        .first()
-        .map(|conf| InferenceClusterInfo { cluster_name: effective_route.inference_cluster_name(), config: (**conf).clone() })
+    get_inference_extension_configurations(&effective_route.backends).first().map(|conf| InferenceClusterInfo {
+        cluster_name: effective_route.inference_cluster_name(&conf.resource_key),
+        config: (**conf).clone(),
+    })
 }
 
 pub fn enable_ect_proc_filter(effective_route: &HTTPEffectiveRoutingRule) -> bool {
