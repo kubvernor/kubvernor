@@ -64,25 +64,57 @@ static_resources:
                       routes:
                         - match:
                             prefix: "/"
-                          typed_per_filter_config:
-                            inference-ext-config:
-                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
-                              overrides:
-                                processing_mode:
-                                  request_header_mode: SEND
-                                  request_body_mode: FULL_DUPLEX_STREAMED
-                                grpc_service:
-                                  # google_grpc:
-                                  #   target_uri: https://192.168.1.10:9002
-                                  #   stat_prefix: "dkjfkdjfkdj"
-                                  envoy_grpc:
-                                    cluster_name: cluster_ext_svc
-                                failure_mode_allow: false
+                            runtime_fraction:
+                              default_value:
+                                numerator: 30
+
+                          # typed_per_filter_config:
+                          #   inference-ext-config:
+                          #     "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
+                          #     overrides:
+                          #       processing_mode:
+                          #         request_header_mode: SEND
+                          #         request_body_mode: FULL_DUPLEX_STREAMED
+                          #       grpc_service:
+                          #         # google_grpc:
+                          #         #   target_uri: https://192.168.1.10:9002
+                          #         #   stat_prefix: "dkjfkdjfkdj"
+                          #         envoy_grpc:
+                          #           cluster_name: cluster_ext_svc_1
+                          #       failure_mode_allow: false
                           route:
-                            cluster: cluster_http
+                            cluster: cluster_http_1
+                        - match:
+                            prefix: "/"
+                            runtime_fraction:
+                              default_value:
+                                numerator: 30
+
+                                
+                          # typed_per_filter_config:
+                          #   inference-ext-config:
+                          #     "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
+                          #     overrides:
+                          #       processing_mode:
+                          #         request_header_mode: SEND
+                          #         request_body_mode: FULL_DUPLEX_STREAMED
+                          #       grpc_service:
+                          #         # google_grpc:
+                          #         #   target_uri: https://192.168.1.10:9002
+                          #         #   stat_prefix: "dkjfkdjfkdj"
+                          #         envoy_grpc:
+                          #           cluster_name: cluster_ext_svc_2
+                          #       failure_mode_allow: false
+                          route:
+                            cluster: cluster_http_2
+                        - match:
+                            prefix: "/"
+                          route:
+                            cluster: cluster_http_3
+
 
   clusters:
-    - name: cluster_http
+    - name: cluster_http_1
       connect_timeout: 0.25s
       type: STATIC
       lb_policy: ROUND_ROBIN
@@ -101,7 +133,7 @@ static_resources:
               allow_absolute_url: true
 
       load_assignment:
-        cluster_name: cluster_http
+        cluster_name: cluster_http_1
         endpoints:
           - locality:
               region: europe
@@ -116,13 +148,94 @@ static_resources:
                       address: 127.0.0.1
                       port_value: 4001
                 load_balancing_weight: 1
+              # - endpoint:
+              #     address:
+              #       socket_address:
+              #         address: 127.0.0.1
+              #         port_value: 4002
+              #   load_balancing_weight: 1
+    - name: cluster_http_2
+      connect_timeout: 0.25s
+      type: STATIC
+      lb_policy: ROUND_ROBIN
+      common_lb_config:
+        locality_weighted_lb_config: {}
+
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          upstream_http_protocol_options:
+            auto_sni: true
+          common_http_protocol_options:
+            idle_timeout: 1s
+          explicit_http_config:
+            http_protocol_options:
+              allow_absolute_url: true
+
+      load_assignment:
+        cluster_name: cluster_http_2
+        endpoints:
+          - locality:
+              region: europe
+              zone: ireland
+              sub_zone: dublin
+            priority: 0
+            load_balancing_weight: 1
+            lb_endpoints:
+              # - endpoint:
+              #     address:
+              #       socket_address:
+              #         address: 127.0.0.1
+              #         port_value: 4001
+              #   load_balancing_weight: 1
               - endpoint:
                   address:
                     socket_address:
                       address: 127.0.0.1
                       port_value: 4002
                 load_balancing_weight: 1
-    - name: cluster_ext_svc
+    - name: cluster_http_3
+      connect_timeout: 0.25s
+      type: STATIC
+      lb_policy: ROUND_ROBIN
+      common_lb_config:
+        locality_weighted_lb_config: {}
+
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          upstream_http_protocol_options:
+            auto_sni: true
+          common_http_protocol_options:
+            idle_timeout: 1s
+          explicit_http_config:
+            http_protocol_options:
+              allow_absolute_url: true
+
+      load_assignment:
+        cluster_name: cluster_http_3
+        endpoints:
+          - locality:
+              region: europe
+              zone: ireland
+              sub_zone: dublin
+            priority: 0
+            load_balancing_weight: 1
+            lb_endpoints:
+              # - endpoint:
+              #     address:
+              #       socket_address:
+              #         address: 127.0.0.1
+              #         port_value: 4001
+              #   load_balancing_weight: 1
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: 127.0.0.1
+                      port_value: 4003
+                load_balancing_weight: 1                
+                
+    - name: cluster_ext_svc_1
       connect_timeout: 0.25s
       type: STATIC
       lb_policy: ROUND_ROBIN
@@ -166,3 +279,47 @@ static_resources:
                       address: 192.168.1.10
                       port_value: 9002
                 load_balancing_weight: 1
+    - name: cluster_ext_svc_2
+      connect_timeout: 0.25s
+      type: STATIC
+      lb_policy: ROUND_ROBIN
+      common_lb_config:
+        locality_weighted_lb_config: {}
+
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          upstream_http_protocol_options:
+            auto_sni: true
+          common_http_protocol_options:
+            idle_timeout: 1s
+          explicit_http_config:
+            http2_protocol_options:
+              initial_stream_window_size: "700000"
+              max_concurrent_streams: "100"
+
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          common_tls_context:
+            alpn_protocols: [h2]
+            tls_params:
+              tls_minimum_protocol_version: TLSv1_3
+              tls_maximum_protocol_version: TLSv1_3
+      load_assignment:
+        cluster_name: cluster_http
+        endpoints:
+          - locality:
+              region: europe
+              zone: ireland
+              sub_zone: dublin
+            priority: 0
+            load_balancing_weight: 1
+            lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: 192.168.1.10
+                      port_value: 9003
+                load_balancing_weight: 1                

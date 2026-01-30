@@ -398,13 +398,13 @@ impl<'a> ResourceGenerator<'a> {
                 .inference_clusters
                 .clone()
                 .into_iter()
-                .chain(http_matching_rules.iter().filter_map(get_inference_pool_configurations))
+                .chain(http_matching_rules.iter().flat_map(get_inference_pool_configurations))
                 .collect();
 
             enable_ext_proc |= http_matching_rules.iter().any(enable_ect_proc_filter);
 
             listener_map.insert(EnvoyVirtualHost {
-                http_routes: http_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
+                http_routes: http_matching_rules.clone().into_iter().flat_map(Vec::<EnvoyRoute>::from).collect(),
                 grpc_routes: grpc_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
                 name: listener.name().to_owned() + "-" + &potential_hostname,
                 effective_hostnames: calculate_hostnames_common(&resolved, Some(potential_hostname), &self.effective_hostname_calculator),
