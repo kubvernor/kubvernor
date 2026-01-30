@@ -37,65 +37,105 @@ use crate::{
         HTTPEffectiveRoutingRule, INFERENCE_EXT_PROC_FILTER_NAME, converters, envoy_route_name, get_inference_extension_configurations,
         inference_cluster_name,
     },
-    common::DEFAULT_NAMESPACE_NAME,
+    common::{DEFAULT_NAMESPACE_NAME, InferencePoolTypeConfig},
 };
 
 impl HTTPEffectiveRoutingRule {
-    pub fn add_inference_filters(self, mut envoy_route: EnvoyRoute) -> EnvoyRoute {
-        let inference_extension_configuration = get_inference_extension_configurations(&self.backends);
-        if inference_extension_configuration.len() > 1 {
-            warn!("Multiple external processing filter configuration per route {:?} ", self);
-        }
+    pub fn add_inference_filters(
+        mut envoy_route: EnvoyRoute,
+        inference_pool_config: &InferencePoolTypeConfig,
+        percentage: u32,
+    ) -> EnvoyRoute {
+        let inference_cluster_name = inference_cluster_name(&envoy_route, inference_pool_config);
+        debug!("Inference Pool: setting up external service with {inference_pool_config:?} cluster name {inference_cluster_name}");
 
-        let per_route_filters = inference_extension_configuration
-            .first()
-            .and_then(|conf| {
-                debug!("Inference Pool: setting up external service with {conf:?}");
-                conf.inference_config
-                    .as_ref()
-                    .map(|conf| {
-                        let inference_cluster_name = inference_cluster_name(&envoy_route);
-                        let ext_proc_route = ExtProcPerRoute {
-                            r#override: Some(Override::Overrides(ExtProcOverrides {
-                                processing_mode: Some(ProcessingMode {
-                                    request_header_mode: HeaderSendMode::Send.into(),
-                                    request_body_mode: BodySendMode::FullDuplexStreamed.into(),
-                                    ..Default::default()
-                                }),
+        let per_route_filters = inference_pool_config.inference_config.as_ref().map(|conf| {
+            let ext_proc_route = ExtProcPerRoute {
+                r#override: Some(Override::Overrides(ExtProcOverrides {
+                    processing_mode: Some(ProcessingMode {
+                        request_header_mode: HeaderSendMode::Send.into(),
+                        request_body_mode: BodySendMode::FullDuplexStreamed.into(),
+                        ..Default::default()
+                    }),
 
-                                grpc_service: Some(GrpcService {
-                                    target_specifier: Some(TargetSpecifier::EnvoyGrpc(EnvoyGrpc {
-                                        cluster_name: inference_cluster_name,
-                                        ..Default::default()
-                                    })),
-                                    ..Default::default()
-                                }),
-                                failure_mode_allow: match conf.extension_ref().failure_mode.as_ref() {
-                                    Some(InferencePoolEndpointPickerRefFailureMode::FailOpen) => Some(BoolValue { value: true }),
-                                    Some(InferencePoolEndpointPickerRefFailureMode::FailClose) | None => Some(BoolValue { value: false }),
-                                },
-                                ..Default::default()
-                            })),
-                        };
-                        let mut per_route_filters = HashMap::new();
-                        per_route_filters.insert(
-                            INFERENCE_EXT_PROC_FILTER_NAME.to_owned(),
-                            converters::AnyTypeConverter::from((
-                                "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute".to_owned(),
-                                &ext_proc_route,
-                            )),
-                        );
-                        per_route_filters
-                    })
-                    .or_else(|| {
-                        warn!("Inference Pool: inference config not set {:?}", conf);
-                        None
-                    })
+                    grpc_service: Some(GrpcService {
+                        target_specifier: Some(TargetSpecifier::EnvoyGrpc(EnvoyGrpc {
+                            cluster_name: inference_cluster_name.clone(),
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    }),
+                    failure_mode_allow: match conf.extension_ref().failure_mode.as_ref() {
+                        Some(InferencePoolEndpointPickerRefFailureMode::FailOpen) => Some(BoolValue { value: true }),
+                        Some(InferencePoolEndpointPickerRefFailureMode::FailClose) | None => Some(BoolValue { value: false }),
+                    },
+                    ..Default::default()
+                })),
+            };
+            (
+                INFERENCE_EXT_PROC_FILTER_NAME.to_owned(),
+                converters::AnyTypeConverter::from((
+                    "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute".to_owned(),
+                    &ext_proc_route,
+                )),
+            )
+        });
+
+        envoy_route.action = Some(Action::Route(RouteAction {
+            cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
+            cluster_specifier: Some(ClusterSpecifier::Cluster(inference_cluster_name)),
+            ..Default::default()
+        }));
+
+        envoy_route.r#match = envoy_route
+            .r#match
+            .map(|mut m| {
+                m.runtime_fraction = Some(RuntimeFractionalPercent {
+                    default_value: Some(FractionalPercent {
+                        numerator: percentage,
+                        denominator: fractional_percent::DenominatorType::Hundred.into(),
+                    }),
+                    ..Default::default()
+                });
+                m
             })
-            .unwrap_or_default();
-
-        envoy_route.typed_per_filter_config = per_route_filters;
+            .or(Some(RouteMatch {
+                path_specifier: Some(PathSpecifier::Path("/".to_owned())),
+                runtime_fraction: Some(RuntimeFractionalPercent {
+                    default_value: Some(FractionalPercent {
+                        numerator: percentage,
+                        denominator: fractional_percent::DenominatorType::Hundred.into(),
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }));
+        envoy_route.typed_per_filter_config = per_route_filters.map(|t| HashMap::from([t])).unwrap_or_default();
         envoy_route
+    }
+}
+
+impl From<HTTPEffectiveRoutingRule> for Vec<EnvoyRoute> {
+    #[allow(clippy::cast_possible_truncation)]
+    fn from(effective_routing_rule: HTTPEffectiveRoutingRule) -> Self {
+        let inference_extension_configuration: Vec<InferencePoolTypeConfig> =
+            get_inference_extension_configurations(&effective_routing_rule.backends);
+
+        let envoy_route = EnvoyRoute::from(effective_routing_rule);
+
+        if inference_extension_configuration.is_empty() {
+            vec![envoy_route]
+        } else {
+            let total_weight = inference_extension_configuration.iter().fold(0, |acc, x| acc + x.weight);
+            let mut new_routes = vec![];
+            for i in inference_extension_configuration {
+                let envoy_route_with_inference = envoy_route.clone();
+                let percentage = ((f64::from(i.weight) / f64::from(total_weight)) * 100.0) as u32;
+                debug!("Configuring Envoy Route for Inference Backend with route match runtime fraction {percentage}");
+                new_routes.push(HTTPEffectiveRoutingRule::add_inference_filters(envoy_route_with_inference, &i, percentage));
+            }
+            new_routes
+        }
     }
 }
 
@@ -140,12 +180,6 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
                     Some(service_type_config)
                 },
                 crate::common::BackendType::InferencePool(_) => None,
-            }));
-
-        let inference_cluster_names: Vec<_> =
-            super::create_cluster_weights(effective_routing_rule.backends.iter().filter_map(|b| match b.backend_type() {
-                crate::common::BackendType::InferencePool(inference_type_config) => Some(inference_type_config),
-                _ => None,
             }));
 
         let mirror_policy = effective_routing_rule.mirror_filter.as_ref().map(|mirror_filter| {
@@ -203,7 +237,7 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
         let cluster_action = RouteAction {
             cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
             cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
-                clusters: service_cluster_names.into_iter().chain(inference_cluster_names).collect(),
+                clusters: service_cluster_names.into_iter().collect(),
                 ..Default::default()
             })),
             host_rewrite_specifier,
@@ -242,7 +276,7 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
             Action::Route(cluster_action)
         };
 
-        let route = EnvoyRoute {
+        EnvoyRoute {
             name: envoy_route_name(&effective_routing_rule),
             r#match: Some(route_match),
             request_headers_to_add,
@@ -252,8 +286,7 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
 
             action: Some(action),
             ..Default::default()
-        };
-        effective_routing_rule.add_inference_filters(route)
+        }
     }
 }
 

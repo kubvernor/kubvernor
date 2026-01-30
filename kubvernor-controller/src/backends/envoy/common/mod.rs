@@ -101,12 +101,12 @@ impl InferenceClusterInfo {
     }
 }
 
-pub fn inference_cluster_name(envoy_route: &EnvoyRoute) -> String {
-    make_inference_cluster_name(envoy_route.name.clone())
+pub fn inference_cluster_name(envoy_route: &EnvoyRoute, conf: &InferencePoolTypeConfig) -> String {
+    make_inference_cluster_name(envoy_route.name.clone(), conf)
 }
 
-pub fn make_inference_cluster_name(name: String) -> String {
-    name + "-extsvc"
+pub fn make_inference_cluster_name(name: String, conf: &InferencePoolTypeConfig) -> String {
+    name + "-extsvc" + "-" + &conf.resource_key.to_string()
 }
 
 pub fn envoy_route_name(effective_route: &HTTPEffectiveRoutingRule) -> String {
@@ -114,15 +114,16 @@ pub fn envoy_route_name(effective_route: &HTTPEffectiveRoutingRule) -> String {
 }
 
 impl HTTPEffectiveRoutingRule {
-    fn inference_cluster_name(&self) -> String {
-        make_inference_cluster_name(envoy_route_name(self))
+    fn inference_cluster_name(&self, conf: &InferencePoolTypeConfig) -> String {
+        make_inference_cluster_name(envoy_route_name(self), conf)
     }
 }
 
-pub fn get_inference_pool_configurations(effective_route: &HTTPEffectiveRoutingRule) -> Option<InferenceClusterInfo> {
+pub fn get_inference_pool_configurations(effective_route: &HTTPEffectiveRoutingRule) -> Vec<InferenceClusterInfo> {
     get_inference_extension_configurations(&effective_route.backends)
-        .first()
-        .map(|conf| InferenceClusterInfo { cluster_name: effective_route.inference_cluster_name(), config: (**conf).clone() })
+        .into_iter()
+        .map(|conf| InferenceClusterInfo { cluster_name: effective_route.inference_cluster_name(&conf), config: conf })
+        .collect()
 }
 
 pub fn enable_ect_proc_filter(effective_route: &HTTPEffectiveRoutingRule) -> bool {
@@ -136,11 +137,11 @@ pub fn enable_ect_proc_filter(effective_route: &HTTPEffectiveRoutingRule) -> boo
         .is_some()
 }
 
-pub fn get_inference_extension_configurations(backends: &[Backend]) -> Vec<&InferencePoolTypeConfig> {
+pub fn get_inference_extension_configurations(backends: &[Backend]) -> Vec<InferencePoolTypeConfig> {
     backends
         .iter()
         .filter_map(|b| match b.backend_type() {
-            crate::common::BackendType::InferencePool(inference_type_config) => Some(inference_type_config),
+            crate::common::BackendType::InferencePool(inference_type_config) => Some(inference_type_config.clone()),
             _ => None,
         })
         .collect()
