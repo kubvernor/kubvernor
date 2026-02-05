@@ -33,6 +33,7 @@ use gateway_api::{
     grpcroutes::GrpcRouteMatch,
     httproutes::{HttpRouteRulesMatchesPathType, PathMatch, RouteMatch},
 };
+use itertools::Itertools;
 use kubvernor_common::GatewayImplementationType;
 use tracing::{debug, error};
 
@@ -311,7 +312,11 @@ impl<'a> ResourceGenerator<'a> {
         debug!("Clusters produced {} {:?}", clusters.len(), clusters);
         let ext_service_clusters = self.inference_clusters.iter().filter_map(|c| self.generate_ext_service_cluster(c));
         debug!("Ext Service Clusters produced {:?}", ext_service_clusters);
-        let clusters = clusters.into_iter().chain(ext_service_clusters);
+        let clusters = clusters
+            .into_iter()
+            .chain(ext_service_clusters)
+            .sorted_by(|this, other| this.name.cmp(&other.name))
+            .dedup_by(|this, other| this.name == other.name);
         clusters.map(|c| c.cluster).collect::<Vec<_>>()
     }
 

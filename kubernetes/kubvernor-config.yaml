@@ -1,4 +1,81 @@
 ---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kubvernor-gateway-agentgateway
+spec:
+  controllerName: kubvernor.com/proxy-controller
+  parametersRef:
+    group: kubvernor.gateway.api
+    kind: KubvernorConfig
+    name: kubvernor-config-agentgateway
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kubvernor-gateway-envoy
+spec:
+  controllerName: kubvernor.com/proxy-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kubvernor-gateway-orionproxy
+spec:
+  controllerName: kubvernor.com/proxy-controller
+  parametersRef:
+    group: kubvernor.gateway.api
+    kind: KubvernorConfig
+    name: kubvernor-config-orionproxy
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kubvernor-conformance-gateway-envoy
+spec:
+  controllerName: kubvernor.com/proxy-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kubvernor-conformance-gateway-agentgateway
+spec:
+  controllerName: kubvernor.com/proxy-controller
+  parametersRef:
+    group: kubvernor.gateway.api
+    kind: KubvernorConfig
+    name: kubvernor-config-agentgateway
+    namespace: gateway-conformance-infra
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kubvernor-conformance-gateway-orionproxy
+spec:
+  controllerName: kubvernor.com/proxy-controller
+  parametersRef:
+    group: kubvernor.gateway.api
+    kind: KubvernorConfig
+    name: kubvernor-config-orionproxy
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kubvernor-conformance-inference-envoy
+spec:
+  controllerName: kubvernor.com/proxy-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kubvernor-conformance-inference-orionproxy
+spec:
+  controllerName: kubvernor.com/proxy-controller
+  parametersRef:
+    group: kubvernor.gateway.api
+    kind: KubvernorConfig
+    name: kubvernor-config-orionproxy
+---
 apiVersion: kubvernor.gateway.api/v1
 kind: KubvernorConfig
 metadata:
@@ -16,89 +93,31 @@ spec:
 apiVersion: kubvernor.gateway.api/v1
 kind: KubvernorConfig
 metadata:
-  name: kubvernor-config-orion
-spec:
-  backendtype: orion
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: kubvernor-agentgateway
-spec:
-  controllerName: kubvernor.com/proxy-controller
-  parametersRef:
-    group: kubvernor.gateway.api
-    kind: KubvernorConfig
-    name: kubvernor-config-agentgateway
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: kubvernor-gateway
-spec:
-  controllerName: kubvernor.com/proxy-controller
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: kubvernor-orionproxy-gateway
-spec:
-  controllerName: kubvernor.com/proxy-controller
-  parametersRef:
-    group: kubvernor.gateway.api
-    kind: KubvernorConfig
-    name: kubvernor-config-orion
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: kubvernor-conformance-inference-gateway
-spec:
-  controllerName: kubvernor.com/proxy-controller
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: kubvernor-conformance-gateway
-spec:
-  controllerName: kubvernor.com/proxy-controller
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: kubvernor-conformance-agentgateway
-spec:
-  controllerName: kubvernor.com/proxy-controller
-  parametersRef:
-    group: kubvernor.gateway.api
-    kind: KubvernorConfig
-    name: kubvernor-config-agentgateway
-    namespace: gateway-conformance-infra
----
-apiVersion: kubvernor.gateway.api/v1
-kind: KubvernorConfig
-metadata:
   name: kubvernor-config-agentgateway
   namespace: gateway-conformance-infra
 spec:
   backendtype: agentgateway
 ---
-apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
+apiVersion: kubvernor.gateway.api/v1
+kind: KubvernorConfig
 metadata:
-  name: kubvernor-conformance-oriongateway
+  name: kubvernor-config-orionproxy
 spec:
-  controllerName: kubvernor.com/proxy-controller
-  parametersRef:
-    group: kubvernor.gateway.api
-    kind: KubvernorConfig
-    name: kubvernor-config-oriongateway
+  backendtype: orion
 ---
 apiVersion: kubvernor.gateway.api/v1
 kind: KubvernorConfig
 metadata:
-  name: kubvernor-config-oriongateway
+  name: kubvernor-config-orionproxy
   namespace: gateway-conformance-infra
+spec:
+  backendtype: orion
+---
+apiVersion: kubvernor.gateway.api/v1
+kind: KubvernorConfig
+metadata:
+  name: kubvernor-config-orionproxy
+  namespace: inference-conformance-infra
 spec:
   backendtype: orion
 ---

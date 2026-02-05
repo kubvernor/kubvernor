@@ -45,7 +45,7 @@ metadata:
   # finalizers:
   #   - kubevernor.com/proxy-controller
 spec:
-  gatewayClassName: kubvernor-agentgateway
+  gatewayClassName: kubvernor-gateway-agentgateway
   listeners:
     - name: http-1080
       protocol: HTTP
@@ -58,7 +58,7 @@ metadata:
   # finalizers:
   #   - kubevernor.com/proxy-controller
 spec:
-  gatewayClassName: kubvernor-gateway
+  gatewayClassName: kubvernor-gateway-envoy
   listeners:
     - name: http-1080
       protocol: HTTP
@@ -71,7 +71,7 @@ metadata:
   # finalizers:
   #   - kubevernor.com/proxy-controller
 spec:
-  gatewayClassName: kubvernor-orionproxy-gateway
+  gatewayClassName: kubvernor-gateway-orionproxy
   listeners:
     - name: http-1080
       protocol: HTTP

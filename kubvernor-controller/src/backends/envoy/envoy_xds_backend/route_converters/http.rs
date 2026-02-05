@@ -55,7 +55,10 @@ impl HTTPEffectiveRoutingRule {
                     processing_mode: Some(ProcessingMode {
                         request_header_mode: HeaderSendMode::Send.into(),
                         request_body_mode: BodySendMode::FullDuplexStreamed.into(),
-                        ..Default::default()
+                        response_header_mode: HeaderSendMode::Skip.into(),
+                        response_body_mode: BodySendMode::None.into(),
+                        request_trailer_mode: HeaderSendMode::Skip.into(),
+                        response_trailer_mode: HeaderSendMode::Skip.into(),
                     }),
 
                     grpc_service: Some(GrpcService {
@@ -81,37 +84,6 @@ impl HTTPEffectiveRoutingRule {
             )
         });
 
-        // envoy_route.action = Some(Action::Route(RouteAction {
-        //     cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
-        //     cluster_specifier: Some(ClusterSpecifier::Cluster(inference_cluster_name)),
-        //     ..Default::default()
-        // }));
-
-        // envoy_route.r#match = envoy_route
-
-        // envoy_route.r#match = envoy_route
-        //     .r#match
-        //     .map(|mut m| {
-        //         m.runtime_fraction = Some(RuntimeFractionalPercent {
-        //             default_value: Some(FractionalPercent {
-        //                 numerator: percentage,
-        //                 denominator: fractional_percent::DenominatorType::Hundred.into(),
-        //             }),
-        //             ..Default::default()
-        //         });
-        //         m
-        //     })
-        //     .or(Some(RouteMatch {
-        //         path_specifier: Some(PathSpecifier::Path("/".to_owned())),
-        //         runtime_fraction: Some(RuntimeFractionalPercent {
-        //             default_value: Some(FractionalPercent {
-        //                 numerator: percentage,
-        //                 denominator: fractional_percent::DenominatorType::Hundred.into(),
-        //             }),
-        //             ..Default::default()
-        //         }),
-        //         ..Default::default()
-        //     }));
         envoy_route.typed_per_filter_config = per_route_filters.map(|t| HashMap::from([t])).unwrap_or_default();
         envoy_route
     }
@@ -125,7 +97,7 @@ impl From<HTTPEffectiveRoutingRule> for Vec<EnvoyRoute> {
 
         let envoy_route = EnvoyRoute::from(effective_routing_rule);
 
-        let routes = if inference_extension_configuration.is_empty() {
+        if inference_extension_configuration.is_empty() {
             vec![envoy_route]
         } else {
             let total_weight = inference_extension_configuration.iter().fold(0, |acc, x| acc + x.weight);
@@ -137,9 +109,7 @@ impl From<HTTPEffectiveRoutingRule> for Vec<EnvoyRoute> {
                 new_routes.push(HTTPEffectiveRoutingRule::add_inference_filters(envoy_route_with_inference, &i, percentage));
             }
             new_routes
-        };
-        info!("Created envoy routes {routes:#?}");
-        routes
+        }
     }
 }
 

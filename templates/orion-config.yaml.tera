@@ -6,4 +6,4 @@ runtime:
   max_io_events_per_tick: null # default
 
 logging:
-  log_level: "info,orion_xds=debug,orion_lib=debug,orion_proxy=debug,orion_configuration=debug"
+  log_level: "info,orion_xds=debug,orion_lib=debug,orion_proxy=debug,orion_configuration=debug,ext_proc=debug"

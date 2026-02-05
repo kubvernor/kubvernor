@@ -292,7 +292,7 @@ pub fn clear_all_conditions(mut inference_pool: InferencePool, gateways_ids: &BT
     {
         let new_parents = parents.iter().filter(|parent| {
             let key = ResourceKey::from(&parent.parent_ref);
-            gateways_ids.contains(&key)
+            !gateways_ids.contains(&key)
         });
 
         status.parents = Some(new_parents.cloned().collect());
