@@ -1,5 +1,6 @@
-use std::{collections::BTreeMap, net::IpAddr};
-
+use agentgateway_api_rs::agentgateway::dev::resource::Header;
+use agentgateway_api_rs::agentgateway::dev::resource::request_redirect::Path;
+use agentgateway_api_rs::agentgateway::dev::resource::traffic_policy_spec::HostRewrite;
 use agentgateway_api_rs::{
     agentgateway::dev::resource::{
         self, BackendPolicySpec, BackendReference, Header, Listener, Policy, PolicyTarget, ResourceName, Route, RouteBackend, RouteName,
