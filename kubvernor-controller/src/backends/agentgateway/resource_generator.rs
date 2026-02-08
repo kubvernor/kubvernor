@@ -1,17 +1,23 @@
-use std::{collections::BTreeMap, net::IpAddr};
-
+use agentgateway_api_rs::agentgateway::dev::resource::Header;
+use agentgateway_api_rs::agentgateway::dev::resource::request_redirect::Path;
+use agentgateway_api_rs::agentgateway::dev::resource::traffic_policy_spec::HostRewrite;
 use agentgateway_api_rs::{
     agentgateway::dev::resource::{
         self, BackendPolicySpec, BackendReference, Listener, Policy, PolicyTarget, ResourceName, Route, RouteBackend, RouteName,
-        StaticBackend, TypedResourceName,
+        StaticBackend, TrafficPolicySpec, TypedResourceName,
         backend::{self},
         backend_policy_spec, policy,
         policy_target::ServiceTarget,
+        traffic_policy_spec,
     },
     istio::workload::{LoadBalancing, NetworkAddress, Port, Service},
 };
+
+use gateway_api::common::HTTPHeader;
+use gateway_api::httproutes::HttpRouteFilter;
 use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
 use kubvernor_common::ResourceKey;
+use std::{collections::BTreeMap, net::IpAddr};
 use tracing::{info, warn};
 
 use crate::common::{self, Backend, BackendType, InferencePoolTypeConfig, ProtocolType};
@@ -64,7 +70,7 @@ impl<'a> ResourceGenerator<'a> {
                 key: listener_name.clone(),
                 name: Some(resource::ListenerName { gateway_name, gateway_namespace, listener_name, listener_set: None }),
                 bind_key: create_bind_name(port),
-                hostname: listener.hostname().cloned().unwrap_or_default(),
+                hostname: listener.hostname().cloned().unwrap_or("*".to_owned()),
                 protocol: listener.protocol().into(),
                 tls: None,
             };
@@ -87,9 +93,11 @@ impl<'a> ResourceGenerator<'a> {
         let mut backend_services = BTreeMap::<String, Service>::new();
         let mut backend_policies = BTreeMap::<String, Policy>::new();
         let gateway = self.effective_gateway;
+
         let routes = gateway
             .listeners()
             .flat_map(|l| {
+                let listener_port = l.port() as u32;
                 let (resolved, _) = l.routes();
                 resolved
                     .iter()
@@ -133,26 +141,39 @@ impl<'a> ResourceGenerator<'a> {
                                 info!("(Inference policies routing rule {}  {backend_policies:#?}", routing_rule.name);
 
                                 backend_policies.extend(policies);
+
                                 backend_services.extend(&mut routing_rule.backends.iter().filter_map(create_backend_services));
                                 backends.extend(&mut routing_rule.backends.iter().flat_map(create_backends).flatten());
                                 let epp_backends = epp_backends.into_iter().flatten().collect::<Vec<_>>();
                                 backends.extend(epp_backends);
+
+                                let filters = routing_rule
+                                    .filters
+                                    .iter()
+                                    .flat_map(|f| map_filters(f, listener_port))
+                                    .chain(vec![TrafficPolicySpec {
+                                        kind: Some(traffic_policy_spec::Kind::HostRewrite(HostRewrite {
+                                            mode: traffic_policy_spec::host_rewrite::Mode::None.into(),
+                                        })),
+                                        ..Default::default()
+                                    }])
+                                    .collect();
                                 Route {
                                     name: Some(RouteName {
                                         kind: match route.route_type() {
                                             common::RouteType::Http(_) => "HTTP".to_owned(),
                                             common::RouteType::Grpc(_) => "GRPC".to_owned(),
                                         },
-                                        name: route.name().to_owned(),
+                                        name: routing_rule.name.clone(),
                                         namespace: route.namespace().to_owned(),
                                         rule_name: Some(routing_rule.name.clone()),
                                     }),
-                                    key: route.name().to_owned(),
+                                    key: route.name().to_owned() + "-" + &routing_rule.name,
                                     listener_key: l.name().to_owned(),
-                                    hostnames: route.hostnames().to_vec(),
+                                    hostnames: route.hostnames().to_vec().into_iter().filter(|f| f != "*").collect(),
                                     matches: routing_rule.matching_rules.iter().map(convert_route_match).collect(),
                                     backends: routing_rule.backends.iter().filter_map(create_route_backend).collect(),
-                                    traffic_policies: vec![],
+                                    traffic_policies: filters,
                                 }
                             })
                             .collect::<Vec<_>>()
@@ -169,6 +190,70 @@ impl<'a> ResourceGenerator<'a> {
     }
 }
 
+fn map_filters(filter: &HttpRouteFilter, listener_port: u32) -> Vec<TrafficPolicySpec> {
+    [map_redirect_filter(filter, listener_port), map_request_header_modifier_filter(filter), map_response_header_modifier_filter(filter)]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn map_redirect_filter(filter: &HttpRouteFilter, listener_port: u32) -> Option<TrafficPolicySpec> {
+    filter.request_redirect.as_ref().map(|redirect_filter| TrafficPolicySpec {
+        kind: Some(traffic_policy_spec::Kind::RequestRedirect(resource::RequestRedirect {
+            scheme: redirect_filter
+                .scheme
+                .as_ref()
+                .map(|s| match s {
+                    gateway_api::common::RequestRedirectScheme::Http => "HTTP".to_owned(),
+                    gateway_api::common::RequestRedirectScheme::Https => "HTTPS".to_owned(),
+                })
+                .unwrap_or_default(),
+            host: redirect_filter.hostname.clone().unwrap_or_default(),
+            port: redirect_filter.port.map(|p| p as u32).map_or_else(
+                || match redirect_filter.scheme {
+                    Some(gateway_api::common::RequestRedirectScheme::Http) => 80,
+                    Some(gateway_api::common::RequestRedirectScheme::Https) => 443,
+                    None => listener_port,
+                },
+                |p| p,
+            ),
+            status: redirect_filter.status_code.unwrap_or(302) as u32,
+            path: redirect_filter.path.as_ref().map(|path| match path.r#type {
+                gateway_api::common::RequestOperationType::ReplaceFullPath => {
+                    Path::Full(path.replace_full_path.clone().unwrap_or_default())
+                },
+                gateway_api::common::RequestOperationType::ReplacePrefixMatch => {
+                    Path::Prefix(path.replace_prefix_match.clone().unwrap_or_default())
+                },
+            }),
+        })),
+        ..Default::default()
+    })
+}
+
+fn map_request_header_modifier_filter(filter: &HttpRouteFilter) -> Option<TrafficPolicySpec> {
+    filter.request_header_modifier.as_ref().map(|filter| TrafficPolicySpec {
+        kind: Some(traffic_policy_spec::Kind::RequestHeaderModifier(resource::HeaderModifier {
+            add: filter.add.clone().map(map_headers).unwrap_or_default(),
+            set: filter.set.clone().map(map_headers).unwrap_or_default(),
+            remove: filter.remove.clone().unwrap_or_default(),
+        })),
+        ..Default::default()
+    })
+}
+
+fn map_response_header_modifier_filter(filter: &HttpRouteFilter) -> Option<TrafficPolicySpec> {
+    filter.response_header_modifier.as_ref().map(|filter| TrafficPolicySpec {
+        kind: Some(traffic_policy_spec::Kind::ResponseHeaderModifier(resource::HeaderModifier {
+            add: filter.add.clone().map(map_headers).unwrap_or_default(),
+            set: filter.set.clone().map(map_headers).unwrap_or_default(),
+            remove: filter.remove.clone().unwrap_or_default(),
+        })),
+        ..Default::default()
+    })
+}
+
 fn convert_route_match(route_match: &gateway_api::httproutes::RouteMatch) -> agentgateway_api_rs::agentgateway::dev::resource::RouteMatch {
     agentgateway_api_rs::agentgateway::dev::resource::RouteMatch {
         path: convert_path_match(route_match.path.as_ref()),
@@ -182,7 +267,7 @@ fn create_route_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentg
     match backend {
         Backend::Resolved(BackendType::Service(config)) => Some(RouteBackend {
             backend: Some(agentgateway_api_rs::agentgateway::dev::resource::BackendReference {
-                port: config.port as u32,
+                port: config.effective_port as u32,
                 kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Backend(format!(
                     "{}/{}",
                     config.resource_key.namespace, config.resource_key.name
@@ -219,7 +304,7 @@ fn create_backends(backend: &Backend) -> Vec<Option<(String, resource::Backend)>
                         name: backend.resource_key().name.clone(),
                         namespace: backend.resource_key().namespace.clone(),
                     }),
-                    kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.port })),
+                    kind: Some(backend::Kind::Static(StaticBackend { host: config.endpoint.clone(), port: config.effective_port })),
                     inline_policies: vec![],
                     key: name,
                 },
@@ -265,6 +350,40 @@ fn create_backend_services(backend: &Backend) -> Option<(String, Service)> {
                 },
             ))
         },
+        // Backend::Resolved(BackendType::Service(config)) => {
+        //     let name = format!("{}/{}", config.resource_key.namespace, config.endpoint);
+        //     Some((
+        //         name.clone(),
+        //         Service {
+        //             name: config.resource_key.name.clone(),
+        //             namespace: config.resource_key.namespace.clone(),
+        //             hostname: config.endpoint.clone(),
+        //             ports: config.
+        //                 .target_ports
+        //                 .iter()
+        //                 .map(|p| Port { service_port: *p as u32, target_port: *p as u32, app_protocol: 0 })
+        //                 .collect(),
+        //             addresses: config.endpoints.as_ref().map_or_else(std::vec::Vec::new, |endpoints| {
+        //                 endpoints
+        //                     .iter()
+        //                     .filter_map(|e| {
+        //                         e.parse::<IpAddr>()
+        //                             .map(|addr| NetworkAddress {
+        //                                 network: String::new(),
+        //                                 address: match addr {
+        //                                     IpAddr::V4(ipv4_addr) => ipv4_addr.octets().to_vec(),
+        //                                     IpAddr::V6(ipv6_addr) => ipv6_addr.octets().to_vec(),
+        //                                 },
+        //                             })
+        //                             .ok()
+        //                     })
+        //                     .collect()
+        //             }),
+        //             load_balancing: Some(LoadBalancing { routing_preference: vec![], mode: 0, health_policy: 1 }),
+        //             ..Default::default()
+        //         },
+        //     ))
+        // },
         _ => None,
     }
 }
@@ -427,4 +546,8 @@ fn convert_query_params(
             .collect(),
         None => vec![],
     }
+}
+
+fn map_headers(headers: Vec<HTTPHeader>) -> Vec<Header> {
+    headers.into_iter().map(|header| Header { name: header.name, value: header.value }).collect()
 }

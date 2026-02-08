@@ -82,6 +82,7 @@ impl AgentgatewayDeployerChannelHandlerService {
                                     if let Ok(service) = maybe_service {
                                         let resource_generator = ResourceGenerator::new(gateway);
                                         let bindings_and_listeners = resource_generator.generate_bindings_and_listeners();
+                                        debug!("Generated bindings {:?}",bindings_and_listeners);
 
 
                                         let (routes, backends, policies, services) =

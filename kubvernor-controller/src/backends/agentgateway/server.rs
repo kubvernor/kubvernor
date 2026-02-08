@@ -222,12 +222,18 @@ impl AdsClients {
     fn update_client(&self, client: &mut AdsClient, gateway_id: &str) {
         debug!("update_client {:?} {gateway_id}", client.client_id);
         if client.gateway_id.is_none() {
-            info!("update_client {:?} {gateway_id}  Initial connection - Uupdating all resources", client.client_id);
+            info!("update_client {:?} {gateway_id} Initial connection - Updating all resources", client.client_id);
             client.set_gateway_id(gateway_id);
 
             {
+                debug!("All managed resources {:#?}", self.managed_resources.lock().expect("We expect the lock to work").clone());
                 if let Some(resources) = self.managed_resources.lock().expect("We expect the lock to work").get(gateway_id) {
-                    debug!("update_client {:?} {gateway_id} - Updating resources {:?}", client.client_id, resources);
+                    debug!(
+                        "update_client {:?} {gateway_id} Updating managed resources workloads = {} resources = {} {resources:?}",
+                        client.client_id,
+                        resources.all_resources.len(),
+                        resources.all_workloads.len()
+                    );
                     client.resources.clone_from(&resources.all_resources);
                     client.workloads.clone_from(&resources.all_workloads);
                 } else {
@@ -245,7 +251,7 @@ impl AdsClients {
     }
 
     fn update_managed_resources(&self, gateway_id: &str, resources: &[Resource]) {
-        debug!("update_managed_resources {gateway_id}");
+        debug!("update_managed_resources {gateway_id} {}", resources.len());
         let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
         managed_resources
             .entry(gateway_id.to_owned())
@@ -254,7 +260,7 @@ impl AdsClients {
     }
 
     fn update_managed_workloads(&self, gateway_id: &str, workloads: &[workload::Address]) {
-        debug!("update_managed_workloads {gateway_id}");
+        debug!("update_managed_workloads {gateway_id} {}", workloads.len());
         let mut managed_resources = self.managed_resources.lock().expect("We expect the lock to work");
         managed_resources
             .entry(gateway_id.to_owned())
@@ -263,7 +269,7 @@ impl AdsClients {
     }
 
     fn update_client_and_resources(&self, client: &AdsClient, resources: &[Resource]) {
-        debug!("update_client_and_resources {:?} {:?}", client.client_id, client.gateway_id);
+        debug!("update_client_and_resources {:?} {:?} {}", client.client_id, client.gateway_id, resources.len());
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             local_client.update_from(client);
@@ -276,11 +282,13 @@ impl AdsClients {
                 .entry(gateway_id.clone())
                 .and_modify(|m| m.all_resources.clone_from(&resources.to_vec()))
                 .or_insert(ManagedResources { all_resources: resources.to_vec(), all_workloads: vec![] });
+        } else {
+            warn!("Client has not associated with gateway so we can't update resourcess");
         }
     }
 
     fn update_client_and_workloads(&self, client: &AdsClient, workloads: &[workload::Address]) {
-        debug!("update_client_and_workloads {:?} {:?}", client.client_id, client.gateway_id);
+        debug!("update_client_and_workloads {:?} {:?} {}", client.client_id, client.gateway_id, workloads.len());
         let mut clients = self.ads_clients.lock().expect("We expect the lock to work");
         if let Some(local_client) = clients.iter_mut().find(|c| c.client_id == client.client_id) {
             local_client.update_from(client);
@@ -293,6 +301,8 @@ impl AdsClients {
                 .entry(gateway_id.clone())
                 .and_modify(|m| m.all_workloads.clone_from(&workloads.to_vec()))
                 .or_insert(ManagedResources { all_resources: vec![], all_workloads: workloads.to_vec() });
+        } else {
+            warn!("Client has not associated with gateway so we can't update resourcess");
         }
     }
 
