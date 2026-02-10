@@ -7,20 +7,23 @@ use agentgateway_api_rs::{
         backend::{self},
         backend_policy_spec, bind, policy,
         policy_target::ServiceTarget,
+        request_mirrors,
         request_redirect::Path,
-        traffic_policy_spec,
-        traffic_policy_spec::HostRewrite,
+        traffic_policy_spec::{self, HostRewrite},
     },
     istio::workload::{LoadBalancing, NetworkAddress, Port, Service},
 };
-use gateway_api::{common::HTTPHeader, httproutes::HttpRouteFilter};
+use gateway_api::{
+    common::{HTTPFilterType, HTTPHeader},
+    httproutes::HttpRouteFilter,
+};
 use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
 use kubvernor_common::ResourceKey;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     backends::agentgateway::SecureListenerWrapper,
-    common::{self, Backend, BackendType, InferencePoolTypeConfig, KeyData, ProtocolType},
+    common::{self, Backend, BackendType, DEFAULT_NAMESPACE_NAME, HTTPRoutingRule, InferencePoolTypeConfig, KeyData, ProtocolType},
 };
 
 pub(crate) struct ResourceGenerator<'a> {
@@ -184,11 +187,18 @@ impl<'a> ResourceGenerator<'a> {
                                 backend_policies.extend(policies);
 
                                 backend_services.extend(&mut routing_rule.backends.iter().filter_map(create_backend_services));
-                                backends.extend(&mut routing_rule.backends.iter().flat_map(create_backends).flatten());
+                                backends.extend(
+                                    &mut routing_rule
+                                        .backends
+                                        .iter()
+                                        .chain(&routing_rule.filter_backends)
+                                        .flat_map(create_backends)
+                                        .flatten(),
+                                );
                                 let epp_backends = epp_backends.into_iter().flatten().collect::<Vec<_>>();
                                 backends.extend(epp_backends);
 
-                                let filters = routing_rule
+                                let mut traffic_policies: Vec<_> = routing_rule
                                     .filters
                                     .iter()
                                     .flat_map(|f| map_filters(f, listener_port))
@@ -199,6 +209,13 @@ impl<'a> ResourceGenerator<'a> {
                                         ..Default::default()
                                     }])
                                     .collect();
+
+                                if let Some(mirror_policy) = create_request_mirror_traffic_policy(routing_rule) {
+                                    traffic_policies.push(mirror_policy);
+                                }
+
+                                debug!("Filter backends are {:?}", routing_rule.filter_backends);
+
                                 Route {
                                     name: Some(RouteName {
                                         kind: match route.route_type() {
@@ -214,7 +231,7 @@ impl<'a> ResourceGenerator<'a> {
                                     hostnames: route.hostnames().to_vec().into_iter().filter(|f| f != "*").collect(),
                                     matches: routing_rule.matching_rules.iter().map(convert_route_match).collect(),
                                     backends: routing_rule.backends.iter().filter_map(create_route_backend).collect(),
-                                    traffic_policies: filters,
+                                    traffic_policies,
                                 }
                             })
                             .collect::<Vec<_>>()
@@ -283,6 +300,61 @@ fn map_request_header_modifier_filter(filter: &HttpRouteFilter) -> Option<Traffi
         })),
         ..Default::default()
     })
+}
+
+fn create_request_mirror_traffic_policy(routing_rule: &HTTPRoutingRule) -> Option<TrafficPolicySpec> {
+    let mirrors: Vec<_> = routing_rule
+        .filters
+        .iter()
+        .filter_map(|f| if f.r#type == HTTPFilterType::RequestMirror { f.request_mirror.as_ref() } else { None })
+        .map(|mirror_filter| {
+            let mirror_backend_refs: Vec<_> = routing_rule
+                .filter_backends
+                .iter()
+                .filter_map(|b| match b.backend_type() {
+                    crate::common::BackendType::Service(service_type_config) | crate::common::BackendType::Invalid(service_type_config) => {
+                        Some(service_type_config)
+                    },
+                    crate::common::BackendType::InferencePool(_) => None,
+                })
+                .filter(|config| {
+                    debug!("Mirror backend {} {:?}", config.resource_key, mirror_filter.backend_ref);
+                    config.resource_key == ResourceKey::from((&mirror_filter.backend_ref, DEFAULT_NAMESPACE_NAME.to_owned()))
+                })
+                .map(|config| agentgateway_api_rs::agentgateway::dev::resource::BackendReference {
+                    port: config.effective_port as u32,
+                    kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Backend(format!(
+                        "{}/{}",
+                        config.resource_key.namespace, config.resource_key.name
+                    ))),
+                })
+                .collect();
+
+            debug!("Mirror backends {mirror_backend_refs:?}");
+
+            let percentage = match (mirror_filter.percent.as_ref(), mirror_filter.fraction.as_ref()) {
+                (None, None) => 100.0,
+                (None, Some(fraction)) => (f64::from(fraction.numerator) / f64::from(fraction.denominator.unwrap_or(100))) * 100.0,
+                (Some(percent), None) => f64::from(*percent),
+                (Some(_), Some(_)) => {
+                    warn!("Invalid configuration for mirror filtering ");
+                    100.0
+                },
+            };
+
+            request_mirrors::Mirror { backend: mirror_backend_refs.into_iter().next(), percentage }
+        })
+        .collect();
+
+    if mirrors.is_empty() {
+        None
+    } else {
+        debug!("Request mirror policy {:?}", mirrors);
+        Some(TrafficPolicySpec {
+            kind: Some(traffic_policy_spec::Kind::RequestMirror(resource::RequestMirrors { mirrors })),
+            ..Default::default()
+        })
+    }
 }
 
 fn map_response_header_modifier_filter(filter: &HttpRouteFilter) -> Option<TrafficPolicySpec> {
