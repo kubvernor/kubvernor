@@ -226,7 +226,6 @@ impl AdsClients {
             client.set_gateway_id(gateway_id);
 
             {
-                debug!("All managed resources {:#?}", self.managed_resources.lock().expect("We expect the lock to work").clone());
                 if let Some(resources) = self.managed_resources.lock().expect("We expect the lock to work").get(gateway_id) {
                     debug!(
                         "update_client {:?} {gateway_id} Updating managed resources workloads = {} resources = {}",
