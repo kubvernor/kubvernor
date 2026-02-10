@@ -1,26 +1,27 @@
-use agentgateway_api_rs::agentgateway::dev::resource::Header;
-use agentgateway_api_rs::agentgateway::dev::resource::request_redirect::Path;
-use agentgateway_api_rs::agentgateway::dev::resource::traffic_policy_spec::HostRewrite;
+use std::{collections::BTreeMap, net::IpAddr};
+
 use agentgateway_api_rs::{
     agentgateway::dev::resource::{
-        self, BackendPolicySpec, BackendReference, Listener, Policy, PolicyTarget, ResourceName, Route, RouteBackend, RouteName,
-        StaticBackend, TrafficPolicySpec, TypedResourceName,
+        self, BackendPolicySpec, BackendReference, Header, Listener, Policy, PolicyTarget, ResourceName, Route, RouteBackend, RouteName,
+        StaticBackend, TlsConfig, TrafficPolicySpec, TypedResourceName,
         backend::{self},
-        backend_policy_spec, policy,
+        backend_policy_spec, bind, policy,
         policy_target::ServiceTarget,
+        request_redirect::Path,
         traffic_policy_spec,
+        traffic_policy_spec::HostRewrite,
     },
     istio::workload::{LoadBalancing, NetworkAddress, Port, Service},
 };
-
-use gateway_api::common::HTTPHeader;
-use gateway_api::httproutes::HttpRouteFilter;
+use gateway_api::{common::HTTPHeader, httproutes::HttpRouteFilter};
 use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
 use kubvernor_common::ResourceKey;
-use std::{collections::BTreeMap, net::IpAddr};
 use tracing::{info, warn};
 
-use crate::common::{self, Backend, BackendType, InferencePoolTypeConfig, ProtocolType};
+use crate::{
+    backends::agentgateway::SecureListenerWrapper,
+    common::{self, Backend, BackendType, InferencePoolTypeConfig, KeyData, ProtocolType},
+};
 
 pub(crate) struct ResourceGenerator<'a> {
     effective_gateway: &'a common::Gateway,
@@ -39,15 +40,23 @@ impl From<ProtocolType> for i32 {
     }
 }
 
-fn create_bind_name(port: i32) -> String {
-    format!("bind-port-{port}")
+fn create_bind_name(port: i32, protocol: i32) -> String {
+    format!("bind-port-{port}-protocol-{protocol}")
 }
 
-#[derive(Debug, Clone, Ord, Eq, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Ord, Eq, PartialEq, PartialOrd, Default)]
 // created because xds bind is not Ord
 pub(crate) struct Bind {
     pub key: String,
     pub port: u32,
+    pub protocol: bind::Protocol,
+    pub tunnel_protocol: bind::TunnelProtocol,
+}
+
+impl From<KeyData> for TlsConfig {
+    fn from(value: KeyData) -> Self {
+        TlsConfig { cert: value.cert, private_key: value.private_key, root: value.root }
+    }
 }
 
 impl<'a> ResourceGenerator<'a> {
@@ -55,32 +64,64 @@ impl<'a> ResourceGenerator<'a> {
         Self { effective_gateway }
     }
 
-    pub fn generate_bindings_and_listeners(&self) -> BTreeMap<Bind, Vec<Listener>> {
+    pub fn generate_bindings_and_listeners(&self) -> BTreeMap<Bind, Vec<SecureListenerWrapper>> {
         let gateway = self.effective_gateway;
-        gateway.listeners().fold(BTreeMap::<Bind, Vec<Listener>>::new(), |mut acc, listener| {
+        gateway.listeners().fold(BTreeMap::<Bind, Vec<SecureListenerWrapper>>::new(), |mut acc, listener| {
             let port = listener.port();
             let listener_name = listener.name().to_owned();
             let gateway_name = gateway.name().to_owned();
             let gateway_namespace = gateway.namespace().to_owned();
 
-            let bind = Bind { key: create_bind_name(port), port: port as u32 };
+            let binding_protocol = match listener.protocol() {
+                ProtocolType::Http | ProtocolType::Unknown | ProtocolType::Udp => bind::Protocol::Http,
+                ProtocolType::Https | ProtocolType::Tls => bind::Protocol::Tls,
+                ProtocolType::Tcp => bind::Protocol::Tcp,
+            };
+
+            let bind_key = create_bind_name(port, binding_protocol.into());
+
+            let bind = Bind {
+                key: bind_key.clone(),
+                port: port as u32,
+                protocol: binding_protocol,
+                tunnel_protocol: bind::TunnelProtocol::Direct,
+            };
             let maybe_added = acc.get_mut(&bind);
 
             let agentgateway_listener = Listener {
                 key: listener_name.clone(),
                 name: Some(resource::ListenerName { gateway_name, gateway_namespace, listener_name, listener_set: None }),
-                bind_key: create_bind_name(port),
+                bind_key: bind_key.clone(),
                 hostname: listener.hostname().cloned().unwrap_or("*".to_owned()),
                 protocol: listener.protocol().into(),
-                tls: None,
-            };
+                tls: match listener.protocol() {
+                    ProtocolType::Https | ProtocolType::Tls => listener.config().tls_type.as_ref().and_then(|tls_type| match tls_type {
+                        common::TlsType::Terminate(certificates) => {
+                            let valid_cert: Vec<TlsConfig> = certificates
+                                .iter()
+                                .filter_map(|c| {
+                                    if let common::Certificate::ResolvedSameSpace(_, data) = c {
+                                        Some(TlsConfig::from(data.clone()))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            valid_cert.first().cloned()
+                        },
+                        common::TlsType::Passthrough => None,
+                    }),
 
-            info!("Generating agentgateway listener {agentgateway_listener:#?}");
+                    _ => None,
+                },
+            };
+            let listener = SecureListenerWrapper(agentgateway_listener);
+            info!("Generating agentgateway listener {:#?}", listener);
 
             if let Some(listners) = maybe_added {
-                listners.push(agentgateway_listener);
+                listners.push(listener);
             } else {
-                acc.insert(bind, vec![agentgateway_listener]);
+                acc.insert(bind, vec![listener]);
             }
             acc
         })
@@ -98,9 +139,9 @@ impl<'a> ResourceGenerator<'a> {
             .listeners()
             .flat_map(|l| {
                 let listener_port = l.port() as u32;
-                let (resolved, _) = l.routes();
-                resolved
-                    .iter()
+                let (resolved, unresolved) = l.routes();
+                let routes = resolved.into_iter().chain(unresolved);
+                routes
                     .filter_map(|route| match route.route_type() {
                         common::RouteType::Http(configuration) => Some((route, &configuration.routing_rules)),
                         common::RouteType::Grpc(_) => None,
@@ -181,6 +222,7 @@ impl<'a> ResourceGenerator<'a> {
                     .collect::<Vec<_>>()
             })
             .collect();
+
         (
             routes,
             backends.into_values().collect::<Vec<resource::Backend>>(),
@@ -265,7 +307,10 @@ fn convert_route_match(route_match: &gateway_api::httproutes::RouteMatch) -> age
 
 fn create_route_backend(backend: &Backend) -> Option<agentgateway_api_rs::agentgateway::dev::resource::RouteBackend> {
     match backend {
-        Backend::Resolved(BackendType::Service(config)) => Some(RouteBackend {
+        Backend::Resolved(BackendType::Service(config))
+        | Backend::Invalid(BackendType::Service(config))
+        | Backend::NotAllowed(BackendType::Service(config))
+        | Backend::Unresolved(BackendType::Service(config)) => Some(RouteBackend {
             backend: Some(agentgateway_api_rs::agentgateway::dev::resource::BackendReference {
                 port: config.effective_port as u32,
                 kind: Some(agentgateway_api_rs::agentgateway::dev::resource::backend_reference::Kind::Backend(format!(
@@ -350,40 +395,19 @@ fn create_backend_services(backend: &Backend) -> Option<(String, Service)> {
                 },
             ))
         },
-        // Backend::Resolved(BackendType::Service(config)) => {
-        //     let name = format!("{}/{}", config.resource_key.namespace, config.endpoint);
-        //     Some((
-        //         name.clone(),
-        //         Service {
-        //             name: config.resource_key.name.clone(),
-        //             namespace: config.resource_key.namespace.clone(),
-        //             hostname: config.endpoint.clone(),
-        //             ports: config.
-        //                 .target_ports
-        //                 .iter()
-        //                 .map(|p| Port { service_port: *p as u32, target_port: *p as u32, app_protocol: 0 })
-        //                 .collect(),
-        //             addresses: config.endpoints.as_ref().map_or_else(std::vec::Vec::new, |endpoints| {
-        //                 endpoints
-        //                     .iter()
-        //                     .filter_map(|e| {
-        //                         e.parse::<IpAddr>()
-        //                             .map(|addr| NetworkAddress {
-        //                                 network: String::new(),
-        //                                 address: match addr {
-        //                                     IpAddr::V4(ipv4_addr) => ipv4_addr.octets().to_vec(),
-        //                                     IpAddr::V6(ipv6_addr) => ipv6_addr.octets().to_vec(),
-        //                                 },
-        //                             })
-        //                             .ok()
-        //                     })
-        //                     .collect()
-        //             }),
-        //             load_balancing: Some(LoadBalancing { routing_preference: vec![], mode: 0, health_policy: 1 }),
-        //             ..Default::default()
-        //         },
-        //     ))
-        // },
+        Backend::Invalid(BackendType::Service(config)) => {
+            let name = format!("{}/{}", config.resource_key.namespace, config.endpoint);
+            Some((
+                name.clone(),
+                Service {
+                    name: config.resource_key.name.clone(),
+                    namespace: config.resource_key.namespace.clone(),
+                    hostname: config.endpoint.clone(),
+                    ..Default::default()
+                },
+            ))
+        },
+
         _ => None,
     }
 }

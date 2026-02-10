@@ -426,8 +426,8 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 .iter()
                 .cloned()
                 .filter_map(|cert| match cert {
-                    common::Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
-                    common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) | common::Certificate::ResolvedCrossSpace(_) => {
+                    common::Certificate::ResolvedSameSpace(resource_key, _) => Some(resource_key),
+                    common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) | common::Certificate::ResolvedCrossSpace(..) => {
                         None
                     },
                 })
@@ -796,8 +796,8 @@ fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
     let secrets = all_certificates
         .into_iter()
         .filter_map(|c| match c {
-            Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
-            Certificate::NotResolved(_) | Certificate::Invalid(_) | Certificate::ResolvedCrossSpace(_) => None,
+            Certificate::ResolvedSameSpace(resource_key, _) => Some(resource_key),
+            Certificate::NotResolved(_) | Certificate::Invalid(_) | Certificate::ResolvedCrossSpace(..) => None,
         })
         .map(|resource_key| VolumeProjection {
             secret: Some(SecretProjection {

@@ -432,10 +432,10 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         certificates
                             .iter()
                             .filter_map(|cert| match cert {
-                                common::Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
+                                common::Certificate::ResolvedSameSpace(resource_key, _) => Some(resource_key),
                                 common::Certificate::NotResolved(_)
                                 | common::Certificate::Invalid(_)
-                                | common::Certificate::ResolvedCrossSpace(_) => None,
+                                | common::Certificate::ResolvedCrossSpace(..) => None,
                             })
                             .map(|certificate_key| TeraSecret {
                                 name: create_secret_name(certificate_key),
@@ -482,10 +482,10 @@ impl<'a> EnvoyXDSGenerator<'a> {
                         certificates
                             .iter()
                             .filter_map(|cert| match cert {
-                                common::Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
+                                common::Certificate::ResolvedSameSpace(resource_key, _) => Some(resource_key),
                                 common::Certificate::NotResolved(_)
                                 | common::Certificate::Invalid(_)
-                                | common::Certificate::ResolvedCrossSpace(_) => None,
+                                | common::Certificate::ResolvedCrossSpace(..) => None,
                             })
                             .map(|certificate_key| TeraSecret { name: create_secret_name(certificate_key) })
                             .collect(),
