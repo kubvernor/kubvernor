@@ -57,6 +57,7 @@ spec:
     group: kubvernor.gateway.api
     kind: KubvernorConfig
     name: kubvernor-config-orionproxy
+    namespace: gateway-conformance-infra
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
@@ -76,10 +77,37 @@ spec:
     kind: KubvernorConfig
     name: kubvernor-config-orionproxy
 ---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kubvernor-conformance-inference-agentgateway
+spec:
+  controllerName: kubvernor.com/proxy-controller
+  parametersRef:
+    group: kubvernor.gateway.api
+    kind: KubvernorConfig
+    name: kubvernor-config-agentgateway
+---
 apiVersion: kubvernor.gateway.api/v1
 kind: KubvernorConfig
 metadata:
   name: kubvernor-config-envoy
+spec:
+  backendtype: envoy
+---
+apiVersion: kubvernor.gateway.api/v1
+kind: KubvernorConfig
+metadata:
+  name: kubvernor-config-envoy
+  namespace: gateway-conformance-infra
+spec:
+  backendtype: envoy
+---
+apiVersion: kubvernor.gateway.api/v1
+kind: KubvernorConfig
+metadata:
+  name: kubvernor-config-envoy
+  namespace: inference-conformance-infra
 spec:
   backendtype: envoy
 ---
@@ -95,6 +123,14 @@ kind: KubvernorConfig
 metadata:
   name: kubvernor-config-agentgateway
   namespace: gateway-conformance-infra
+spec:
+  backendtype: agentgateway
+---
+apiVersion: kubvernor.gateway.api/v1
+kind: KubvernorConfig
+metadata:
+  name: kubvernor-config-agentgateway
+  namespace: inference-conformance-infra
 spec:
   backendtype: agentgateway
 ---

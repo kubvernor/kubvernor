@@ -67,7 +67,7 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
-  name: oriongateway-one
+  name: orionproxy-gateway-one
   # finalizers:
   #   - kubevernor.com/proxy-controller
 spec:
@@ -134,7 +134,7 @@ metadata:
   name: orion-route-service-one
 spec:
   parentRefs:
-    - name: oriongateway-one
+    - name: orionproxy-gateway-one
       port: 1080
 
   hostnames:

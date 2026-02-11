@@ -1,4 +1,7 @@
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use gateway_api::gateways::Gateway;
 use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolSpec};
@@ -33,6 +36,7 @@ pub struct RouteResolver<'a> {
     reference_grants_resolver: ReferenceGrantsResolver,
     inference_pool_patcher_sender: mpsc::Sender<Operation<InferencePool>>,
     controller_name: String,
+    state: &'a State,
 }
 struct PermittedBackends(String);
 impl PermittedBackends {
@@ -233,11 +237,21 @@ impl RouteResolver<'_> {
                         self.backend_reference_resolver.get_inference_pool_reference(&backend_resource_key).await;
 
                     if let Some(inference_pool) = maybe_inference_pool {
+                        let inference_pool_resource_key = ResourceKey::from(&inference_pool);
+
+                        let inference_pool = self
+                            .state
+                            .get_inference_pool(&inference_pool_resource_key)
+                            .expect("we expect this to work")
+                            .map(|p| (*p).clone())
+                            .unwrap_or(inference_pool);
+
                         let inference_pool_spec = inference_pool.spec();
+
                         let model_endpoints =
                             Self::get_model_endpoints(self.client.clone(), &route_resource_key.namespace, inference_pool_spec).await;
 
-                        debug!("Inference Pool: got model endpoints {:?}", model_endpoints);
+                        debug!("Inference Pool: got model endpoints {inference_pool_resource_key} {:?}", model_endpoints);
 
                         let resolved_endpoint_picker = match inference_pool_spec.endpoint_picker_ref.kind.as_ref() {
                             None => {
@@ -253,7 +267,7 @@ impl RouteResolver<'_> {
                         backend_config.target_ports = inference_pool_spec.target_ports.iter().map(|p| p.number).collect();
                         backend_config.endpoints = Some(model_endpoints);
 
-                        debug!("Inference Pool: Setting backend config {backend_resource_key:?} {inference_pool_spec:?}",);
+                        debug!("Inference Pool: Setting backend config {inference_pool_resource_key} {backend_resource_key:?}",);
 
                         if inference_pool.metadata.name.is_some() {
                             let mut inference_pool = inference_pool::update_inference_pool_parents(
@@ -263,11 +277,15 @@ impl RouteResolver<'_> {
                                 resolved_endpoint_picker,
                             );
                             inference_pool.metadata.managed_fields = None;
+                            self.state
+                                .save_inference_pool(inference_pool_resource_key.clone(), &Arc::new(inference_pool.clone()))
+                                .expect("we expect this to work");
                             let (sender, receiver) = oneshot::channel();
+                            info!("InferencePool: patching on route resolved {inference_pool_resource_key}-> route {route_resource_key}");
                             let _ = self
                                 .inference_pool_patcher_sender
                                 .send(Operation::PatchStatus(PatchContext {
-                                    resource_key: ResourceKey::from(&inference_pool),
+                                    resource_key: inference_pool_resource_key,
                                     resource: inference_pool,
                                     controller_name: self.controller_name.clone(),
                                     response_sender: sender,
@@ -350,6 +368,7 @@ impl RoutesResolver<'_> {
                 .client(self.client.clone())
                 .inference_pool_patcher_sender(self.inference_pool_patcher_sender.clone())
                 .controller_name(self.controller_name.clone())
+                .state(self.state)
                 .build()
                 .resolve()
         });

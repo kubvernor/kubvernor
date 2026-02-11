@@ -96,22 +96,6 @@ kubectl delete -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api-
 ```
 
 
-> [!NOTE]
->  ## Running Gateway API Conformance Suite
-> 1. Run Gateway API Conformance suite
-> 
->```bash
->./run_conformance_tests.sh
->```
-> 2. Run Gateway API Inference Extension Conformance tests
->
->```bash
->git clone --depth 1 --branch v1.1.0 https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
->cd gateway-api-inference-extension
->go test -v -count=1 -timeout=3h ./conformance --debug -run TestConformance --report-output="../kubvernor-inference-conformance-output.yaml" --organization=kubvernor --project=kubvernor --url=https://github.com/kubvernor/kubvernor --version=0.1.0  --allow-crds-mismatch
->```
-
-
 ## Gateway API Conformance Reports
 [1.2.1](./conformance/kubvernor-conformance-output-1.2.1.yaml)
 [1.2.0](./conformance/kubvernor-conformance-output-1.2.0.yaml)

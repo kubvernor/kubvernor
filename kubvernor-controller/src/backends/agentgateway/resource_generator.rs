@@ -557,7 +557,7 @@ fn create_inference_policies(
                 resource::Backend {
                     name: Some(ResourceName { name: backend.name.clone(), namespace: backend.namespace.clone() }),
                     kind: Some(backend::Kind::Static(StaticBackend {
-                        host: inference_config.extension_ref().name.clone(),
+                        host: inference_config.extension_ref().name.clone() + "." + &conf.resource_key.namespace,
                         port: inference_config.extension_ref().port.as_ref().map_or_else(|| 9002, |f| f.number),
                     })),
                     inline_policies: vec![
