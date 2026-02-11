@@ -250,10 +250,36 @@ impl<'a> ResourceGenerator<'a> {
 }
 
 fn map_filters(filter: &HttpRouteFilter, listener_port: u32) -> Vec<TrafficPolicySpec> {
-    [map_redirect_filter(filter, listener_port), map_request_header_modifier_filter(filter), map_response_header_modifier_filter(filter)]
-        .into_iter()
-        .flatten()
-        .collect()
+    [
+        map_redirect_filter(filter, listener_port),
+        map_request_header_modifier_filter(filter),
+        map_response_header_modifier_filter(filter),
+        map_url_rewrite_filter(filter),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn map_url_rewrite_filter(filter: &HttpRouteFilter) -> Option<TrafficPolicySpec> {
+    filter.url_rewrite.as_ref().map(|url_rewrite| TrafficPolicySpec {
+        kind: Some(traffic_policy_spec::Kind::UrlRewrite(resource::UrlRewrite {
+            host: url_rewrite.hostname.clone().unwrap_or_default(),
+            path: match url_rewrite.path.as_ref() {
+                Some(path) => match path.r#type {
+                    gateway_api::common::RequestOperationType::ReplaceFullPath => {
+                        Some(resource::url_rewrite::Path::Full(path.replace_full_path.clone().unwrap_or_default()))
+                    },
+                    gateway_api::common::RequestOperationType::ReplacePrefixMatch => {
+                        Some(resource::url_rewrite::Path::Prefix(path.replace_prefix_match.clone().unwrap_or_default()))
+                    },
+                },
+                None => None,
+            },
+        })),
+        ..Default::default()
+    })
 }
 
 #[allow(clippy::cast_possible_truncation)]
