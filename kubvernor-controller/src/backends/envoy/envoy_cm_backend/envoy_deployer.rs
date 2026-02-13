@@ -415,8 +415,8 @@ impl EnvoyDeployerChannelHandlerService {
         let secrets = all_certificates
             .into_iter()
             .filter_map(|c| match c {
-                Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
-                Certificate::NotResolved(_) | Certificate::Invalid(_) | Certificate::ResolvedCrossSpace(_) => None,
+                Certificate::ResolvedSameSpace(resource_key, _) => Some(resource_key),
+                Certificate::NotResolved(_) | Certificate::Invalid(_) | Certificate::ResolvedCrossSpace(..) => None,
             })
             .map(|resource_key| VolumeProjection {
                 secret: Some(SecretProjection {

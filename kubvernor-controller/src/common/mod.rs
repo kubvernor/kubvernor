@@ -33,37 +33,56 @@ use crate::{
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
 pub enum Certificate {
-    ResolvedSameSpace(ResourceKey),
-    ResolvedCrossSpace(ResourceKey),
+    ResolvedSameSpace(ResourceKey, KeyData),
+    ResolvedCrossSpace(ResourceKey, KeyData),
     NotResolved(ResourceKey),
     Invalid(ResourceKey),
 }
 
+#[derive(Clone, PartialEq, PartialOrd, Ord, Eq)]
+pub struct KeyData {
+    pub cert: Vec<u8>,
+    pub private_key: Vec<u8>,
+    pub root: Option<Vec<u8>>,
+}
+
+impl std::fmt::Debug for KeyData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyData")
+            .field("cert", &"--- SENSITIVE DATA ----")
+            .field("private_key", &"--- SENSITIVE DATA ----")
+            .field("root", &"--- SENSITIVE DATA ----")
+            .finish()
+    }
+}
+
 impl Certificate {
-    pub fn resolve(self: &Certificate) -> Self {
+    pub fn resolve(self: &Certificate, certifcate: Vec<u8>, key: Vec<u8>) -> Self {
+        let data = KeyData { cert: certifcate, private_key: key, root: None };
         let resource = match self {
-            Certificate::ResolvedSameSpace(resource_key)
-            | Certificate::ResolvedCrossSpace(resource_key)
+            Certificate::ResolvedSameSpace(resource_key, _)
+            | Certificate::ResolvedCrossSpace(resource_key, _)
             | Certificate::NotResolved(resource_key)
             | Certificate::Invalid(resource_key) => resource_key,
         };
-        Certificate::ResolvedSameSpace(resource.clone())
+        Certificate::ResolvedSameSpace(resource.clone(), data)
     }
 
-    pub fn resolve_cross_space(self: &Certificate) -> Self {
+    pub fn resolve_cross_space(self: &Certificate, certifcate: Vec<u8>, key: Vec<u8>) -> Self {
+        let data = KeyData { cert: certifcate, private_key: key, root: None };
         let resource = match self {
-            Certificate::ResolvedSameSpace(resource_key)
-            | Certificate::ResolvedCrossSpace(resource_key)
+            Certificate::ResolvedSameSpace(resource_key, _)
+            | Certificate::ResolvedCrossSpace(resource_key, _)
             | Certificate::NotResolved(resource_key)
             | Certificate::Invalid(resource_key) => resource_key,
         };
-        Certificate::ResolvedCrossSpace(resource.clone())
+        Certificate::ResolvedCrossSpace(resource.clone(), data)
     }
 
     pub fn not_resolved(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::ResolvedSameSpace(resource_key)
-            | Certificate::ResolvedCrossSpace(resource_key)
+            Certificate::ResolvedSameSpace(resource_key, _)
+            | Certificate::ResolvedCrossSpace(resource_key, _)
             | Certificate::NotResolved(resource_key)
             | Certificate::Invalid(resource_key) => resource_key,
         };
@@ -72,8 +91,8 @@ impl Certificate {
 
     pub fn invalid(self: &Certificate) -> Self {
         let resource = match self {
-            Certificate::ResolvedSameSpace(resource_key)
-            | Certificate::ResolvedCrossSpace(resource_key)
+            Certificate::ResolvedSameSpace(resource_key, _)
+            | Certificate::ResolvedCrossSpace(resource_key, _)
             | Certificate::NotResolved(resource_key)
             | Certificate::Invalid(resource_key) => resource_key,
         };
@@ -82,10 +101,17 @@ impl Certificate {
 
     pub fn resouce_key(&self) -> &ResourceKey {
         match self {
-            Certificate::ResolvedSameSpace(resource_key)
-            | Certificate::ResolvedCrossSpace(resource_key)
+            Certificate::ResolvedSameSpace(resource_key, _)
+            | Certificate::ResolvedCrossSpace(resource_key, _)
             | Certificate::NotResolved(resource_key)
             | Certificate::Invalid(resource_key) => resource_key,
+        }
+    }
+
+    pub fn key_data(&self) -> Option<&KeyData> {
+        match self {
+            Certificate::ResolvedSameSpace(_, data) | Certificate::ResolvedCrossSpace(_, data) => Some(data),
+            Certificate::NotResolved(_) | Certificate::Invalid(_) => None,
         }
     }
 }

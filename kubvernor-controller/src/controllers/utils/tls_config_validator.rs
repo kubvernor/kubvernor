@@ -75,10 +75,12 @@ impl<'a> ListenerTlsConfigValidator<'a> {
                                         match (valid_cert, valid_key) {
                                             (Ok(_), Ok(_)) => {
                                                 if gateway_key.namespace == certificate.resouce_key().namespace {
-                                                    *certificate = certificate.resolve();
+                                                    *certificate =
+                                                        certificate.resolve(secret_certificate.0.clone(), secret_private_key.0.clone());
                                                     debug!("Private key and certificate are valid");
                                                 } else {
-                                                    *certificate = certificate.resolve_cross_space();
+                                                    *certificate = certificate
+                                                        .resolve_cross_space(secret_certificate.0.clone(), secret_private_key.0.clone());
                                                     info!("Cross space certificate: Private key and certificate are valid");
                                                 }
                                             },

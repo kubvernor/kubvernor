@@ -13,7 +13,7 @@ use kube::{Resource, runtime::controller::Action};
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -216,7 +216,7 @@ where
     }
 
     async fn update_inference_pools(&self, route: &Route, gateway_ids: &BTreeSet<ResourceKey>) {
-        debug!("Updating inference pools of route delete {} {gateway_ids:?}", route.name());
+        debug!("Updating inference pools for route delete {} {gateway_ids:?}", route.name());
         if let Some(inference_pool_patcher_sender) = self.inference_pool_patcher_channel_sender.as_ref() {
             for inference_pool_backend in route.backends().iter().filter_map(|b| match b.backend_type() {
                 BackendType::InferencePool(pool) => Some(&pool.resource_key),
@@ -228,7 +228,10 @@ where
                     inference_pool.metadata.managed_fields = None;
                     let inference_pool_resource_key = ResourceKey::from(&inference_pool);
                     let (sender, receiver) = oneshot::channel();
-                    debug!("Patching updating inference pools of route delete {} {gateway_ids:?}", route.name());
+                    info!("Patching updating inference pools for route delete {} {gateway_ids:?}", route.name());
+                    self.state
+                        .maybe_save_inference_pool(inference_pool_resource_key.clone(), &Arc::new(inference_pool.clone()))
+                        .expect("We expect the lock to work");
                     let _ = inference_pool_patcher_sender
                         .send(Operation::PatchStatus(PatchContext {
                             resource_key: inference_pool_resource_key.clone(),

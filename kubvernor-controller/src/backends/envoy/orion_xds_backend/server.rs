@@ -183,7 +183,7 @@ impl AdsClients {
     fn update_client(&self, client: &mut AdsClient, gateway_id: &str) {
         debug!("update_client {:?} {gateway_id}", client.client_id);
         if client.gateway_id.is_none() {
-            info!("update_client {:?} {gateway_id}  Initial connection - Uupdating all resources", client.client_id);
+            info!("update_client {:?} {gateway_id}  Initial connection - Updating all resources", client.client_id);
             client.set_gateway_id(gateway_id);
 
             {

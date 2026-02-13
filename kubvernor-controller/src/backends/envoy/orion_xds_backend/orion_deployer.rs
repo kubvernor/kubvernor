@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, btree_map::Values},
+    net::IpAddr,
     sync::LazyLock,
 };
 
@@ -332,63 +333,75 @@ struct Resources {
     secrets: Vec<ResourceKey>,
 }
 
+fn calculate_effective_hostnames(hostname: &str) -> Vec<String> {
+    vec![hostname.to_owned()]
+}
+
 fn create_resources(gateway: &Gateway) -> Resources {
     let mut listener_resources = vec![];
     let mut secret_resources = vec![];
-    let mut resource_generator = ResourceGenerator::new(gateway, GatewayImplementationType::Orion);
+    let mut resource_generator = ResourceGenerator::new(gateway, GatewayImplementationType::Orion, Box::new(calculate_effective_hostnames));
 
     let listeners = resource_generator.generate_envoy_listeners().values();
 
     for listener in listeners {
+        let mut http_filters = vec![];
         let router = Router { ..Default::default() };
-        let ext_processor = ExternalProcessor {
-            processing_mode: Some(ProcessingMode {
-                request_header_mode: HeaderSendMode::Skip.into(),
-                response_header_mode: HeaderSendMode::Skip.into(),
-                ..Default::default()
-            }),
 
-            grpc_service: Some(GrpcService {
-                target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
-                    target_uri: "127.0.0.1:1000".to_owned(),
-                    stat_prefix: listener.name.clone() + "ext_filter_stats",
+        if listener.enable_ext_proc {
+            let ext_processor = ExternalProcessor {
+                processing_mode: Some(ProcessingMode {
+                    request_header_mode: HeaderSendMode::Skip.into(),
+                    response_header_mode: HeaderSendMode::Skip.into(),
                     ..Default::default()
-                })),
+                }),
+
+                grpc_service: Some(GrpcService {
+                    target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
+                        target_uri: "127.0.0.1:1000".to_owned(),
+                        stat_prefix: listener.name.clone() + "ext_filter_stats",
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                }),
+                send_body_without_waiting_for_header_response: true,
+                message_timeout: Some(DurationConverter::from(std::time::Duration::from_secs(2))),
+                failure_mode_allow: true,
+                allow_mode_override: true,
                 ..Default::default()
-            }),
-            send_body_without_waiting_for_header_response: true,
-            message_timeout: Some(DurationConverter::from(std::time::Duration::from_secs(2))),
-            failure_mode_allow: true,
-            allow_mode_override: true,
-            ..Default::default()
-        };
+            };
+
+            let http_connection_manager_ext_processor_any = converters::AnyTypeConverter::from((
+                "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor".to_owned(),
+                &ext_processor,
+            ));
+
+            let external_processor_filter = HttpFilter {
+                name: INFERENCE_EXT_PROC_FILTER_NAME.to_owned(),
+                is_optional: false,
+                disabled: false,
+                config_type: Some(ConfigType::TypedConfig(http_connection_manager_ext_processor_any)),
+            };
+            http_filters.push(external_processor_filter);
+        }
+
         let listener_name = listener.name.clone();
+
         let http_connection_manager_router_filter_any =
             converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.router.v3.Router".to_owned(), &router));
-        let http_connection_manager_ext_processor_any = converters::AnyTypeConverter::from((
-            "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor".to_owned(),
-            &ext_processor,
-        ));
-
         let router_filter = HttpFilter {
             name: format!("{listener_name}-http-connection-manager-route-filter"),
             is_optional: false,
             disabled: false,
             config_type: Some(ConfigType::TypedConfig(http_connection_manager_router_filter_any)),
         };
-
-        let external_processor_filter = HttpFilter {
-            name: INFERENCE_EXT_PROC_FILTER_NAME.to_owned(),
-            is_optional: false,
-            disabled: false,
-            config_type: Some(ConfigType::TypedConfig(http_connection_manager_ext_processor_any)),
-        };
+        http_filters.push(router_filter);
 
         let virtual_hosts = generate_virtual_hosts_from_xds(&listener.http_listener_map);
         let http_connection_manager = HttpConnectionManager {
             stat_prefix: listener_name.clone(),
             codec_type: CodecType::Auto.into(),
-            http_filters: vec![external_processor_filter, router_filter],
+            http_filters,
             route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
                 name: format!("{listener_name}-route"),
                 virtual_hosts,
@@ -413,8 +426,8 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 .iter()
                 .cloned()
                 .filter_map(|cert| match cert {
-                    common::Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
-                    common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) | common::Certificate::ResolvedCrossSpace(_) => {
+                    common::Certificate::ResolvedSameSpace(resource_key, _) => Some(resource_key),
+                    common::Certificate::NotResolved(_) | common::Certificate::Invalid(_) | common::Certificate::ResolvedCrossSpace(..) => {
                         None
                     },
                 })
@@ -503,6 +516,10 @@ fn bootstrap_content_with_secrets(control_plane_config: &ControlPlaneConfig, sec
     }
     tera_context.insert("control_plane_host", &control_plane_config.listening_socket.hostname);
     tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port);
+    tera_context.insert(
+        "resolver_type",
+        if control_plane_config.listening_socket.hostname.parse::<IpAddr>().is_err() { "STRICT_DNS" } else { "STATIC" },
+    );
 
     Ok(TEMPLATES.render("orion-bootstrap-dynamic-with-secrets.yaml.tera", &tera_context)?)
 }
@@ -511,6 +528,10 @@ fn bootstrap_content(control_plane_config: &ControlPlaneConfig) -> Result<String
     let mut tera_context = tera::Context::new();
     tera_context.insert("control_plane_host", &control_plane_config.listening_socket.hostname);
     tera_context.insert("control_plane_port", &control_plane_config.listening_socket.port);
+    tera_context.insert(
+        "resolver_type",
+        if control_plane_config.listening_socket.hostname.parse::<IpAddr>().is_err() { "STRICT_DNS" } else { "STATIC" },
+    );
 
     Ok(TEMPLATES.render("orion-bootstrap-dynamic.yaml.tera", &tera_context)?)
 }
@@ -775,8 +796,8 @@ fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
     let secrets = all_certificates
         .into_iter()
         .filter_map(|c| match c {
-            Certificate::ResolvedSameSpace(resource_key) => Some(resource_key),
-            Certificate::NotResolved(_) | Certificate::Invalid(_) | Certificate::ResolvedCrossSpace(_) => None,
+            Certificate::ResolvedSameSpace(resource_key, _) => Some(resource_key),
+            Certificate::NotResolved(_) | Certificate::Invalid(_) | Certificate::ResolvedCrossSpace(..) => None,
         })
         .map(|resource_key| VolumeProjection {
             secret: Some(SecretProjection {
@@ -796,4 +817,37 @@ fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
         projected: Some(ProjectedVolumeSource { sources: Some(secrets), ..Default::default() }),
         ..Default::default()
     }]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_effective_hostnames() {
+        let routes = vec![];
+        let hostname = Some("*".to_owned());
+        let hostnames = crate::backends::envoy::common::resource_generator::calculate_hostnames_common(
+            &routes,
+            hostname,
+            calculate_effective_hostnames,
+        );
+        assert_eq!(hostnames, vec!["*".to_owned()]);
+        let hostname = Some("host.blah".to_owned());
+        let hostnames: BTreeSet<String> = crate::backends::envoy::common::resource_generator::calculate_hostnames_common(
+            &routes,
+            hostname,
+            calculate_effective_hostnames,
+        )
+        .into_iter()
+        .collect();
+        assert_eq!(hostnames, vec!["host.blah".to_owned()].into_iter().collect::<BTreeSet<_>>());
+        let hostname = Some("host.blah".to_owned());
+        let hostnames = crate::backends::envoy::common::resource_generator::calculate_hostnames_common(&routes, hostname, |h| {
+            vec![format!("{h}:*"), h.to_owned()]
+        })
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+        assert_eq!(hostnames, vec!["host.blah".to_owned(), "host.blah:*".to_owned()].into_iter().collect::<BTreeSet<_>>());
+    }
 }

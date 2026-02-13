@@ -11,7 +11,6 @@ use crate::backends::envoy::common::converters;
 
 pub fn create_cluster_resource(cluster: &Cluster) -> Resource {
     let any = converters::AnyTypeConverter::from((TypeUrl::Cluster.to_string(), cluster));
-
     let mut cluster_resource = Resource { ..Default::default() };
     cluster_resource.name.clone_from(&cluster.name);
     cluster_resource.resource = Some(any);

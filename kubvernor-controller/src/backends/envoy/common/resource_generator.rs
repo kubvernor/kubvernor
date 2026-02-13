@@ -33,12 +33,14 @@ use gateway_api::{
     grpcroutes::GrpcRouteMatch,
     httproutes::{HttpRouteRulesMatchesPathType, PathMatch, RouteMatch},
 };
+use itertools::Itertools;
 use kubvernor_common::GatewayImplementationType;
 use tracing::{debug, error};
 
 use crate::{
     backends::envoy::common::{
-        ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory, converters, get_inference_pool_configurations,
+        ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory, converters, enable_ect_proc_filter,
+        get_inference_pool_configurations,
         route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule},
     },
     common::{
@@ -66,6 +68,7 @@ fn get_grpc_default_rules_matches() -> GrpcRouteMatch {
 
 impl Listener {
     fn create_http_effective_route(
+        &self,
         hostnames: &[String],
         routing_configuration: &HTTPRoutingConfiguration,
     ) -> Vec<HTTPEffectiveRoutingRule> {
@@ -79,16 +82,26 @@ impl Listener {
                 }
 
                 matching_rules.into_iter().map(|matcher| HTTPEffectiveRoutingRule {
+                    listener_port: self.port(),
                     route_matcher: matcher.clone(),
                     backends: rr.backends.clone(),
+                    filter_backends: rr.filter_backends.clone(),
                     name: rr.name.clone(),
                     hostnames: hostnames.to_vec(),
-                    request_headers: rr.filter_headers(),
-                    response_headers: FilterHeaders::default(),
+                    request_headers: rr.filter_headers(&HTTPFilterType::RequestHeaderModifier),
+                    response_headers: rr.filter_headers(&HTTPFilterType::ResponseHeaderModifier),
+                    rewrite_url_filter: rr
+                        .filters
+                        .iter()
+                        .find_map(|f| if f.r#type == HTTPFilterType::UrlRewrite { f.url_rewrite.clone() } else { None }),
                     redirect_filter: rr
                         .filters
                         .iter()
                         .find_map(|f| if f.r#type == HTTPFilterType::RequestRedirect { f.request_redirect.clone() } else { None }),
+                    mirror_filter: rr
+                        .filters
+                        .iter()
+                        .find_map(|f| if f.r#type == HTTPFilterType::RequestMirror { f.request_mirror.clone() } else { None }),
                 })
             })
             .collect()
@@ -128,7 +141,7 @@ impl Listener {
                 RouteType::Http(configuration) => Some((&r.config.hostnames, configuration)),
                 RouteType::Grpc(_) => None,
             })
-            .flat_map(|(hostnames, config)| Self::create_http_effective_route(hostnames, config))
+            .flat_map(|(hostnames, config)| self.create_http_effective_route(hostnames, config))
             .collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
         matching_rules
@@ -187,18 +200,32 @@ pub struct EnvoyListener {
     pub http_listener_map: BTreeSet<EnvoyVirtualHost>,
     pub tcp_listener_map: BTreeSet<ListenerNameToHostname>,
     pub tls_type: Option<TlsType>,
+    pub enable_ext_proc: bool,
 }
+
+pub type HostnameCalculator = Box<dyn Fn(&str) -> Vec<String>>;
 
 pub struct ResourceGenerator<'a> {
     effective_gateway: &'a common::Gateway,
     resources: BTreeMap<i32, EnvoyListener>,
     inference_clusters: Vec<InferenceClusterInfo>,
     gateway_implementation_type: GatewayImplementationType,
+    effective_hostname_calculator: HostnameCalculator,
 }
 
 impl<'a> ResourceGenerator<'a> {
-    pub fn new(effective_gateway: &'a common::Gateway, gateway_implementation_type: GatewayImplementationType) -> Self {
-        Self { effective_gateway, resources: BTreeMap::new(), inference_clusters: vec![], gateway_implementation_type }
+    pub fn new(
+        effective_gateway: &'a common::Gateway,
+        gateway_implementation_type: GatewayImplementationType,
+        effective_hostname_calculator: HostnameCalculator,
+    ) -> Self {
+        Self {
+            effective_gateway,
+            resources: BTreeMap::new(),
+            inference_clusters: vec![],
+            gateway_implementation_type,
+            effective_hostname_calculator,
+        }
     }
 
     pub fn generate_envoy_listeners(&mut self) -> &BTreeMap<i32, EnvoyListener> {
@@ -229,10 +256,13 @@ impl<'a> ResourceGenerator<'a> {
             .flat_map(|listener| {
                 listener.http_listener_map.iter().flat_map(|evc| {
                     evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
+                        debug!("Cluster  {} {}", r.backends().len(), r.filter_backends().len());
                         let route_type = r.route_type();
                         let backends = r.backends();
-                        let service_backends = backends
-                            .iter()
+                        let service_backends = r.backends();
+                        let filter_backends = r.filter_backends();
+                        let service_backends = service_backends
+                            .into_iter()
                             .filter_map(|b| {
                                 if let Backend::Resolved(
                                     BackendType::Service(backend_service_config) | BackendType::Invalid(backend_service_config),
@@ -246,8 +276,24 @@ impl<'a> ResourceGenerator<'a> {
                             .filter(|b| b.weight() > 0)
                             .map(|r| create_service_cluster(r, route_type, &grpc_http_configuration));
 
+                        let filter_backends = filter_backends
+                            .into_iter()
+                            .filter_map(|b| {
+                                if let Backend::Resolved(
+                                    BackendType::Service(backend_service_config) | BackendType::Invalid(backend_service_config),
+                                ) = b
+                                {
+                                    Some(backend_service_config)
+                                } else {
+                                    debug!("Filter backend not resolved {:?}", b);
+                                    None
+                                }
+                            })
+                            .filter(|b| b.weight() > 0)
+                            .map(|r| create_service_cluster(r, route_type, &grpc_http_configuration));
+
                         let inference_backends = backends
-                            .iter()
+                            .into_iter()
                             .filter_map(|b| {
                                 if let Backend::Resolved(BackendType::InferencePool(backend_service_config)) = b {
                                     Some(backend_service_config)
@@ -258,15 +304,19 @@ impl<'a> ResourceGenerator<'a> {
                             .filter(|b| b.weight > 0)
                             .map(|r| create_inference_cluster(r, route_type));
 
-                        service_backends.chain(inference_backends).collect::<Vec<_>>()
+                        service_backends.chain(inference_backends).chain(filter_backends).collect::<Vec<_>>()
                     })
                 })
             })
             .collect();
-        debug!("Clusters produced {:?}", clusters);
+        debug!("Clusters produced {} {:?}", clusters.len(), clusters);
         let ext_service_clusters = self.inference_clusters.iter().filter_map(|c| self.generate_ext_service_cluster(c));
         debug!("Ext Service Clusters produced {:?}", ext_service_clusters);
-        let clusters = clusters.into_iter().chain(ext_service_clusters);
+        let clusters = clusters
+            .into_iter()
+            .chain(ext_service_clusters)
+            .sorted_by(|this, other| this.name.cmp(&other.name))
+            .dedup_by(|this, other| this.name == other.name);
         clusters.map(|c| c.cluster).collect::<Vec<_>>()
     }
 
@@ -308,6 +358,7 @@ impl<'a> ResourceGenerator<'a> {
                                 http_listener_map: BTreeSet::new(),
                                 tcp_listener_map: listener_map,
                                 tls_type: None,
+                                enable_ext_proc: false,
                             },
                         );
                     },
@@ -326,6 +377,7 @@ impl<'a> ResourceGenerator<'a> {
         let mut listener_map = BTreeSet::new();
         let potential_hostnames = Self::calculate_potential_hostnames(&resolved, listener.hostname().cloned());
         debug!("generate_virtual_hosts Potential hostnames {potential_hostnames:?}");
+        let mut enable_ext_proc = false;
         for potential_hostname in potential_hostnames {
             let http_matching_rules = listener
                 .http_matching_rules()
@@ -351,14 +403,16 @@ impl<'a> ResourceGenerator<'a> {
                 .inference_clusters
                 .clone()
                 .into_iter()
-                .chain(http_matching_rules.iter().filter_map(get_inference_pool_configurations))
+                .chain(http_matching_rules.iter().flat_map(get_inference_pool_configurations))
                 .collect();
 
+            enable_ext_proc |= http_matching_rules.iter().any(enable_ect_proc_filter);
+
             listener_map.insert(EnvoyVirtualHost {
-                http_routes: http_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
+                http_routes: http_matching_rules.clone().into_iter().flat_map(Vec::<EnvoyRoute>::from).collect(),
                 grpc_routes: grpc_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
                 name: listener.name().to_owned() + "-" + &potential_hostname,
-                effective_hostnames: Self::calculate_effective_hostnames(&resolved, Some(potential_hostname)),
+                effective_hostnames: calculate_hostnames_common(&resolved, Some(potential_hostname), &self.effective_hostname_calculator),
                 resolved_routes: resolved.iter().map(|r| (**r).clone()).collect(),
                 unresolved_routes: unresolved.iter().map(|r| (**r).clone()).collect(),
             });
@@ -370,6 +424,7 @@ impl<'a> ResourceGenerator<'a> {
             tls_type: listener.config().tls_type.clone(),
             http_listener_map: listener_map,
             tcp_listener_map: BTreeSet::new(),
+            enable_ext_proc,
         }
     }
 
@@ -469,18 +524,14 @@ impl<'a> ResourceGenerator<'a> {
     }
 
     fn calculate_potential_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
-        calculate_hostnames_common(routes, listener_hostname, |h| vec![h])
-    }
-
-    fn calculate_effective_hostnames(routes: &[&Route], listener_hostname: Option<String>) -> Vec<String> {
-        calculate_hostnames_common(routes, listener_hostname, |h| vec![format!("{h}:*"), h])
+        calculate_hostnames_common(routes, listener_hostname, |h| vec![h.to_owned()])
     }
 }
 
 pub fn calculate_hostnames_common(
     routes: &[&Route],
     listener_hostname: Option<String>,
-    create_hostnames: impl Fn(String) -> Vec<String>,
+    create_hostnames: impl Fn(&str) -> Vec<String>,
 ) -> Vec<String> {
     let routes_hostnames = routes.iter().fold(BTreeSet::new(), |mut acc, r| {
         acc.append(&mut r.hostnames().iter().cloned().collect::<BTreeSet<_>>());
@@ -489,7 +540,7 @@ pub fn calculate_hostnames_common(
 
     match (listener_hostname, routes_hostnames.is_empty()) {
         (None, false) => Vec::from_iter(routes_hostnames),
-        (Some(hostname), _) if !hostname.is_empty() && hostname != DEFAULT_ROUTE_HOSTNAME => create_hostnames(hostname),
+        (Some(hostname), _) if !hostname.is_empty() && hostname != DEFAULT_ROUTE_HOSTNAME => create_hostnames(&hostname),
         (None, true) | (Some(_), _) => vec![DEFAULT_ROUTE_HOSTNAME.to_owned()],
     }
 }
@@ -598,24 +649,5 @@ fn create_inference_cluster(config: &InferencePoolTypeConfig, _route_type: &Rout
 
             ..Default::default()
         },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_calculate_effective_hostnames() {
-        let routes = vec![];
-        let hostname = Some("*".to_owned());
-        let hostnames = ResourceGenerator::calculate_effective_hostnames(&routes, hostname);
-        assert_eq!(hostnames, vec!["*".to_owned()]);
-        let hostname = Some("host.blah".to_owned());
-        let hostnames: BTreeSet<String> = ResourceGenerator::calculate_effective_hostnames(&routes, hostname).into_iter().collect();
-        assert_eq!(hostnames, vec!["host.blah".to_owned(), "host.blah:*".to_owned()].into_iter().collect::<BTreeSet<_>>());
-        let hostname = Some("host.blah".to_owned());
-        let hostnames = calculate_hostnames_common(&routes, hostname, |h| vec![format!("{h}:*"), h]).into_iter().collect::<BTreeSet<_>>();
-        assert_eq!(hostnames, vec!["host.blah".to_owned(), "host.blah:*".to_owned()].into_iter().collect::<BTreeSet<_>>());
     }
 }

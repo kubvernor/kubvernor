@@ -134,7 +134,10 @@ impl GatewayController {
 
         let maybe_stored_gateway = state.get_gateway(&resource_key).expect("We expect the lock to work");
 
-        info!("reconcile_gateway: {controller_name} {name} {backend_type:?} {maybe_stored_gateway:?}");
+        info!(
+            "reconcile_gateway: {controller_name} {name} {backend_type:?} {:?}",
+            maybe_stored_gateway.as_ref().map(|g| ResourceKey::from(&(**g)))
+        );
         let handler = GatewayResourceHandler::builder()
             .state(ctx.state.clone())
             .resource_key(resource_key)

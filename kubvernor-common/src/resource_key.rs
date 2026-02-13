@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use gateway_api::{
+    common::BackendObjectReference,
     gatewayclasses::{GatewayClass, GatewayClassParametersRef},
     gateways,
     grpcroutes::{GRPCBackendReference, GRPCRoute},
@@ -118,6 +119,14 @@ impl From<&GRPCRoute> for ResourceKey {
 
 impl From<(&HTTPBackendReference, String)> for ResourceKey {
     fn from((value, gateway_namespace): (&HTTPBackendReference, String)) -> Self {
+        let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
+
+        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name.clone(), kind: value.kind.clone().unwrap_or_default() }
+    }
+}
+
+impl From<(&BackendObjectReference, String)> for ResourceKey {
+    fn from((value, gateway_namespace): (&BackendObjectReference, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
 
         Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name.clone(), kind: value.kind.clone().unwrap_or_default() }

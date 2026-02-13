@@ -25,7 +25,7 @@ impl TryFrom<&GRPCRoute> for Route {
     fn try_from(kube_route: &GRPCRoute) -> Result<Self, Self::Error> {
         let key = ResourceKey::from(kube_route);
         let parents = kube_route.spec.parent_refs.clone();
-        let local_namespace = key.namespace.clone();
+        let local_namespace = key.namespace.as_str();
 
         let empty_rules: Vec<GrpcRouteRule> = vec![];
         let mut has_invalid_backends = false;
@@ -37,6 +37,29 @@ impl TryFrom<&GRPCRoute> for Route {
                 name: format!("{}-{i}", kube_route.name_any()),
                 matching_rules: rr.matches.clone().unwrap_or_default(),
                 filters: rr.filters.clone().unwrap_or_default(),
+                filter_backends: rr
+                    .filters
+                    .as_ref()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .filter_map(|filter| {
+                        filter.request_mirror.as_ref().map(|mirror_filter| match &mirror_filter.backend_ref.kind {
+                            None => {
+                                Backend::Maybe(BackendType::Service(ServiceTypeConfig::from((&mirror_filter.backend_ref, local_namespace))))
+                            },
+                            Some(kind) if kind == "Service" => {
+                                Backend::Maybe(BackendType::Service(ServiceTypeConfig::from((&mirror_filter.backend_ref, local_namespace))))
+                            },
+                            _ => {
+                                has_invalid_backends = true;
+                                Backend::Invalid(BackendType::Invalid(ServiceTypeConfig::from((
+                                    &mirror_filter.backend_ref,
+                                    local_namespace,
+                                ))))
+                            },
+                        })
+                    })
+                    .collect(),
                 backends: rr
                     .backend_refs
                     .as_ref()
@@ -44,7 +67,7 @@ impl TryFrom<&GRPCRoute> for Route {
                     .iter()
                     .map(|br| {
                         let config = ServiceTypeConfig {
-                            resource_key: ResourceKey::from((br, local_namespace.clone())),
+                            resource_key: ResourceKey::from((br, local_namespace.to_owned())),
                             endpoint: if let Some(namespace) = br.namespace.as_ref() {
                                 if *namespace == DEFAULT_NAMESPACE_NAME { br.name.clone() } else { format!("{}.{namespace}", br.name) }
                             } else if local_namespace == DEFAULT_NAMESPACE_NAME {
@@ -105,6 +128,7 @@ pub struct GRPCRoutingRule {
     pub backends: Vec<Backend>,
     pub matching_rules: Vec<GrpcRouteMatch>,
     pub filters: Vec<GrpcRouteFilter>,
+    pub filter_backends: Vec<Backend>,
 }
 
 impl GRPCRoutingRule {

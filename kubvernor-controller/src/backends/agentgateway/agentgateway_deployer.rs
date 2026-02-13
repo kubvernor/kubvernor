@@ -4,7 +4,7 @@ use std::{
 };
 
 use agentgateway_api_rs::{
-    agentgateway::dev::resource::{Bind, Listener, Resource, resource::Kind},
+    agentgateway::dev::resource::{Bind, Resource, resource::Kind},
     istio::workload,
 };
 use futures::FutureExt;
@@ -37,6 +37,7 @@ use uuid::Uuid;
 use crate::{
     Error,
     backends::agentgateway::{
+        SecureListenerWrapper,
         resource_generator::ResourceGenerator,
         server::{ServerAction, start_aggregate_server},
     },
@@ -82,27 +83,33 @@ impl AgentgatewayDeployerChannelHandlerService {
                                     if let Ok(service) = maybe_service {
                                         let resource_generator = ResourceGenerator::new(gateway);
                                         let bindings_and_listeners = resource_generator.generate_bindings_and_listeners();
+                                        debug!("Generated bindings {:?}",bindings_and_listeners);
 
 
                                         let (routes, backends, policies, services) =
                                             resource_generator.generate_routes_and_backends_and_policies();
 
+                                        debug!("Generated routes {routes:#?}");
+                                        debug!("Generated backends {backends:#?}");
+                                        debug!("Generated policies {policies:#?}");
+                                        debug!("Generated services {services:#?}");
+
                                         let bindings = bindings_and_listeners.keys().cloned().map(|b|
                                             Bind{
                                                 key:b.key,port:b.port,
-                                                protocol: 0, //http,
-                                                tunnel_protocol: 0 //direct
+                                                protocol: b.protocol.into(),
+                                                tunnel_protocol: b.tunnel_protocol.into()
                                             }
                                             ).collect::<Vec<_>>();
-                                        let listeners: Vec<Listener> = bindings_and_listeners.values().flatten().cloned().collect();
 
-
+                                        let listeners: Vec<SecureListenerWrapper> = bindings_and_listeners.values()
+                                            .flatten().cloned().collect();
 
                                         let listeners = listeners
                                         .into_iter()
                                         .map(|l|{
                                             info!("Generated agentgateway listener {l:?}");
-                                            Resource{kind: Some(Kind::Listener(l))}
+                                            Resource{kind: Some(Kind::Listener(l.into()))}
                                         })
                                         .collect::<Vec<_>>();
 
@@ -378,6 +385,7 @@ fn create_deployment(gateway: &Gateway) -> Deployment {
         }),
         ..Default::default()
     }];
+
     pod_spec.volumes = Some(default_volumes);
     let mut annotations = BTreeMap::new();
 

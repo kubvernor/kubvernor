@@ -185,6 +185,7 @@ impl InferencePoolControllerHandler<InferencePool> {
                 .save_inference_pool(inference_pool_key.clone(), &Arc::new(inference_pool.clone()))
                 .expect("We expect the lock to work");
 
+            info!("InferencePool: patching on new or changed {inference_pool_key}");
             inference_pool.metadata.managed_fields = None;
             let (sender, receiver) = oneshot::channel();
             let _ = self
@@ -292,7 +293,7 @@ pub fn clear_all_conditions(mut inference_pool: InferencePool, gateways_ids: &BT
     {
         let new_parents = parents.iter().filter(|parent| {
             let key = ResourceKey::from(&parent.parent_ref);
-            gateways_ids.contains(&key)
+            !gateways_ids.contains(&key)
         });
 
         status.parents = Some(new_parents.cloned().collect());
@@ -356,7 +357,6 @@ pub fn update_inference_pool_parents(
             && p.parent_ref.namespace == Some(gateway_namespace.clone())
     }) {
         update_conditions(parent, conditions);
-        info!("Updating conditions {gateway} {parent:?}");
     } else {
         let new_parent = InferencePoolStatusParents {
             conditions: Some(conditions),

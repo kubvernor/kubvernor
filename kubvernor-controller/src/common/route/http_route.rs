@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 
 use gateway_api::{
-    common::{HTTPFilterType, HTTPHeader, HeaderModifier},
+    common::{BackendObjectReference, HTTPFilterType, HTTPHeader, HeaderModifier},
     httproutes::{HTTPBackendReference, HTTPRoute, HttpRouteFilter, HttpRouteRule, RouteMatch},
 };
 use kube::ResourceExt;
@@ -40,6 +40,29 @@ impl TryFrom<&HTTPRoute> for Route {
                 name: format!("{}-{i}", kube_route.name_any()),
                 matching_rules: rr.matches.clone().unwrap_or_default(),
                 filters: rr.filters.clone().unwrap_or_default(),
+                filter_backends: rr
+                    .filters
+                    .as_ref()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .filter_map(|filter| {
+                        filter.request_mirror.as_ref().map(|mirror_filter| match &mirror_filter.backend_ref.kind {
+                            None => {
+                                Backend::Maybe(BackendType::Service(ServiceTypeConfig::from((&mirror_filter.backend_ref, local_namespace))))
+                            },
+                            Some(kind) if kind == "Service" => {
+                                Backend::Maybe(BackendType::Service(ServiceTypeConfig::from((&mirror_filter.backend_ref, local_namespace))))
+                            },
+                            _ => {
+                                has_invalid_backends = true;
+                                Backend::Invalid(BackendType::Invalid(ServiceTypeConfig::from((
+                                    &mirror_filter.backend_ref,
+                                    local_namespace,
+                                ))))
+                            },
+                        })
+                    })
+                    .collect(),
                 backends: rr
                     .backend_refs
                     .as_ref()
@@ -111,6 +134,24 @@ impl From<(&HTTPBackendReference, &str)> for ServiceTypeConfig {
     }
 }
 
+impl From<(&BackendObjectReference, &str)> for ServiceTypeConfig {
+    fn from((br, local_namespace): (&BackendObjectReference, &str)) -> Self {
+        ServiceTypeConfig {
+            resource_key: ResourceKey::from((br, local_namespace.to_owned())),
+            endpoint: if let Some(namespace) = br.namespace.as_ref() {
+                if *namespace == DEFAULT_NAMESPACE_NAME { br.name.clone() } else { format!("{}.{namespace}", br.name) }
+            } else if local_namespace == DEFAULT_NAMESPACE_NAME {
+                br.name.clone()
+            } else {
+                format!("{}.{local_namespace}", br.name)
+            },
+            port: br.port.unwrap_or(0),
+            effective_port: br.port.unwrap_or(0),
+            weight: 1,
+        }
+    }
+}
+
 impl From<(&HTTPBackendReference, &str)> for InferencePoolTypeConfig {
     fn from((br, local_namespace): (&HTTPBackendReference, &str)) -> Self {
         let mut resource_key = ResourceKey::from((br, local_namespace.to_owned()));
@@ -139,19 +180,24 @@ pub struct HTTPRoutingRule {
     pub backends: Vec<Backend>,
     pub matching_rules: Vec<RouteMatch>,
     pub filters: Vec<HttpRouteFilter>,
+    pub filter_backends: Vec<Backend>,
 }
 
 impl HTTPRoutingRule {
-    pub fn filter_headers(&self) -> FilterHeaders {
-        fn iter<T: Clone, X>(routing_rule: &HTTPRoutingRule, x: X) -> Vec<T>
+    pub fn filter_headers(&self, filter_type: &HTTPFilterType) -> FilterHeaders {
+        fn iter<T: Clone, X>(routing_rule: &HTTPRoutingRule, x: X, filter_type: &HTTPFilterType) -> Vec<T>
         where
             X: Fn(Option<&HeaderModifier>) -> Option<&Vec<T>>,
         {
             routing_rule
                 .filters
                 .iter()
-                .filter(|f| f.r#type == HTTPFilterType::RequestHeaderModifier)
-                .filter_map(|f| x(f.request_header_modifier.as_ref()))
+                .filter(|f| f.r#type == *filter_type)
+                .filter_map(|f| match filter_type {
+                    HTTPFilterType::RequestHeaderModifier => x(f.request_header_modifier.as_ref()),
+                    HTTPFilterType::ResponseHeaderModifier => x(f.response_header_modifier.as_ref()),
+                    _ => None,
+                })
                 .map(std::iter::IntoIterator::into_iter)
                 .flat_map(std::iter::Iterator::collect::<Vec<_>>)
                 .cloned()
@@ -159,9 +205,9 @@ impl HTTPRoutingRule {
         }
 
         FilterHeaders {
-            add: iter::<HTTPHeader, _>(self, get_add_headers),
-            remove: iter::<String, _>(self, get_remove_headers),
-            set: iter::<HTTPHeader, _>(self, get_set_headers),
+            add: iter::<HTTPHeader, _>(self, get_add_headers, filter_type),
+            remove: iter::<String, _>(self, get_remove_headers, filter_type),
+            set: iter::<HTTPHeader, _>(self, get_set_headers, filter_type),
         }
     }
 }

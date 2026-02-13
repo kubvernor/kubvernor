@@ -45,7 +45,7 @@ metadata:
   # finalizers:
   #   - kubevernor.com/proxy-controller
 spec:
-  gatewayClassName: kubvernor-agentgateway
+  gatewayClassName: kubvernor-gateway-agentgateway
   listeners:
     - name: http-1080
       protocol: HTTP
@@ -58,7 +58,7 @@ metadata:
   # finalizers:
   #   - kubevernor.com/proxy-controller
 spec:
-  gatewayClassName: kubvernor-gateway
+  gatewayClassName: kubvernor-gateway-envoy
   listeners:
     - name: http-1080
       protocol: HTTP
@@ -67,11 +67,11 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
-  name: oriongateway-one
+  name: orionproxy-gateway-one
   # finalizers:
   #   - kubevernor.com/proxy-controller
 spec:
-  gatewayClassName: kubvernor-orionproxy-gateway
+  gatewayClassName: kubvernor-gateway-orionproxy
   listeners:
     - name: http-1080
       protocol: HTTP
@@ -134,7 +134,7 @@ metadata:
   name: orion-route-service-one
 spec:
   parentRefs:
-    - name: oriongateway-one
+    - name: orionproxy-gateway-one
       port: 1080
 
   hostnames:

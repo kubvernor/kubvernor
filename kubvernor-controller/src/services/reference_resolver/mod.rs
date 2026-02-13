@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 
 use gateway_api::gateways::Gateway;
 use gateway_api_inference_extension::inferencepools::InferencePool;
@@ -212,7 +212,9 @@ impl ReferenceResolverHandler {
         info!("Updating inference pools for deleted route {route_key} {references:?} {affected_gateways:?}");
         for pool_reference in references.iter().filter(|r| r.kind == "InferencePool") {
             if let Some(pool) = self.state.get_inference_pool(pool_reference).expect("We expect this to work") {
-                let pool = clear_all_conditions((*pool).clone(), affected_gateways);
+                let mut pool = clear_all_conditions((*pool).clone(), affected_gateways);
+                pool.metadata.managed_fields = None;
+                self.state.save_inference_pool(pool_reference.clone(), &Arc::new(pool.clone())).expect("We expect this to work");
                 let (sender, receiver) = oneshot::channel();
                 let _ = self
                     .inference_pool_patcher_sender

@@ -47,7 +47,7 @@ metadata:
   name: orion-inference-route
 spec:
   parentRefs:
-    - name: oriongateway-one
+    - name: orionproxy-gateway-one
       group: gateway.networking.k8s.io
       kind: Gateway
   hostnames:
