@@ -1,9 +1,12 @@
+use log::{debug, info};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-use tracing::{debug, info};
 
 use crate::common::{
     self, ListenerCondition, ProtocolType, ReferenceGrantRef, ReferenceGrantsResolver, ResolvedRefs, SecretsResolver, TlsType,
 };
+
+const TARGET: &str = super::TARGET;
+
 pub struct ListenerTlsConfigValidator<'a> {
     gateway: common::Gateway,
     secrets_resolver: &'a SecretsResolver,
@@ -31,7 +34,7 @@ impl<'a> ListenerTlsConfigValidator<'a> {
         let gateway_name = self.gateway.name().to_owned();
         let gateway_key = self.gateway.key().clone();
 
-        debug!("Validating TLS certs {gateway_name}");
+        debug!(target: TARGET,"Validating TLS certs {gateway_name}");
 
         for listener in self.gateway.listeners_mut().filter(|f| f.protocol() == ProtocolType::Https || f.protocol() == ProtocolType::Tls) {
             let listener_data = listener.data_mut();
@@ -42,7 +45,7 @@ impl<'a> ListenerTlsConfigValidator<'a> {
                 .get(&ListenerCondition::ResolvedRefs(ResolvedRefs::Resolved(vec![])))
                 .map(ListenerCondition::supported_routes)
                 .unwrap_or_default();
-            debug!("Supported routes {} {name} {supported_routes:?}", gateway_name);
+            debug!(target: TARGET,"Supported routes {gateway_name} {name} {supported_routes:?}");
             if let Some(TlsType::Terminate(certificates)) = &mut listener_data.config.tls_type {
                 for certificate in certificates {
                     let certificate_key = certificate.resouce_key();
@@ -77,7 +80,7 @@ impl<'a> ListenerTlsConfigValidator<'a> {
                                                 if gateway_key.namespace == certificate.resouce_key().namespace {
                                                     *certificate =
                                                         certificate.resolve(secret_certificate.0.clone(), secret_private_key.0.clone());
-                                                    debug!("Private key and certificate are valid");
+                                                    debug!(target: TARGET,"Private key and certificate are valid");
                                                 } else {
                                                     *certificate = certificate
                                                         .resolve_cross_space(secret_certificate.0.clone(), secret_private_key.0.clone());
@@ -86,21 +89,21 @@ impl<'a> ListenerTlsConfigValidator<'a> {
                                             },
                                             (Ok(_), Err(e)) => {
                                                 *certificate = certificate.invalid();
-                                                debug!("Key is invalid {e}");
+                                                debug!(target: TARGET,"Key is invalid {e}");
                                                 _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(
                                                     supported_routes,
                                                 )));
                                             },
                                             (Err(e), Ok(_)) => {
                                                 *certificate = certificate.invalid();
-                                                debug!("Certificate is invalid {e}");
+                                                debug!(target: TARGET,"Certificate is invalid {e}");
                                                 _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(
                                                     supported_routes,
                                                 )));
                                             },
                                             (Err(e_cert), Err(e_key)) => {
                                                 *certificate = certificate.invalid();
-                                                debug!("Key and cer certificate are invalid {e_cert}{e_key}");
+                                                debug!(target: TARGET,"Key and cer certificate are invalid {e_cert}{e_key}");
                                                 _ = conditions.replace(ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidCertificates(
                                                     supported_routes,
                                                 )));

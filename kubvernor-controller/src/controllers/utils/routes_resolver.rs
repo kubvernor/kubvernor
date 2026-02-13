@@ -10,8 +10,8 @@ use kube::{Api, Client, api::ListParams};
 use kube_core::{Expression, Selector, object::HasSpec};
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
+use log::{debug, info, warn};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
 
 use super::BackendReferenceResolver;
@@ -26,6 +26,8 @@ use crate::{
     },
     services::patchers::{Operation, PatchContext},
 };
+
+const TARGET: &str = super::TARGET;
 
 #[derive(TypedBuilder)]
 pub struct RouteResolver<'a> {
@@ -92,13 +94,13 @@ impl RouteResolver<'_> {
                 return port;
             }
 
-            debug!("Spec cluster IP is NOT set ... remapping ports");
+            debug!(target: TARGET,"Spec cluster IP is NOT set ... remapping ports");
             for service_port in spec.ports.unwrap_or_default() {
                 if service_port.port == port {
                     return service_port.target_port.map_or(port, |target_port| match target_port {
                         k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::Int(port_value) => port_value,
                         k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::String(port_name) => {
-                            warn!("Port names are not supported {port_name}");
+                            warn!(target: TARGET,"Port names are not supported {port_name}");
                             port
                         },
                     });
@@ -165,14 +167,14 @@ impl RouteResolver<'_> {
                         backend_config.effective_port = Self::backend_remap_port(backend_config.port, service);
                         (Backend::Resolved(BackendType::Service(backend_config)), ResolutionStatus::Resolved)
                     } else {
-                        debug!("can't resolve {:?} {:?}", &backend_resource_key, maybe_service);
+                        debug!(target: TARGET,"can't resolve {:?} {:?}", &backend_resource_key, maybe_service);
                         (
                             Backend::Unresolved(BackendType::Service(backend_config)),
                             ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound),
                         )
                     }
                 } else {
-                    debug!(
+                    debug!(target: TARGET,
                         "Backend is not permitted gateway namespace is {} route namespace is {} backend namespace is {}",
                         gateway_namespace, &route_namespace, &backend_namespace,
                     );
@@ -183,15 +185,15 @@ impl RouteResolver<'_> {
                 }
             },
             Backend::Unresolved(_) | Backend::NotAllowed(_) | Backend::Invalid(_) => {
-                debug!("Skipping unresolved backend {:?}", backend);
+                debug!(target: TARGET,"Skipping unresolved backend {backend:?}");
                 (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
             },
             Backend::Maybe(_) => {
-                warn!("This should not be processed here {:?}", backend);
+                warn!(target: TARGET,"This should not be processed here {backend:?}");
                 (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
             },
             Backend::Resolved(_) => {
-                debug!("Skipping resolved/unupported backend {:?}", backend);
+                debug!(target: TARGET,"Skipping resolved/unupported backend {backend:?}");
                 (backend, ResolutionStatus::Resolved)
             },
         }
@@ -200,10 +202,10 @@ impl RouteResolver<'_> {
     async fn get_inference_extension(client: Client, namespace: &str, inference_pool_spec: &InferencePoolSpec) -> bool {
         let service_api: Api<Service> = Api::namespaced(client, namespace);
         if let Ok(service) = service_api.get(&inference_pool_spec.endpoint_picker_ref.name).await {
-            debug!("Inference Pool: Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
+            debug!(target: TARGET,"Inference Pool: Endpoint picker found with IP {:?} {:?} ", service.metadata.name, service.spec.map(|s| s.cluster_ips));
             true
         } else {
-            debug!("Inference Pool: Can't get endpoint picker service {:?} ", inference_pool_spec.endpoint_picker_ref);
+            debug!(target: TARGET,"Inference Pool: Can't get endpoint picker service {:?} ", inference_pool_spec.endpoint_picker_ref);
             false
         }
     }
@@ -251,7 +253,7 @@ impl RouteResolver<'_> {
                         let model_endpoints =
                             Self::get_model_endpoints(self.client.clone(), &route_resource_key.namespace, inference_pool_spec).await;
 
-                        debug!("Inference Pool: got model endpoints {inference_pool_resource_key} {:?}", model_endpoints);
+                        debug!(target: TARGET,"Inference Pool: got model endpoints {inference_pool_resource_key} {model_endpoints:?}");
 
                         let resolved_endpoint_picker = match inference_pool_spec.endpoint_picker_ref.kind.as_ref() {
                             None => {
@@ -267,7 +269,7 @@ impl RouteResolver<'_> {
                         backend_config.target_ports = inference_pool_spec.target_ports.iter().map(|p| p.number).collect();
                         backend_config.endpoints = Some(model_endpoints);
 
-                        debug!("Inference Pool: Setting backend config {inference_pool_resource_key} {backend_resource_key:?}",);
+                        debug!(target: TARGET,"Inference Pool: Setting backend config {inference_pool_resource_key} {backend_resource_key:?}",);
 
                         if inference_pool.metadata.name.is_some() {
                             let mut inference_pool = inference_pool::update_inference_pool_parents(
@@ -295,7 +297,7 @@ impl RouteResolver<'_> {
                             if let Ok(Ok(_)) = receiver.await {
                                 (Backend::Resolved(BackendType::InferencePool(backend_config)), ResolutionStatus::Resolved)
                             } else {
-                                warn!("Inference Pool: Can't update the status");
+                                warn!(target: TARGET,"Inference Pool: Can't update the status");
                                 (
                                     Backend::Unresolved(BackendType::InferencePool(backend_config)),
                                     ResolutionStatus::NotResolved(NotResolvedReason::BackendNotFound),
@@ -316,7 +318,7 @@ impl RouteResolver<'_> {
                         )
                     }
                 } else {
-                    debug!(
+                    debug!(target: TARGET,
                         "Inference Backend is not permitted gateway namespace is {} route namespace is {} backend namespace is {}",
                         gateway_namespace, &route_namespace, &backend_namespace,
                     );
@@ -327,15 +329,15 @@ impl RouteResolver<'_> {
                 }
             },
             Backend::Unresolved(_) | Backend::NotAllowed(_) | Backend::Invalid(_) => {
-                debug!("Skipping unresolved backend {:?}", backend);
+                debug!(target: TARGET,"Skipping unresolved backend {backend:?}");
                 (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
             },
             Backend::Maybe(_) => {
-                warn!("This should not be processed here {:?}", backend);
+                warn!(target: TARGET,"This should not be processed here {backend:?}");
                 (backend, ResolutionStatus::NotResolved(NotResolvedReason::InvalidBackend))
             },
             Backend::Resolved(_) => {
-                debug!("Skipping resolved/unupported backend {:?}", backend);
+                debug!(target: TARGET,"Skipping resolved/unupported backend {backend:?}");
                 (backend, ResolutionStatus::Resolved)
             },
         }
@@ -356,7 +358,7 @@ pub struct RoutesResolver<'a> {
 
 impl RoutesResolver<'_> {
     pub async fn validate(mut self) -> common::Gateway {
-        debug!("Validating routes");
+        debug!(target: TARGET,"Validating routes");
         let gateway_resource_key = self.gateway.key();
         let linked_routes = utils::find_linked_routes(self.state, gateway_resource_key);
         let linked_routes = linked_routes.into_iter().map(|route| {
@@ -376,7 +378,7 @@ impl RoutesResolver<'_> {
 
         let resolved_namespaces = utils::resolve_namespaces(self.client).await;
 
-        info!("Linked routes {:?}", linked_routes.iter().map(Route::resource_key));
+        info!(target: TARGET, "Linked routes {:?}", linked_routes.iter().map(Route::resource_key));
 
         let (route_to_listeners_mapping, routes_with_no_listeners) =
             RouteListenerMatcher::new(self.kube_gateway, linked_routes, resolved_namespaces).filter_matching_routes();

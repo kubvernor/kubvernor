@@ -1,8 +1,6 @@
 mod hostname_match_filter;
-
 mod route_listener_matcher;
 mod routes_resolver;
-
 mod tls_config_validator;
 
 use std::{collections::BTreeMap, sync::Arc};
@@ -20,16 +18,18 @@ use kube::{
 use kube_core::{PartialObjectMeta, PartialObjectMetaExt};
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
+use log::{debug, warn};
 pub(crate) use route_listener_matcher::RouteListenerMatcher;
 pub use routes_resolver::RoutesResolver;
 use serde::Serialize;
 pub use tls_config_validator::ListenerTlsConfigValidator;
-use tracing::{debug, warn};
 
 use crate::{
     common::{BackendReferenceResolver, Route},
     controllers::ControllerError,
 };
+
+const TARGET: &str = super::TARGET;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum ResourceState {
@@ -58,7 +58,7 @@ impl FinalizerPatcher {
     {
         let type_name = std::any::type_name::<T>();
         let maybe_meta = api.get_metadata(resource_name).await;
-        debug!("patch_finalizer {type_name} {resource_name} {controller_name}");
+        debug!(target: TARGET,"Adding finalizer {type_name} {resource_name} {controller_name}");
         if let Ok(mut meta) = maybe_meta {
             let finalizers = meta.finalizers_mut();
 
@@ -73,7 +73,7 @@ impl FinalizerPatcher {
                 match api.patch_metadata(resource_name, &PatchParams::apply(controller_name), &Patch::Apply(&meta)).await {
                     Ok(_) => Ok(()),
                     Err(e) => {
-                        warn!("patch_finalizer: {type_name} {controller_name} {resource_name} patch failed {e:?}",);
+                        warn!(target: TARGET,"patch_finalizer: {type_name} {controller_name} {resource_name} patch failed {e:?}",);
                         Err(ControllerError::PatchFailed)
                     },
                 }

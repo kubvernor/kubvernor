@@ -8,6 +8,7 @@ use kubvernor_common::{
     configuration::{Address, Configuration},
 };
 use kubvernor_state::State;
+use log::info;
 use services::{
     GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService,
     patchers::GRPCRoutePatcherService,
@@ -17,15 +18,12 @@ use tokio::{
     sync::mpsc::{self},
     time::sleep,
 };
-use tracing::info;
 
 pub mod backends;
 mod common;
 mod controllers;
 
 mod services;
-
-//mod state;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;

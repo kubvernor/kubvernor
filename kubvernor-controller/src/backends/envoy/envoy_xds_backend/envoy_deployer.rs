@@ -51,12 +51,12 @@ use kube::{
 };
 use kube_core::ObjectMeta;
 use kubvernor_common::{GatewayImplementationType, ResourceKey};
+use log::{debug, info, warn};
 use tera::Tera;
 use tokio::{
     sync::mpsc::{self, Receiver, Sender},
     time,
 };
-use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -76,10 +76,12 @@ use crate::{
     },
 };
 
+const TARGET: &str = super::super::TARGET;
+
 pub static TEMPLATES: LazyLock<Tera> = LazyLock::new(|| match Tera::new("templates/**.tera") {
     Ok(t) => t,
     Err(e) => {
-        warn!("Parsing error(s): {}", e);
+        warn!(target: TARGET,"Parsing error(s): {e}");
         ::std::process::exit(1);
     },
 });
@@ -101,15 +103,15 @@ impl EnvoyDeployerChannelHandlerService {
         let mut ack_versions = BTreeMap::<ResourceKey, AckVersions>::new();
         let server_socket = control_plane_config.addr();
         let envoy_deployer_service = async move {
-            info!("Gateways handler started");
+            info!(target: TARGET,"Gateways handler started");
             loop {
                 tokio::select! {
                         Some(event) = self.backend_deploy_request_channel_receiver.recv() => {
-                            info!("Backend got event {event}");
+                            info!(target: TARGET,"Backend got event {event}");
                             match event{
                                 BackendGatewayEvent::Changed(ctx) => {
                                     let gateway = &ctx.gateway;
-                                    info!("EnvoyDeployerChannelHandlerService GatewayChanged {}",gateway.key());
+                                    info!(target: TARGET,"EnvoyDeployerChannelHandlerService GatewayChanged {}",gateway.key());
 
                                     let Resources{listeners, clusters, secrets} = create_resources(gateway);
 
@@ -120,7 +122,7 @@ impl EnvoyDeployerChannelHandlerService {
 
                                     let maybe_service = deploy_envoy(&control_plane_config, client.clone(), gateway, &secrets).await;
                                     if let Ok(service) = maybe_service{
-                                        info!("Service deployed {:?} listeners {} clusters {}", service.metadata.name, listeners.len(), clusters.len());
+                                        info!(target: TARGET,"Service deployed {:?} listeners {} clusters {}", service.metadata.name, listeners.len(), clusters.len());
                                         let _ = stream_resource_sender.send(ServerAction::UpdateClusters{
                                             gateway_id: gateway.key().clone(),
                                             resources: clusters,
@@ -134,7 +136,7 @@ impl EnvoyDeployerChannelHandlerService {
 
                                         self.update_address_with_polling(&service, *ctx).await;
                                     }else{
-                                        warn!("Problem {maybe_service:?}");
+                                        warn!(target: TARGET,"Problem {maybe_service:?}");
                                         let _res = self.backend_response_channel_sender
                                             .send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                                     }
@@ -144,7 +146,7 @@ impl EnvoyDeployerChannelHandlerService {
                                     let response_sender = boxed.response_sender;
                                     let gateway  = boxed.gateway;
                                     let _ = ack_versions.remove(gateway.key());
-                                    info!("EnvoyDeployerChannelHandlerService GatewayDeleted {}",gateway.key());
+                                    info!(target: TARGET,"EnvoyDeployerChannelHandlerService GatewayDeleted {}",gateway.key());
                                     self.delete_envoy(&gateway).await;
                                     let _res = self.backend_response_channel_sender.send(BackendGatewayResponse::Deleted(vec![]));
                                     let _res = response_sender.send(BackendGatewayResponse::Deleted(vec![]));
@@ -170,16 +172,16 @@ impl EnvoyDeployerChannelHandlerService {
         match f {
             Ok(_) => (),
             Err(kube::Error::Api(e)) if e.code != 404 => {
-                debug!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
+                debug!(target: TARGET,"Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
             },
             Err(e) => {
-                warn!("Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
+                warn!(target: TARGET,"Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
             },
         }
     }
 
     async fn delete_envoy(&self, gateway: &Gateway) {
-        debug!("Deleting Envoy {gateway:?}");
+        debug!(target: TARGET,"Deleting Envoy {gateway:?}");
         let service_api: Api<Service> = Api::namespaced(self.client.clone(), gateway.namespace());
         let deployment_api: Api<Deployment> = Api::namespaced(self.client.clone(), gateway.namespace());
         let config_map_api: Api<ConfigMap> = Api::namespaced(self.client.clone(), gateway.namespace());
@@ -198,7 +200,7 @@ impl EnvoyDeployerChannelHandlerService {
 
     async fn update_address_with_polling(&self, service: &Service, ctx: ChangedContext) {
         if let Some(attached_addresses) = Self::find_gateway_addresses(service) {
-            debug!("Got address address {attached_addresses:?}");
+            debug!(target: TARGET,"Got address address {attached_addresses:?}");
             let ChangedContext { mut gateway, kube_gateway, gateway_class_name } = ctx;
             gateway.addresses_mut().append(
                 &mut attached_addresses
@@ -225,7 +227,7 @@ impl EnvoyDeployerChannelHandlerService {
                 let mut interval = time::interval(time::Duration::from_secs(1));
                 loop {
                     interval.tick().await;
-                    debug!("Resolving address for Service {}", resource_key);
+                    debug!(target: TARGET,"Resolving address for Service {resource_key}");
                     let maybe_service = api.get(&resource_key.name).await;
                     if let Ok(service) = maybe_service {
                         if Self::update_addresses(&mut gateway, &service) {
@@ -239,11 +241,11 @@ impl EnvoyDeployerChannelHandlerService {
                             break;
                         }
                     } else {
-                        warn!("Problem {maybe_service:?}");
+                        warn!(target: TARGET,"Problem {maybe_service:?}");
                         let _res = backend_response_channel_sender.send(BackendGatewayResponse::Processed(Box::new(gateway.clone()))).await;
                     }
                 }
-                debug!("Task completed for gateway {} service {}", gateway.key(), resource_key);
+                debug!(target: TARGET,"Task completed for gateway {} service {}", gateway.key(), resource_key);
             });
         }
     }
@@ -305,18 +307,18 @@ async fn deploy_envoy(
     let envoy_boostrap_config_map = create_envoy_bootstrap_config_map(&bootstrap_cm, gateway, bootstrap_content);
     let _res = config_map_api.patch(&bootstrap_cm, &pp, &Patch::Apply(&envoy_boostrap_config_map)).await?;
 
-    debug!("Created bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
+    debug!(target: TARGET,"Created bootstrap config map for {}-{}", gateway.name(), gateway.namespace());
 
     let _deployment = deployment_api.patch(gateway.name(), &pp, &Patch::Apply(&deployment)).await?;
-    debug!("Created deployment {}-{}", gateway.name(), gateway.namespace());
+    debug!(target: TARGET,"Created deployment {}-{}", gateway.name(), gateway.namespace());
 
     let service = service_api.patch(gateway.name(), &pp, &Patch::Apply(&service)).await?;
 
-    debug!("Service status {:?}", service.status);
-    debug!("Created service {}-{}", gateway.name(), gateway.namespace());
+    debug!(target: TARGET,"Service status {:?}", service.status);
+    debug!(target: TARGET,"Created service {}-{}", gateway.name(), gateway.namespace());
 
     let service_account = service_account_api.patch(gateway.name(), &pp, &Patch::Apply(&service_account)).await?;
-    debug!("Service account status {:?}", service_account);
+    debug!(target: TARGET,"Service account status {service_account:?}");
 
     Ok(service)
 }

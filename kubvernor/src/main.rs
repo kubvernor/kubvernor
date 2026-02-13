@@ -5,7 +5,12 @@ use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{Layer, Registry, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{
+    Layer, Registry, filter,
+    fmt::{self, format::FmtSpan},
+    layer::SubscriberExt,
+    util::SubscriberInitExt,
+};
 pub enum Guard {
     Appender(WorkerGuard),
 }
@@ -17,7 +22,7 @@ pub struct CommandArgs {
     with_config_file: String,
 }
 
-fn init_logging(configuration: &Configuration) -> Guard {
+fn init_tracing_logging(configuration: &Configuration) -> Guard {
     let registry = Registry::default();
     let controller_name = configuration.controller_name.clone();
     let file_appender = tracing_appender::rolling::never(".", "kubvernor.log");
@@ -49,8 +54,8 @@ fn init_logging(configuration: &Configuration) -> Guard {
 
             registry
                 .with(telemetry.with_filter(tracing_filter))
-                .with(fmt::layer().with_writer(non_blocking_appender).with_ansi(false).with_filter(file_filter))
-                .with(fmt::layer().with_filter(console_filter))
+                .with(fmt::layer().with_writer(non_blocking_appender).with_target(false).with_filter(file_filter))
+                .with(fmt::layer().with_target(true).with_span_events(FmtSpan::NONE).with_filter(console_filter))
                 .init();
 
             Guard::Appender(guard)
@@ -59,8 +64,29 @@ fn init_logging(configuration: &Configuration) -> Guard {
         }
     } else {
         registry
-            .with(fmt::layer().with_writer(non_blocking_appender).with_ansi(false).with_filter(file_filter))
-            .with(fmt::layer().with_filter(console_filter))
+            .with(
+                fmt::layer()
+                    .with_writer(non_blocking_appender)
+                    .with_span_events(FmtSpan::NONE)
+                    .with_target(true)
+                    .with_ansi(false)
+                    .with_filter(filter::filter_fn(|meta| {
+                        // Only allow events, filter out spans
+                        !meta.is_span()
+                    }))
+                    .with_filter(file_filter),
+            )
+            .with(
+                fmt::layer()
+                    .with_target(true)
+                    .with_span_events(FmtSpan::NONE)
+                    .with_ansi(false)
+                    .with_filter(filter::filter_fn(|meta| {
+                        // Only allow events, filter out spans
+                        !meta.is_span()
+                    }))
+                    .with_filter(console_filter),
+            )
             .init();
         Guard::Appender(guard)
     }
@@ -70,7 +96,7 @@ fn init_logging(configuration: &Configuration) -> Guard {
 async fn main() -> kubvernor_controller::Result<()> {
     let args = CommandArgs::parse();
     let configuration: Configuration = serde_yaml::from_str(&std::fs::read_to_string(args.with_config_file)?)?;
-    let _guard = init_logging(&configuration);
+    let _guard = init_tracing_logging(&configuration);
 
     configuration.validate()?;
     let admin_interface_configuration = configuration.admin_interface.clone();

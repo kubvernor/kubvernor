@@ -7,8 +7,8 @@ use std::{
 use kube::{Api, Client, Resource, ResourceExt};
 use kube_core::ObjectMeta;
 use kubvernor_common::ResourceKey;
+use log::debug;
 use tokio::time;
-use tracing::debug;
 use typed_builder::TypedBuilder;
 
 use crate::common::ReferenceValidateRequest;
@@ -18,6 +18,8 @@ pub type ReferenceKey = ResourceKey;
 pub type GatewayKey = ResourceKey;
 pub type RouteToReferenceMapping = BTreeMap<RouteKey, BTreeSet<ReferenceKey>>;
 pub type GatewayToRouteReferenceMapping = BTreeMap<GatewayKey, RouteToReferenceMapping>;
+
+const TARGET: &str = "MultiRefResolver";
 
 #[derive(Clone, Debug)]
 pub struct References<R> {
@@ -102,11 +104,11 @@ where
     {
         let route_to_reference_mapping = route_to_reference_mapping();
         if route_to_reference_mapping.is_empty() {
-            debug!("Can't add no references Gateway {gateway_key}");
+            debug!(target: TARGET, "Can't add no references Gateway {gateway_key}");
             return;
         }
 
-        debug!("Adding new references for Gateway {gateway_key} Reference {route_to_reference_mapping:?}");
+        debug!(target: TARGET, "Adding new references for Gateway {gateway_key} Reference {route_to_reference_mapping:?}");
         let mut lock = self.gateway_route_reference_mapping.lock().await;
 
         let mut mappings_to_delete = BTreeMap::new();
@@ -142,7 +144,7 @@ where
         F: Fn() -> RouteToReferenceMapping,
     {
         let route_to_reference_mapping = route_to_reference_mapping();
-        debug!("Deleting references for Gateway {gateway_key} Reference {route_to_reference_mapping:?}");
+        debug!(target: TARGET, "Deleting references for Gateway {gateway_key} Reference {route_to_reference_mapping:?}");
         let mut lock = self.gateway_route_reference_mapping.lock().await;
         if let Some(old_mappings) = lock.remove(gateway_key) {
             let references = &mut self.references.lock().await;
@@ -166,7 +168,7 @@ where
     where
         I: Iterator<Item = ResourceKey> + fmt::Debug,
     {
-        debug!("Deleting route references {route_key} {reference_keys:?}");
+        debug!(target: TARGET, "Deleting route references {route_key} {reference_keys:?}");
         let mut gateway_route_reference_mapping = self.gateway_route_reference_mapping.lock().await;
 
         let (affected_gateways, resources_to_delete): (BTreeSet<_>, BTreeSet<_>) = gateway_route_reference_mapping
@@ -212,7 +214,7 @@ where
                 let key = key.clone();
                 let myself = (*self).clone();
                 tokio::spawn(async move {
-                    debug!("Checking reference {key}");
+                    debug!(target:TARGET, "Checking reference {key}");
                     let api: Api<R> = Api::namespaced(myself.client.clone(), &key.namespace);
                     let maybe_reference = api.get(&key.name).await;
                     if let Ok(reference) = maybe_reference {
@@ -221,13 +223,13 @@ where
                             resolved_references.add_resolved_reference(&key, reference)
                         };
 
-                        debug!("Resolved reference {key} gateway needs an update {update_gateway}");
+                        debug!(target: TARGET, "Resolved reference {key} gateway needs an update {update_gateway}");
 
                         if update_gateway {
                             myself.update_gateways(&key).await;
                         }
                     } else {
-                        debug!("Problem with checking reference {key} {:?}", maybe_reference.err());
+                        debug!(target:TARGET, "Problem with checking reference {key} {:?}", maybe_reference.err());
                         let resolved_references = {
                             let mut resolved_references = myself.references.lock().await;
                             resolved_references.remove_resolved_reference(&key).is_some()
@@ -252,7 +254,7 @@ where
             .unzip();
         let changed_routes = routes.into_iter().flatten().collect::<BTreeSet<_>>();
 
-        debug!("Reference changed... updating gateways {key} {gateways:?} changed routes {changed_routes:?}");
+        debug!(target: TARGET, "Reference changed... updating gateways {key} {gateways:?} changed routes {changed_routes:?}");
         let _res = self
             .reference_validate_channel_sender
             .send(ReferenceValidateRequest::UpdatedGateways { reference: key.clone(), gateways })
