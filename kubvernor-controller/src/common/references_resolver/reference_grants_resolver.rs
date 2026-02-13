@@ -5,9 +5,11 @@ use gateway_api::referencegrants::{ReferenceGrant, ReferenceGrantFrom, Reference
 use kube::{Api, Client, ResourceExt, api::ListParams};
 use kube_core::ObjectList;
 use kubvernor_state::State;
+use log::{info, trace, warn};
 use tokio::time;
-use tracing::{info, warn};
 use typed_builder::TypedBuilder;
+
+const TARGET: &str = "RefGrantResolver";
 
 use crate::{
     common::{Backend, Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey, TlsType, resource_key::DEFAULT_GROUP_NAME},
@@ -142,7 +144,7 @@ impl ReferenceGrantsResolver {
     pub async fn add_references_by_gateway(&self, gateway: &Gateway) {
         let key = gateway.key();
         let mut references = self.search_references(gateway);
-        info!("Adding references gateway {key:?} : {references:?} ");
+        info!(target: TARGET, "Adding references gateway {key:?} : {references:?} ");
         self.references.lock().await.append(&mut references);
     }
 
@@ -212,11 +214,11 @@ impl ReferenceGrantsResolver {
                     }
                 }
             } else {
-                warn!("Unable to list ReferenceGrants for {resolved_namespace}");
+                warn!(target:TARGET, "Unable to list ReferenceGrants for {resolved_namespace}");
             }
         }
 
-        info!("All available grants {configured_reference_grants:?}");
+        info!(target:TARGET, "All available grants {configured_reference_grants:?}");
         let mut allowed_reference_grants = BTreeSet::new();
 
         for reference in references.iter() {
@@ -227,20 +229,20 @@ impl ReferenceGrantsResolver {
                     rgr == &temp
                 }
             });
-            info!("Checking reference {reference:?} {valid}");
+            trace!(target:TARGET,"Checking reference {reference:?} {valid}");
             if valid {
                 allowed_reference_grants.insert(reference.clone());
             }
         }
 
         let removed_reference_grants = resolved_reference_grants.difference(&allowed_reference_grants);
-        info!("Removed grants {removed_reference_grants:?}");
+        info!(target:TARGET, "Removed grants {removed_reference_grants:?}");
         let added_reference_grants = allowed_reference_grants.difference(&resolved_reference_grants);
-        info!("Added grants {added_reference_grants:?}");
+        info!(target:TARGET, "Added grants {added_reference_grants:?}");
 
         let changed_gateways: BTreeSet<_> = added_reference_grants.chain(removed_reference_grants).collect();
 
-        info!("Changed gateways {changed_gateways:?}");
+        info!(target:TARGET,"Changed gateways {changed_gateways:?}");
 
         if !changed_gateways.is_empty() {
             let _res = self
@@ -257,7 +259,7 @@ impl ReferenceGrantsResolver {
 
     pub async fn is_allowed(&self, from: &ResourceKey, to: &ResourceKey, gateway_key: &ResourceKey) -> bool {
         let resolved_grants = self.resolved_reference_grants.lock().await;
-        info!("Resolved grants {resolved_grants:?}");
+        info!(target:TARGET,"Resolved grants {resolved_grants:?}");
         resolved_grants.contains(
             &ReferenceGrantRef::builder()
                 .namespace(to.namespace.clone())

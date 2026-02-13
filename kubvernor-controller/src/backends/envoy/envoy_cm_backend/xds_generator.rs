@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gateway_api::{common::HTTPHeader, httproutes};
+use log::{debug, info, warn};
 use serde::Serialize;
-use tracing::{debug, info, warn};
 
 use super::{
     super::common::{HTTPEffectiveRoutingRule, resource_generator::calculate_hostnames_common},
@@ -12,6 +12,9 @@ use crate::{
     common::{self, Backend, BackendTypeConfig, Listener, ProtocolType, Route, RouteType, TlsType},
     controllers::HostnameMatchFilter,
 };
+
+const TARGET: &str = super::TARGET;
+
 #[derive(Debug)]
 pub struct RdsData {
     pub route_name: String,
@@ -92,7 +95,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
     pub fn generate_xds(&self) -> Result<XdsData, Error> {
         let envoy_listeners = self.generate_envoy_representation();
 
-        info!("Collapsed envoy listeners {envoy_listeners:#?}");
+        info!(target: TARGET,"Collapsed envoy listeners {envoy_listeners:#?}");
         let listeners = &envoy_listeners.values().cloned().collect::<Vec<_>>();
         let lds = Self::generate_lds(listeners)?;
         let boostrap = Self::generate_bootstrap(listeners)?;
@@ -103,7 +106,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
                 if let Ok(rds_content) = maybe_content {
                     Some(rds_content)
                 } else {
-                    warn!("Can't generate RDS data for {}-{}  {:?}", listener.name, listener.port, maybe_content);
+                    warn!(target: TARGET,"Can't generate RDS data for {}-{}  {:?}", listener.name, listener.port, maybe_content);
                     None
                 }
             })
@@ -174,14 +177,14 @@ impl<'a> EnvoyXDSGenerator<'a> {
 
         let mut listener_map = BTreeSet::new();
         let potential_hostnames = Self::calculate_potential_hostnames(&resolved, listener.hostname().cloned());
-        debug!("generate_virtual_hosts Potential hostnames {potential_hostnames:?}");
+        debug!(target: TARGET,"generate_virtual_hosts Potential hostnames {potential_hostnames:?}");
         for potential_hostname in potential_hostnames {
             let effective_matching_rules = listener
                 .http_matching_rules()
                 .into_iter()
                 .filter(|em| {
                     let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
-                    debug!("generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
+                    debug!(target: TARGET,"generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
                     filtered
                 })
                 .collect::<Vec<_>>();

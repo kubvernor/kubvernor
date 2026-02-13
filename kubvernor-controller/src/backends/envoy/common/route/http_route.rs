@@ -4,9 +4,11 @@ use gateway_api::{
     common::{HttpRouteUrlRewrite, RequestMirror, RequestRedirect},
     httproutes::RouteMatch,
 };
-use tracing::debug;
+use log::debug;
 
 use crate::common::{Backend, FilterHeaders};
+
+const TARGET: &str = super::super::super::TARGET;
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct HTTPEffectiveRoutingRule {
@@ -96,7 +98,7 @@ impl HTTPEffectiveRoutingRule {
         } else {
             query_match
         };
-        debug!("Comparing {this:#?} {other:#?} {result:?} {path_match:?} {header_match:?} {query_match:?} {method_match:?}");
+        debug!(target: TARGET,"Comparing {this:#?} {other:#?} {result:?} {path_match:?} {header_match:?} {query_match:?} {method_match:?}");
         result
     }
 }

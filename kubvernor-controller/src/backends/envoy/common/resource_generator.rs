@@ -35,7 +35,7 @@ use gateway_api::{
 };
 use itertools::Itertools;
 use kubvernor_common::GatewayImplementationType;
-use tracing::{debug, error};
+use log::{debug, error};
 
 use crate::{
     backends::envoy::common::{
@@ -50,6 +50,8 @@ use crate::{
     },
     controllers::HostnameMatchFilter,
 };
+
+const TARGET: &str = super::super::TARGET;
 
 type ListenerNameToHostname = (String, Option<String>);
 
@@ -256,7 +258,7 @@ impl<'a> ResourceGenerator<'a> {
             .flat_map(|listener| {
                 listener.http_listener_map.iter().flat_map(|evc| {
                     evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
-                        debug!("Cluster  {} {}", r.backends().len(), r.filter_backends().len());
+                        debug!(target: TARGET,"Cluster  {} {}", r.backends().len(), r.filter_backends().len());
                         let route_type = r.route_type();
                         let backends = r.backends();
                         let service_backends = r.backends();
@@ -285,7 +287,7 @@ impl<'a> ResourceGenerator<'a> {
                                 {
                                     Some(backend_service_config)
                                 } else {
-                                    debug!("Filter backend not resolved {:?}", b);
+                                    debug!(target: TARGET,"Filter backend not resolved {b:?}");
                                     None
                                 }
                             })
@@ -309,9 +311,9 @@ impl<'a> ResourceGenerator<'a> {
                 })
             })
             .collect();
-        debug!("Clusters produced {} {:?}", clusters.len(), clusters);
+        debug!(target: TARGET,"Clusters produced {} {clusters:?}", clusters.len() );
         let ext_service_clusters = self.inference_clusters.iter().filter_map(|c| self.generate_ext_service_cluster(c));
-        debug!("Ext Service Clusters produced {:?}", ext_service_clusters);
+        debug!(target: TARGET,"Ext Service Clusters produced {ext_service_clusters:?}");
         let clusters = clusters
             .into_iter()
             .chain(ext_service_clusters)
@@ -376,7 +378,7 @@ impl<'a> ResourceGenerator<'a> {
 
         let mut listener_map = BTreeSet::new();
         let potential_hostnames = Self::calculate_potential_hostnames(&resolved, listener.hostname().cloned());
-        debug!("generate_virtual_hosts Potential hostnames {potential_hostnames:?}");
+        debug!(target: TARGET,"generate_virtual_hosts Potential hostnames {potential_hostnames:?}");
         let mut enable_ext_proc = false;
         for potential_hostname in potential_hostnames {
             let http_matching_rules = listener
@@ -384,7 +386,7 @@ impl<'a> ResourceGenerator<'a> {
                 .into_iter()
                 .filter(|em| {
                     let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
-                    debug!("generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
+                    debug!(target: TARGET,"generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
                     filtered
                 })
                 .collect::<Vec<_>>();
@@ -394,7 +396,7 @@ impl<'a> ResourceGenerator<'a> {
                 .into_iter()
                 .filter(|em| {
                     let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
-                    debug!("generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
+                    debug!(target: TARGET,"generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
                     filtered
                 })
                 .collect::<Vec<_>>();

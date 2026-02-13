@@ -25,3 +25,5 @@ impl From<SecureListenerWrapper> for Listener {
         value.0
     }
 }
+
+const TARGET: &str = "Backend::Agentgateway";

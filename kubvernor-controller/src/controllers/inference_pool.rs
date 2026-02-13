@@ -16,11 +16,11 @@ use kube::{
 };
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
+use log::{info, warn};
 use tokio::sync::{
     mpsc::{self},
     oneshot,
 };
-use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -35,6 +35,8 @@ use crate::{
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
+
+const TARGET: &str = super::TARGET;
 
 #[derive(Clone, TypedBuilder)]
 pub struct InferencePoolControllerContext {
@@ -185,7 +187,7 @@ impl InferencePoolControllerHandler<InferencePool> {
                 .save_inference_pool(inference_pool_key.clone(), &Arc::new(inference_pool.clone()))
                 .expect("We expect the lock to work");
 
-            info!("InferencePool: patching on new or changed {inference_pool_key}");
+            info!(target: TARGET,"InferencePool: patching on new or changed {inference_pool_key}");
             inference_pool.metadata.managed_fields = None;
             let (sender, receiver) = oneshot::channel();
             let _ = self
@@ -198,7 +200,7 @@ impl InferencePoolControllerHandler<InferencePool> {
                 }))
                 .await;
             match receiver.await {
-                Ok(Err(_)) | Err(_) => warn!("Could't patch status"),
+                Ok(Err(_)) | Err(_) => warn!(target: TARGET,"Could't patch status"),
                 _ => (),
             }
 
@@ -215,7 +217,7 @@ impl InferencePoolControllerHandler<InferencePool> {
     async fn on_deleted(&self, inference_pool_key: ResourceKey, resource: &Arc<InferencePool>, _: &State) -> Result<Action> {
         let deleted = self.state.delete_inference_pool(&inference_pool_key).expect("We expect the lock to work");
         if deleted.is_none() {
-            warn!("Unable to delete {inference_pool_key:?}");
+            warn!(target: TARGET,"Unable to delete {inference_pool_key:?}");
         }
 
         let inference_pool = (**resource).clone();
@@ -436,7 +438,7 @@ pub fn remove_inference_pool_parents(mut inference_pool: InferencePool, gateways
         .filter(|p| {
             let key = ResourceKey::from(&p.parent_ref);
             let contains = !gateways_ids.contains(&key);
-            info!("Filtering inference pools {key:?} in {gateways_ids:?} {contains}");
+            info!(target: TARGET,"Filtering inference pools {key:?} in {gateways_ids:?} {contains}");
             !gateways_ids.contains(&key)
         })
         .collect();

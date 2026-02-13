@@ -14,8 +14,8 @@ use k8s_openapi::{
 use kube::Resource;
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
+use log::{debug, info, warn};
 use tokio::sync::{mpsc::Sender, oneshot};
-use tracing::{debug, info, warn};
 
 use crate::{
     common::{self, GatewayAddress, NotResolvedReason, ResolutionStatus, Route, RouteType},
@@ -24,6 +24,7 @@ use crate::{
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
+const TARGET: &str = super::TARGET;
 
 const GATEWAY_CONDITION_MESSAGE: &str = "Gateway status updated by controller";
 const ROUTE_CONDITION_MESSAGE: &str = "Route status updated by controller";
@@ -86,7 +87,7 @@ impl GatewayProcessedHandler<'_> {
         let unresolved_routes: BTreeSet<&Route> = unresolved_routes.into_iter().filter(|r| only_http_routes(r)).collect();
 
         let routes_with_no_hostnames = self.effective_gateway.orphaned_routes();
-        debug!("HTTP Updating attached routes {attached_routes:?}");
+        debug!(target: TARGET,"HTTP Updating attached routes {attached_routes:?}");
         let gateway_id = &self.effective_gateway.key();
         for attached_route in attached_routes {
             let updated_route = self.update_http_attached_route_parents(attached_route, gateway_id);
@@ -113,7 +114,7 @@ impl GatewayProcessedHandler<'_> {
                 }
             }
         }
-        debug!("HTTP Updating unresolved routes {unresolved_routes:?}");
+        debug!(target: TARGET,"HTTP Updating unresolved routes {unresolved_routes:?}");
         for unresolve_route in unresolved_routes {
             let updated_route = self.update_http_unresolved_route_parents(unresolve_route, gateway_id);
             if let Some(route) = updated_route {
@@ -140,7 +141,7 @@ impl GatewayProcessedHandler<'_> {
                 }
             }
         }
-        debug!("HTTP Updating routes with no hostnames  {routes_with_no_hostnames:?}");
+        debug!(target: TARGET,"HTTP Updating routes with no hostnames  {routes_with_no_hostnames:?}");
         for route_with_no_hostname in self.effective_gateway.orphaned_routes() {
             let updated_route = self.update_http_non_attached_route_parents(route_with_no_hostname, gateway_id);
             if let Some(route) = updated_route {
@@ -175,7 +176,7 @@ impl GatewayProcessedHandler<'_> {
         let unresolved_routes: BTreeSet<&Route> = unresolved_routes.into_iter().filter(|r| only_grpc_routes(r)).collect();
 
         let routes_with_no_hostnames = self.effective_gateway.orphaned_routes();
-        debug!("GRPC Updating attached routes {attached_routes:?}");
+        debug!(target: TARGET,"GRPC Updating attached routes {attached_routes:?}");
         let gateway_id = &self.effective_gateway.key();
         for attached_route in attached_routes {
             let updated_route = self.update_grpc_attached_route_parents(attached_route, gateway_id);
@@ -202,7 +203,7 @@ impl GatewayProcessedHandler<'_> {
                 }
             }
         }
-        debug!("GRPC Updating unresolved routes  {unresolved_routes:?}");
+        debug!(target: TARGET,"GRPC Updating unresolved routes  {unresolved_routes:?}");
         for unresolve_route in unresolved_routes {
             let updated_route = self.update_grpc_unresolved_route_parents(unresolve_route, gateway_id);
             if let Some(route) = updated_route {
@@ -229,7 +230,7 @@ impl GatewayProcessedHandler<'_> {
                 }
             }
         }
-        debug!("GRPC Updating routes with no hostnames  {routes_with_no_hostnames:?}");
+        debug!(target: TARGET,"GRPC Updating routes with no hostnames  {routes_with_no_hostnames:?}");
         for route_with_no_hostname in self.effective_gateway.orphaned_routes() {
             let updated_route = self.update_grpc_non_attached_route_parents(route_with_no_hostname, gateway_id);
             if let Some(route) = updated_route {
@@ -310,7 +311,7 @@ impl GatewayProcessedHandler<'_> {
 
     fn update_http_unresolved_route_parents(&self, rejected_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
         let key = rejected_route.resource_key();
-        info!("Unresolved route resolution status  {key:?}  {:?}", rejected_route.resolution_status());
+        info!(target: TARGET,"Unresolved route resolution status  {key:?}  {:?}", rejected_route.resolution_status());
         let conditions = match rejected_route.resolution_status() {
             ResolutionStatus::Resolved => vec![Condition {
                 last_transition_time: Time(Utc::now()),
@@ -445,7 +446,7 @@ impl GatewayProcessedHandler<'_> {
 
     fn update_grpc_unresolved_route_parents(&self, rejected_route: &Route, gateway_id: &ResourceKey) -> Option<GRPCRoute> {
         let key = rejected_route.resource_key();
-        info!("Unresolved route resolution status  {key:?}  {:?}", rejected_route.resolution_status());
+        info!(target: TARGET,"Unresolved route resolution status  {key:?}  {:?}", rejected_route.resolution_status());
         let conditions = match rejected_route.resolution_status() {
             ResolutionStatus::Resolved => vec![Condition {
                 last_transition_time: Time(Utc::now()),
@@ -580,7 +581,7 @@ impl GatewayProcessedHandler<'_> {
 
     fn update_http_non_attached_route_parents(&self, non_attached_route: &Route, gateway_id: &ResourceKey) -> Option<HTTPRoute> {
         let key = non_attached_route.resource_key();
-        info!("Non attached route resolution status  {key:?}  {:?}", non_attached_route.resolution_status());
+        info!(target: TARGET,"Non attached route resolution status  {key:?}  {:?}", non_attached_route.resolution_status());
         let conditions = match non_attached_route.resolution_status() {
             ResolutionStatus::Resolved => vec![
                 Condition {
@@ -722,7 +723,7 @@ impl GatewayProcessedHandler<'_> {
 
     fn update_grpc_non_attached_route_parents(&self, non_attached_route: &Route, gateway_id: &ResourceKey) -> Option<GRPCRoute> {
         let key = non_attached_route.resource_key();
-        info!("Non attached route resolution status  {key:?}  {:?}", non_attached_route.resolution_status());
+        info!(target: TARGET,"Non attached route resolution status  {key:?}  {:?}", non_attached_route.resolution_status());
         let conditions = match non_attached_route.resolution_status() {
             ResolutionStatus::Resolved => vec![
                 Condition {

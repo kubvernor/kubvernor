@@ -6,9 +6,9 @@ use kube::{
     api::{Patch, PatchParams},
 };
 use kubvernor_common::ResourceKey;
+use log::{debug, error, info};
 use serde::Serialize;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
 
 use crate::controllers::{ControllerError, FinalizerPatcher, ResourceFinalizer};
 
@@ -43,6 +43,8 @@ pub struct DeleteContext<R> {
     pub controller_name: String,
 }
 
+const TARGET: &str = "Services::PatcherService";
+
 #[async_trait]
 pub trait Patcher<R>
 where
@@ -58,35 +60,38 @@ where
         while let Some(event) = self.receiver().recv().await {
             match event {
                 Operation::PatchStatus(PatchContext { resource_key, mut resource, controller_name, response_sender }) => {
-                    info!("PatcherService {} PatchStatus {}", std::any::type_name_of_val(&resource), resource_key);
+                    info!(target: TARGET, "{} PatchStatus {}", kubvernor_common::format_resource::<R>(), resource_key);
                     resource.meta_mut().resource_version = Option::<String>::None;
                     let api = self.api(&resource_key.namespace);
                     let patch_params = PatchParams::apply(&controller_name).force();
 
                     let res = api.patch_status(&resource_key.name, &patch_params, &Patch::Apply(resource)).await;
                     match &res {
-                        Ok(_new_gateway) => debug!("patch status result ok"),
-                        Err(e) => error!("patch status failed {e:?}"),
+                        Ok(_new_gateway) => debug!(target: TARGET,"patch status result ok"),
+                        Err(e) => error!(target: TARGET,"patch status failed {e:?}"),
                     }
                     let _ = response_sender.send(res);
                 },
                 Operation::PatchFinalizer(FinalizerContext { resource_key, controller_name, finalizer_name }) => {
-                    info!("PatcherService PatchFinalizer {}", resource_key);
+                    info!(target: TARGET, "{} PatchFinalizer {}", kubvernor_common::format_resource::<R>(), resource_key);
+
                     let api = self.api(&resource_key.namespace);
                     let res = FinalizerPatcher::patch_finalizer(&api, &resource_key.name, &controller_name, &finalizer_name).await;
                     match &res {
-                        Ok(_new_gateway) => debug!("finalizer ok"),
-                        Err(e) => error!("finalizer failed {resource_key} {controller_name} {finalizer_name} {e:?}"),
+                        Ok(_new_gateway) => debug!(target: TARGET, "finalizer ok"),
+                        Err(e) => {
+                            error!(target: TARGET, "finalizer failed {resource_key} {controller_name} {finalizer_name} {e:?}");
+                        },
                     }
                 },
                 Operation::Delete(DeleteContext { resource_key, resource, controller_name }) => {
-                    info!("PatcherService {} PatchDelete {}", std::any::type_name_of_val(&resource), resource_key);
+                    info!(target: TARGET, "{} PatchDelete {}", kubvernor_common::format_resource::<R>(), resource_key);
                     let api = self.api(&resource_key.namespace);
                     let res: Result<kube::runtime::controller::Action, kube::runtime::finalizer::Error<ControllerError>> =
                         ResourceFinalizer::delete_resource(&api, &controller_name, &Arc::new(resource)).await;
                     match res {
-                        Ok(_new_gateway) => debug!("delete result ok"),
-                        Err(e) => error!("delete failed {e:?}"),
+                        Ok(_new_gateway) => debug!(target: TARGET, "delete result ok"),
+                        Err(e) => error!(target: TARGET, "{resource_key} {controller_name} delete failed {e:?}"),
                     }
                 },
             }

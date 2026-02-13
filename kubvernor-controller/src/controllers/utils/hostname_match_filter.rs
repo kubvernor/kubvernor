@@ -1,7 +1,9 @@
 use eater_domainmatcher::DomainPattern;
-use tracing::{debug, warn};
+use log::{debug, warn};
 
 use crate::common::DEFAULT_ROUTE_HOSTNAME;
+
+const TARGET: &str = super::TARGET;
 
 pub struct HostnameMatchFilter<'a> {
     listener_hostname: &'a str,
@@ -43,7 +45,7 @@ impl<'a> HostnameMatchFilter<'a> {
                 .iter()
                 .filter(|r: &&String| {
                     let res = pattern.matches(r);
-                    debug!("Comparing hostnames {} {} {}", listener_hostname, r, res);
+                    debug!(target: TARGET,"Comparing hostnames {listener_hostname} {r} {res}");
                     if r.starts_with("*.") {
                         wildcard_route_hostnames.push(*r);
                     }
@@ -60,7 +62,7 @@ impl<'a> HostnameMatchFilter<'a> {
                     if let Ok(pattern) = DomainPattern::<'_, '.'>::try_from(wildcarded_route.as_str()) {
                         let res = pattern.matches(&listener_hostname);
                         if res {
-                            debug!("Comparing wildcarded hostnames {} {} {}", listener_hostname, wildcarded_route, res);
+                            debug!(target: TARGET,"Comparing wildcarded hostnames {listener_hostname} {wildcarded_route} {res}");
                             return true;
                         }
                     }
@@ -68,7 +70,7 @@ impl<'a> HostnameMatchFilter<'a> {
                 false
             }
         } else {
-            warn!("Hostname is not a valid domain {}", &listener_hostname);
+            warn!(target: TARGET,"Hostname is not a valid domain {}", &listener_hostname);
             false
         }
     }

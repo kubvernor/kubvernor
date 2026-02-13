@@ -87,8 +87,8 @@ spec:
         value: /
       headers:
       - name: version
-        value: one        
-      
+        value: one
+
     - headers:
       - name: version
         value: one

@@ -1,6 +1,5 @@
 pub mod configuration;
 mod resource_key;
-
 pub use resource_key::ResourceKey;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -24,4 +23,8 @@ impl TryFrom<Option<&String>> for GatewayImplementationType {
             Some(_) => Err("Invalid backend type ".into()),
         }
     }
+}
+
+pub fn format_resource<R>() -> &'static str {
+    std::any::type_name::<R>().split("::").last().unwrap_or_default()
 }

@@ -12,8 +12,8 @@ use k8s_openapi::{
 use kube::{Resource, runtime::controller::Action};
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
+use log::{debug, info, warn};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -21,6 +21,8 @@ use crate::{
     controllers::{ControllerError, inference_pool, utils::RouteListenerMatcher},
     services::patchers::{DeleteContext, Operation, PatchContext},
 };
+
+const TARGET: &str = super::TARGET;
 
 const CONDITION_MESSAGE: &str = "Route updated by controller";
 
@@ -135,7 +137,7 @@ where
                     .into_iter()
                     .any(|gc| gc.metadata.name == Some(gateway_class_name.to_owned()))
                 {
-                    warn!(
+                    warn!(target: TARGET,
                         "reconcile_gateway: {} {:?} Unknown gateway class name {gateway_class_name}",
                         &self.controller_name,
                         kube_gateway.meta().name
@@ -148,7 +150,7 @@ where
 
             let mut gateway = common::Gateway::try_from(&kube_gateway).expect("We expect the lock to work");
             let Some(gateway_type) = self.state.get_gateway_type(gateway.key()).expect("We expect the lock to work") else {
-                warn!(
+                warn!(target: TARGET,
                     "reconcile_gateway: {} {:?} Unknown gateway implementation type {gateway_class_name} {}",
                     &self.controller_name,
                     kube_gateway.meta().name,
@@ -176,7 +178,7 @@ where
         let parent_gateway_refs_keys =
             parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
 
-        debug!("Parent keys = {parent_gateway_refs_keys:?}");
+        debug!(target: TARGET,"Parent keys = {parent_gateway_refs_keys:?}");
         let gateway_ids = parent_gateway_refs_keys.map(|(_, r)| r.resource_key).collect::<BTreeSet<_>>();
         gateway_ids.clone().iter().for_each(|gateway_key| {
             state.detach_http_route_from_gateway(gateway_key, &route_key).expect("We expect the lock to work");
@@ -216,14 +218,14 @@ where
     }
 
     async fn update_inference_pools(&self, route: &Route, gateway_ids: &BTreeSet<ResourceKey>) {
-        debug!("Updating inference pools for route delete {} {gateway_ids:?}", route.name());
+        debug!(target: TARGET,"Updating inference pools for route delete {} {gateway_ids:?}", route.name());
         if let Some(inference_pool_patcher_sender) = self.inference_pool_patcher_channel_sender.as_ref() {
             for inference_pool_backend in route.backends().iter().filter_map(|b| match b.backend_type() {
                 BackendType::InferencePool(pool) => Some(&pool.resource_key),
                 _ => None,
             }) {
                 if let Some(inference_pool) = self.state.get_inference_pool(inference_pool_backend).expect("We expect the lock to work") {
-                    debug!("Retrieved inference pool is {inference_pool:#?}");
+                    debug!(target: TARGET,"Retrieved inference pool is {inference_pool:#?}");
                     let mut inference_pool = inference_pool::remove_inference_pool_parents((*inference_pool).clone(), gateway_ids);
                     inference_pool.metadata.managed_fields = None;
                     let inference_pool_resource_key = ResourceKey::from(&inference_pool);
@@ -241,11 +243,11 @@ where
                         }))
                         .await;
                     match receiver.await {
-                        Ok(Err(_)) | Err(_) => warn!("Could't patch status"),
+                        Ok(Err(_)) | Err(_) => warn!(target: TARGET,"Could't patch status"),
                         _ => (),
                     }
                 } else {
-                    warn!("No inference pool - Updating inference pools of route delete {} {gateway_ids:?}", route.name());
+                    warn!(target: TARGET,"No inference pool - Updating inference pools of route delete {} {gateway_ids:?}", route.name());
                 }
             }
         }

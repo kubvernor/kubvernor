@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
 use kubvernor_common::{Result, configuration::AdminInterfaceConfiguration};
+use log::info;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
-use tracing::info;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -35,7 +35,7 @@ pub async fn start(configuration: Option<AdminInterfaceConfiguration>) -> Result
     if let Some(configuration) = configuration {
         let listener = TcpListener::bind(configuration.address.to_ip()?).await?;
         let local_addr = listener.local_addr()?;
-        tracing::info!("Admin server listening on http://{}", local_addr);
+        log::info!("Admin server listening on http://{local_addr}");
 
         axum::serve(listener, app).await?;
     } else {

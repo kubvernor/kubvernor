@@ -1,11 +1,11 @@
-use std::time::Duration;
 pub mod gateway;
 pub mod gateway_class;
 mod handlers;
 pub mod inference_pool;
 pub mod route;
-
 mod utils;
+
+use std::time::Duration;
 
 use kube_core::ObjectMeta;
 use kubvernor_common::ResourceKey;
@@ -31,6 +31,8 @@ pub enum ControllerError {
 
 const RECONCILE_LONG_WAIT: Duration = Duration::from_secs(3600);
 const RECONCILE_ERROR_WAIT: Duration = Duration::from_secs(100);
+
+const TARGET: &str = "Controller";
 
 impl std::fmt::Display for ControllerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
