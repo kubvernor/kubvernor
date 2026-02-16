@@ -23,9 +23,9 @@ jobs:
         curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
         chmod +x ./kind
         ./scripts/deploy_kubvernor.sh
-        wait 10
+        sleep 10
         kubectl get pod -n kubvernor
-        wait 10
+        sleep 10
         git clone --depth 1 --branch v1.4.0 https://github.com/kubernetes-sigs/gateway-api.git
         cd gateway-api
         cp ../scripts/run_conformance*.sh .
