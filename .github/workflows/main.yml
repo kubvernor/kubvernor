@@ -1,8 +1,8 @@
-name: Docker Image CI
+name: Conformance Testing
 
 on:
   push:
-    branches: [ "main" ]  
+    branches: [ "main", "dawid.nowak/git_action_conformance_testing" ]       
 
 env:
   IMAGE_NAME: kubvernor
