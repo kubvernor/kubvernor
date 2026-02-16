@@ -17,15 +17,21 @@ jobs:
       packages: write
       contents: read
     steps:
-    - uses: actions/checkout@v5
-    # - name: Build the Docker image
-    #   run: docker build . --file docker/Dockerfile --tag $IMAGE_NAME:latest
+    - uses: actions/checkout@v5    
     - name: Install Kind    
       run: |
         curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
         chmod +x ./kind
         ./scripts/deploy_kubvernor.sh
-        kubectl get pod -n kubvernor 
+        wait 10
+        kubectl get pod -n kubvernor
+        wait 10
+        git clone --depth 1 --branch v1.4.0 https://github.com/kubernetes-sigs/gateway-api.git
+        cd gateway-api
+        cp ../scripts/run_conformance*.sh .
+        ./run_conformance.sh
+        
+        
         
         
         
