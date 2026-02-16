@@ -31,6 +31,21 @@ fn init_tracing_logging(configuration: &Configuration) -> Guard {
     let console_filter = tracing_subscriber::EnvFilter::new(std::env::var("RUST_LOG").unwrap_or_else(|_| "debug".to_owned()));
     let tracing_filter = tracing_subscriber::EnvFilter::new(std::env::var("RUST_TRACE_LOG").unwrap_or_else(|_| "info".to_owned()));
 
+    let console_layer = fmt::layer()
+        .with_target(true)
+        .with_span_events(FmtSpan::NONE)
+        .with_ansi(false)
+        .with_filter(filter::filter_fn(|meta| !meta.is_span()))
+        .with_filter(console_filter);
+
+    let file_layer = fmt::layer()
+        .with_writer(non_blocking_appender)
+        .with_span_events(FmtSpan::NONE)
+        .with_target(true)
+        .with_ansi(false)
+        .with_filter(filter::filter_fn(|meta| !meta.is_span()))
+        .with_filter(file_filter);
+
     if let Some(true) = configuration.enable_open_telemetry {
         if let Ok(exporter) = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
@@ -52,42 +67,14 @@ fn init_tracing_logging(configuration: &Configuration) -> Guard {
             let tracer = tracer_provider.tracer(controller_name);
             let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
-            registry
-                .with(telemetry.with_filter(tracing_filter))
-                .with(fmt::layer().with_writer(non_blocking_appender).with_target(false).with_filter(file_filter))
-                .with(fmt::layer().with_target(true).with_span_events(FmtSpan::NONE).with_filter(console_filter))
-                .init();
+            registry.with(console_layer).with(file_layer).with(telemetry.with_filter(tracing_filter)).init();
 
             Guard::Appender(guard)
         } else {
             panic!("Can't do tracing");
         }
     } else {
-        registry
-            .with(
-                fmt::layer()
-                    .with_writer(non_blocking_appender)
-                    .with_span_events(FmtSpan::NONE)
-                    .with_target(true)
-                    .with_ansi(false)
-                    .with_filter(filter::filter_fn(|meta| {
-                        // Only allow events, filter out spans
-                        !meta.is_span()
-                    }))
-                    .with_filter(file_filter),
-            )
-            .with(
-                fmt::layer()
-                    .with_target(true)
-                    .with_span_events(FmtSpan::NONE)
-                    .with_ansi(false)
-                    .with_filter(filter::filter_fn(|meta| {
-                        // Only allow events, filter out spans
-                        !meta.is_span()
-                    }))
-                    .with_filter(console_filter),
-            )
-            .init();
+        registry.with(console_layer).with(file_layer).init();
         Guard::Appender(guard)
     }
 }
