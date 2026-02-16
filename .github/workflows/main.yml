@@ -1,4 +1,4 @@
-name: Conformance Testing
+name: Conformance Testing with Envoy
 
 on:
   push:
@@ -28,8 +28,11 @@ jobs:
         sleep 10
         git clone --depth 1 --branch v1.4.0 https://github.com/kubernetes-sigs/gateway-api.git
         cd gateway-api
-        cp ../scripts/run_conformance*.sh .
-        ./run_conformance.sh
+        go test ./conformance -count=1 -run TestConformance -timeout=1h -args --gateway-class=kubvernor-conformance-gateway-envoy --conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC --organization=kubvernor  --allow-crds-mismatch --project=kubvernor  --url=github.com/kubvernor/kubvernor --version=0.2.0   --skip-tests=HTTPRouteHostnameIntersection  --supported-features=Gateway,HTTPRoute,GatewayPort8080,HTTPRouteHostRewrite,HTTPRoutePathRedirect,HTTPRouteRequestMirror,HTTPRouteRequestPercentageMirror,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect  --report-output=kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
+        
+
+        # cp ../scripts/run_conformance*.sh .
+        # ./run_conformance.sh
         
         
         
