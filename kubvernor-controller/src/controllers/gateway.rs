@@ -9,11 +9,11 @@ use kube::{
 };
 use kubvernor_common::{GatewayImplementationType, ResourceKey};
 use kubvernor_state::State;
+use log::{debug, info, warn};
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
 };
-use tracing::{debug, info, warn};
 use typed_builder::TypedBuilder;
 use uuid::Uuid;
 
@@ -28,6 +28,8 @@ use crate::{
 };
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
+
+const TARGET: &str = super::TARGET;
 
 #[derive(Clone, TypedBuilder)]
 pub struct GatewayControllerContext {
@@ -108,9 +110,9 @@ impl GatewayController {
                         Api::namespaced(ctx.client.clone(), &resource_key.namespace);
 
                     if let Ok(configuration) = configuration_api.get(&config_reference.name).await {
-                        debug!("reconcile_gateway: {controller_name} {name} retrieved configuration {:?}", configuration);
+                        debug!(target: TARGET,"reconcile_gateway: {controller_name} {name} retrieved configuration {configuration:?}");
                         let Ok(backend_type) = GatewayImplementationType::try_from(configuration.spec.backendtype.as_ref()) else {
-                            info!(
+                            info!(target: TARGET,
                                 "reconcile_gateway: {controller_name} {name} Invalid backend type {:?}",
                                 configuration.spec.backendtype.as_ref()
                             );
@@ -118,14 +120,14 @@ impl GatewayController {
                         };
                         configured_backend_type = backend_type;
                     } else {
-                        debug!("reconcile_gateway: {controller_name} {name} Unable to find KubernorConfig {config_reference:?}");
+                        debug!(target: TARGET,"reconcile_gateway: {controller_name} {name} Unable to find KubernorConfig {config_reference:?}");
                         return Err(ControllerError::InvalidPayload("Unable to find KubernorConfig".to_owned()));
                     }
                 } else {
-                    debug!("reconcile_gateway: {controller_name} {name} No configuration found.. using defaults ");
+                    debug!(target: TARGET,"reconcile_gateway: {controller_name} {name} No configuration found.. using defaults ");
                 }
             } else {
-                warn!("reconcile_gateway: {controller_name} {name} Unknown gateway class name {gateway_class_name}");
+                warn!(target: TARGET,"reconcile_gateway: {controller_name} {name} Unknown gateway class name {gateway_class_name}");
                 return Err(ControllerError::UnknownGatewayClass(gateway_class_name.clone()));
             }
 
@@ -134,7 +136,7 @@ impl GatewayController {
 
         let maybe_stored_gateway = state.get_gateway(&resource_key).expect("We expect the lock to work");
 
-        info!(
+        info!(target: TARGET,
             "reconcile_gateway: {controller_name} {name} {backend_type:?} {:?}",
             maybe_stored_gateway.as_ref().map(|g| ResourceKey::from(&(**g)))
         );
@@ -285,7 +287,7 @@ impl GatewayResourceHandler<Gateway> {
         };
 
         let kube_gateway = (**kube_gateway).clone();
-        info!("Saving gateway type");
+        info!(target: TARGET,"Saving gateway type");
         let _ = self.state.save_gateway_type(backend_gateway.key().clone(), self.gateway_backend_type.clone());
 
         let _ = self

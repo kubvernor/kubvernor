@@ -1,9 +1,11 @@
 use std::cmp;
 
 use gateway_api::grpcroutes::GrpcRouteMatch;
-use tracing::debug;
+use log::debug;
 
 use crate::common::{Backend, FilterHeaders};
+
+const TARGET: &str = super::super::super::TARGET;
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct GRPCEffectiveRoutingRule {
@@ -51,7 +53,7 @@ impl GRPCEffectiveRoutingRule {
 
         let result = if header_match == std::cmp::Ordering::Equal { method_match } else { header_match };
 
-        debug!("Comparing {this:#?} {other:#?} {result:?} {header_match:?} {method_match:?}");
+        debug!(target: TARGET,"Comparing {this:#?} {other:#?} {result:?} {header_match:?} {method_match:?}");
         result
     }
 }

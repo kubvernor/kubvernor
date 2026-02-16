@@ -30,7 +30,7 @@ use envoy_api_rs::{
 use gateway_api::{common::RequestRedirectScheme, httproutes};
 use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
 use kubvernor_common::ResourceKey;
-use tracing::{debug, info, warn};
+use log::{debug, info, warn};
 
 use crate::{
     backends::envoy::common::{
@@ -40,6 +40,8 @@ use crate::{
     common::{DEFAULT_NAMESPACE_NAME, InferencePoolTypeConfig},
 };
 
+const TARGET: &str = super::super::super::TARGET;
+
 impl HTTPEffectiveRoutingRule {
     pub fn add_inference_filters(
         mut envoy_route: EnvoyRoute,
@@ -47,7 +49,7 @@ impl HTTPEffectiveRoutingRule {
         _percentage: u32,
     ) -> EnvoyRoute {
         let inference_cluster_name = inference_cluster_name(&envoy_route, &inference_pool_config.resource_key);
-        debug!("Inference Pool: setting up external service with {inference_pool_config:?} cluster name {inference_cluster_name}");
+        debug!(target: TARGET,"Inference Pool: setting up external service with {inference_pool_config:?} cluster name {inference_cluster_name}");
 
         let per_route_filters = inference_pool_config.inference_config.as_ref().map(|conf| {
             let ext_proc_route = ExtProcPerRoute {
@@ -105,7 +107,7 @@ impl From<HTTPEffectiveRoutingRule> for Vec<EnvoyRoute> {
             for i in inference_extension_configuration {
                 let envoy_route_with_inference = envoy_route.clone();
                 let percentage = ((f64::from(i.weight) / f64::from(total_weight)) * 100.0) as u32;
-                debug!("Configuring Envoy Route for Inference Backend with route match runtime fraction {percentage}");
+                debug!(target: TARGET,"Configuring Envoy Route for Inference Backend with route match runtime fraction {percentage}");
                 new_routes.push(HTTPEffectiveRoutingRule::add_inference_filters(envoy_route_with_inference, &i, percentage));
             }
             new_routes
@@ -135,7 +137,7 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
 
         let path_specifier = if path_specifier.is_none() { Some(PathSpecifier::Path("/".to_owned())) } else { path_specifier };
 
-        debug!("Headers to match {:?}", &effective_routing_rule.route_matcher.headers);
+        debug!(target: TARGET,"Headers to match {:?}", &effective_routing_rule.route_matcher.headers);
         let headers = super::create_header_matchers(effective_routing_rule.route_matcher.headers.clone());
 
         let route_match = RouteMatch { path_specifier, grpc: None, headers, ..Default::default() };
@@ -156,12 +158,6 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
                 crate::common::BackendType::InferencePool(_) => None,
             }));
 
-        let inference_cluster_names: Vec<_> =
-            super::create_cluster_weights(effective_routing_rule.backends.iter().filter_map(|b| match b.backend_type() {
-                crate::common::BackendType::InferencePool(inference_type_config) => Some(inference_type_config),
-                _ => None,
-            }));
-
         let mirror_policy = effective_routing_rule.mirror_filter.as_ref().map(|mirror_filter| {
             let mirror_backends: Vec<String> = effective_routing_rule
                 .filter_backends
@@ -173,13 +169,13 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
                     crate::common::BackendType::InferencePool(_) => None,
                 })
                 .filter(|config| {
-                    debug!("Mirror backend {} {:?}", config.resource_key, mirror_filter.backend_ref);
+                    debug!(target: TARGET,"Mirror backend {} {:?}", config.resource_key, mirror_filter.backend_ref);
                     config.resource_key == ResourceKey::from((&mirror_filter.backend_ref, DEFAULT_NAMESPACE_NAME.to_owned()))
                 })
                 .map(crate::common::BackendTypeConfig::cluster_name)
                 .collect();
 
-            debug!("Mirror backends {mirror_backends:?}");
+            debug!(target: TARGET,"Mirror backends {mirror_backends:?}");
 
             let fraction = match (mirror_filter.percent.as_ref(), mirror_filter.fraction.as_ref()) {
                 (None, None) => FractionalPercent { numerator: 100, denominator: fractional_percent::DenominatorType::Hundred.into() },
@@ -191,7 +187,7 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
                     FractionalPercent { numerator: *percent as u32, denominator: fractional_percent::DenominatorType::Hundred.into() }
                 },
                 (Some(_), Some(_)) => {
-                    warn!("Invalid configuration for mirror filtering ");
+                    warn!(target: TARGET,"Invalid configuration for mirror filtering ");
                     FractionalPercent { numerator: 100, denominator: fractional_percent::DenominatorType::Hundred.into() }
                 },
             };
@@ -206,18 +202,18 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
                 .collect()
         });
 
-        info!("Mirror policies {:?} {mirror_policy:?}", mirror_policy.as_ref().map(|p: &Vec<_>| p.len()));
+        info!(target: TARGET,"Mirror policies {:?} {mirror_policy:?}", mirror_policy.as_ref().map(|p: &Vec<_>| p.len()));
 
         let host_rewrite_specifier = effective_routing_rule
             .rewrite_url_filter
             .as_ref()
             .and_then(|f| f.hostname.as_ref().map(|host| HostRewriteSpecifier::HostRewriteLiteral(host.clone())));
-        info!("Hostname rewrite options {:?}", host_rewrite_specifier);
+        info!(target: TARGET,"Hostname rewrite options {host_rewrite_specifier:?}");
 
         let cluster_action = RouteAction {
             cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
             cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster {
-                clusters: service_cluster_names.into_iter().chain(inference_cluster_names).collect(),
+                clusters: service_cluster_names.into_iter().collect(),
                 ..Default::default()
             })),
             host_rewrite_specifier,

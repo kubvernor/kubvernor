@@ -38,6 +38,7 @@ tracing-opentelemetry.workspace           = true
 tracing-subscriber.workspace              = true
 typed-builder.workspace                   = true
 uuid.workspace                            = true
+log.workspace                             = true
 #gateway-api-inference-extension = { version = "0.1.0", path="../gateway-api-inference-extension-rs/gateway-api-inference-extension" }
 agentgateway-api-rs = { workspace = true, optional = true }
 multiset.workspace  = true

@@ -5,8 +5,8 @@ use gateway_api_inference_extension::inferencepools::InferencePool;
 use kube::Client;
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
+use log::{error, info, warn};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{error, info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -17,6 +17,8 @@ use crate::{
     controllers::{ListenerTlsConfigValidator, RoutesResolver, inference_pool::clear_all_conditions},
     services::patchers::{Operation, PatchContext},
 };
+
+const TARGET: &str = "Services::RefResolver";
 
 #[derive(TypedBuilder)]
 pub struct ReferenceValidatorService {
@@ -76,14 +78,14 @@ impl ReferenceResolverHandler {
         match resolve_event {
             ReferenceValidateRequest::AddGateway(boxed) => {
                 let RequestContext { gateway, kube_gateway, gateway_class_name } = *boxed;
-                info!("ReferenceResolverService action = AddGateway {}", gateway.key());
+                info!(target: TARGET,"ReferenceResolverService action = AddGateway {}", gateway.key());
                 let key = gateway.key().clone();
                 self.secrets_resolver.add_secretes_by_gateway(&gateway).await;
                 self.backend_references_resolver.add_references_by_gateway(&gateway).await;
                 self.reference_grants_resolver.add_references_by_gateway(&gateway).await;
                 let backend_gateway = self.process(gateway, &kube_gateway).await;
 
-                info!("Adding gateway {} Send on channel", key);
+                info!(target: TARGET,"Adding gateway {key} Send on channel");
                 let _ = self
                     .gateway_deployer_channel_sender
                     .send(GatewayDeployRequest::Deploy(
@@ -97,22 +99,22 @@ impl ReferenceResolverHandler {
             },
 
             ReferenceValidateRequest::DeleteGateway { gateway } => {
-                info!("ReferenceResolverService action = DeleteGateway {}", gateway.key());
+                info!(target: TARGET,"ReferenceResolverService action = DeleteGateway {}", gateway.key());
                 self.secrets_resolver.delete_secrets_by_gateway(&gateway).await;
                 self.backend_references_resolver.delete_references_by_gateway(&gateway).await;
                 self.reference_grants_resolver.delete_references_by_gateway(&gateway).await;
             },
 
             ReferenceValidateRequest::AddRoute { route_key, references } => {
-                info!("ReferenceResolverService action = AddRouteReferences {route_key} {references:?}");
+                info!(target: TARGET,"ReferenceResolverService action = AddRouteReferences {route_key} {references:?}");
             },
             ReferenceValidateRequest::DeleteRoute { route_key, references } => {
-                info!("ReferenceResolverService action = DeleteRouteAndValidateRequest {route_key:?} {references:?}");
+                info!(target: TARGET,"ReferenceResolverService action = DeleteRouteAndValidateRequest {route_key:?} {references:?}");
                 let affected_gateways = self.backend_references_resolver.delete_route_references(&route_key, &references).await;
 
                 self.update_inference_pools(route_key, references, &affected_gateways).await;
 
-                info!("Update gateways affected gateways  {affected_gateways:?}");
+                info!(target: TARGET,"Update gateways affected gateways  {affected_gateways:?}");
                 for gateway_id in affected_gateways {
                     if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
                         let mut gateway =
@@ -145,11 +147,11 @@ impl ReferenceResolverHandler {
                 }
             },
             ReferenceValidateRequest::UpdatedRoutes { reference, updated_routes } => {
-                info!("ReferenceResolverService action = UpdatedRoutes {reference} {updated_routes:?}");
+                info!(target: TARGET,"ReferenceResolverService action = UpdatedRoutes {reference} {updated_routes:?}");
             },
 
             ReferenceValidateRequest::UpdatedGateways { reference, gateways } => {
-                info!("ReferenceResolverService action = UpdatedGateways {reference} {gateways:?}");
+                info!(target: TARGET,"ReferenceResolverService action = UpdatedGateways {reference} {gateways:?}");
                 for gateway_id in gateways {
                     if let Some(kube_gateway) = self.state.get_gateway(&gateway_id).expect("We expect the lock to work") {
                         let mut gateway =
@@ -170,7 +172,7 @@ impl ReferenceResolverHandler {
                         let gateway_class_name = kube_gateway.spec.gateway_class_name.clone();
                         let backend_gateway = self.process(gateway, &kube_gateway).await;
                         let kube_gateway = (*kube_gateway).clone();
-                        info!("Update gateway {} Send on channel", key);
+                        info!(target: TARGET,"Update gateway {key} Send on channel");
                         let _ = self
                             .gateway_deployer_channel_sender
                             .send(GatewayDeployRequest::Deploy(
@@ -209,7 +211,7 @@ impl ReferenceResolverHandler {
         references: BTreeSet<ResourceKey>,
         affected_gateways: &BTreeSet<ResourceKey>,
     ) {
-        info!("Updating inference pools for deleted route {route_key} {references:?} {affected_gateways:?}");
+        info!(target: TARGET,"Updating inference pools for deleted route {route_key} {references:?} {affected_gateways:?}");
         for pool_reference in references.iter().filter(|r| r.kind == "InferencePool") {
             if let Some(pool) = self.state.get_inference_pool(pool_reference).expect("We expect this to work") {
                 let mut pool = clear_all_conditions((*pool).clone(), affected_gateways);
@@ -226,14 +228,14 @@ impl ReferenceResolverHandler {
                     }))
                     .await;
                 match receiver.await {
-                    Err(e) => error!("Sytem error  {e:?}"),
+                    Err(e) => error!(target: TARGET,"Sytem error  {e:?}"),
                     Ok(Err(e)) => {
                         warn!("Inference Pool: Can't update the status {e:?}");
                     },
                     _ => (),
                 }
             } else {
-                warn!("No pool for {:?}", pool_reference);
+                warn!("No pool for {pool_reference:?}");
             }
         }
     }

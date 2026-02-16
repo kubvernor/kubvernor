@@ -11,6 +11,15 @@ This project is still very unstable and not ready for use in production environm
 Kubvernor is a Rust implementation of Kubernetes Gateway APIs. The aim of the project is to be as generic as possible so Kubvernor could be used to manage/deploy different gateways (Envoy, Nginx, HAProxy, etc.)
 
 
+## Architecture 
+
+Objectives:
+* Kubvernor should be proxy agnostic and should be capable of deploying different types of proxies (such as Envoy, Agentgateway or others). 
+* The architecture should be scalable and flexible. Kubvernor re-calculates the deployment based on clearly documented events (object has changed, references have changed, etc..) which will impact how the gateway is deployed and configured.
+* Deployer services responsible for deploying and configuring actual proxies are isolated from all other components and communicate with other components via a well-defined API.
+
+![Diaagram](assets/kubvernor.architecture.png)
+
 ## Prerequisites
 
 0. Install Rust, Docker and Kind, Helm ...

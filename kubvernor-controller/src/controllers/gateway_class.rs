@@ -14,8 +14,8 @@ use kube::{
 };
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
+use log::warn;
 use tokio::sync::{mpsc, oneshot};
-use tracing::warn;
 use uuid::Uuid;
 
 use super::{
@@ -26,7 +26,10 @@ use crate::{
     controllers::{RECONCILE_LONG_WAIT, handlers::ResourceHandler},
     services::patchers::{DeleteContext, Operation, PatchContext},
 };
+
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
+
+const TARGET: &str = super::TARGET;
 
 struct Context {
     pub controller_name: String,
@@ -97,7 +100,7 @@ impl GatewayClassController {
         let version = resource.meta().resource_version.clone();
 
         if *configured_controller_name != *controller_name {
-            warn!("reconcile_gateway_class: Name don't match {configured_controller_name} {controller_name}");
+            warn!(target: TARGET,"reconcile_gateway_class: Name don't match {configured_controller_name} {controller_name}");
             return Err(ControllerError::InvalidRecipent);
         }
 
@@ -191,7 +194,7 @@ impl GatewayClassResourceHandler<GatewayClass> {
                         state.save_gateway_class(gateway_class_id, &Arc::new(patched_gateway_class)).expect("We expect the lock to work");
                 },
                 Err(e) => {
-                    warn!("Error while patching {e}");
+                    warn!(target: TARGET,"Error while patching {e}");
                 },
             }
         }

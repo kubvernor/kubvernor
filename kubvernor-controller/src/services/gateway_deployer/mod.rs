@@ -1,6 +1,5 @@
 pub mod gateway_deployer_internal;
 pub mod gateway_processed_handler;
-
 use std::{collections::HashMap, sync::Arc};
 
 use gateway_api::{gatewayclasses::GatewayClass, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
@@ -8,8 +7,8 @@ use gateway_deployer_internal::{GatewayDeployer, GatewayDeployerServiceInternal}
 pub(crate) use gateway_processed_handler::GatewayProcessedHandler;
 use kubvernor_common::GatewayImplementationType;
 use kubvernor_state::State;
+use log::{info, warn};
 use tokio::sync::oneshot;
-use tracing::{info, warn};
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -17,6 +16,8 @@ use crate::{
     common::{BackendGatewayEvent, BackendGatewayResponse, GatewayDeployRequest, KubeGateway, RequestContext},
     services::patchers::{Operation, PatchContext},
 };
+
+const TARGET: &str = super::TARGET;
 
 #[derive(TypedBuilder)]
 pub struct GatewayDeployerService {
@@ -41,7 +42,7 @@ impl GatewayDeployerService {
                 Some(
                     GatewayDeployRequest::Deploy(RequestContext{ gateway, kube_gateway, gateway_class_name, })
                 ) = resolve_receiver.recv() => {
-                    info!("GatewayDeployerService Deploy {}" ,gateway.key());
+                    info!(target: TARGET,"GatewayDeployerService Deploy {}" ,gateway.key());
                     let deployer = GatewayDeployer::builder()
                         .senders(self.backend_deployer_channel_senders.clone())
                         .gateway(gateway.clone())
@@ -54,7 +55,7 @@ impl GatewayDeployerService {
                     match event{
                         BackendGatewayResponse::Processed(_effective_gateway)=>{}
                         BackendGatewayResponse::ProcessedWithContext{gateway, kube_gateway, gateway_class_name}=>{
-                            info!("GatewayDeployerService Processed {}", gateway.key());
+                            info!(target: TARGET,"GatewayDeployerService Processed {}", gateway.key());
                             let gateway_id = gateway.key().clone();
                             let gateway_event_handler = GatewayProcessedHandler {
                                 effective_gateway: *gateway,

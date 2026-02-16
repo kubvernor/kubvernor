@@ -19,7 +19,9 @@ use gateway_api::{
 };
 use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
 use kubvernor_common::ResourceKey;
-use tracing::{debug, info, warn};
+use log::{debug, info, warn};
+
+const TARGET: &str = super::TARGET;
 
 use crate::{
     backends::agentgateway::SecureListenerWrapper,
@@ -119,7 +121,7 @@ impl<'a> ResourceGenerator<'a> {
                 },
             };
             let listener = SecureListenerWrapper(agentgateway_listener);
-            info!("Generating agentgateway listener {:#?}", listener);
+            info!(target: TARGET,"Generating agentgateway listener {listener:#?}");
 
             if let Some(listners) = maybe_added {
                 listners.push(listener);
@@ -171,7 +173,7 @@ impl<'a> ResourceGenerator<'a> {
                                         })
                                         .collect();
                                 if inference_extension_configurations.len() > 1 {
-                                    warn!("Multiple external processing filter configuration per route {:?} ", route);
+                                    warn!("Multiple external processing filter configuration per route {route:?}");
                                 }
 
                                 let (policies, epp_backends): (Vec<_>, Vec<_>) = inference_extension_configurations
@@ -182,7 +184,7 @@ impl<'a> ResourceGenerator<'a> {
                                         ((name.clone(), policy), backend)
                                     })
                                     .unzip();
-                                info!("(Inference policies routing rule {}  {backend_policies:#?}", routing_rule.name);
+                                info!(target: TARGET,"Inference policies routing rule {}  {backend_policies:#?}", routing_rule.name);
 
                                 backend_policies.extend(policies);
 
@@ -214,7 +216,7 @@ impl<'a> ResourceGenerator<'a> {
                                     traffic_policies.push(mirror_policy);
                                 }
 
-                                debug!("Filter backends are {:?}", routing_rule.filter_backends);
+                                debug!(target: TARGET,"Filter backends are {:?}", routing_rule.filter_backends);
 
                                 Route {
                                     name: Some(RouteName {
@@ -344,7 +346,7 @@ fn create_request_mirror_traffic_policy(routing_rule: &HTTPRoutingRule) -> Optio
                     crate::common::BackendType::InferencePool(_) => None,
                 })
                 .filter(|config| {
-                    debug!("Mirror backend {} {:?}", config.resource_key, mirror_filter.backend_ref);
+                    debug!(target: TARGET,"Mirror backend {} {:?}", config.resource_key, mirror_filter.backend_ref);
                     config.resource_key == ResourceKey::from((&mirror_filter.backend_ref, DEFAULT_NAMESPACE_NAME.to_owned()))
                 })
                 .map(|config| agentgateway_api_rs::agentgateway::dev::resource::BackendReference {
@@ -356,7 +358,7 @@ fn create_request_mirror_traffic_policy(routing_rule: &HTTPRoutingRule) -> Optio
                 })
                 .collect();
 
-            debug!("Mirror backends {mirror_backend_refs:?}");
+            debug!(target: TARGET,"Mirror backends {mirror_backend_refs:?}");
 
             let percentage = match (mirror_filter.percent.as_ref(), mirror_filter.fraction.as_ref()) {
                 (None, None) => 100.0,
@@ -375,7 +377,7 @@ fn create_request_mirror_traffic_policy(routing_rule: &HTTPRoutingRule) -> Optio
     if mirrors.is_empty() {
         None
     } else {
-        debug!("Request mirror policy {:?}", mirrors);
+        debug!(target: TARGET,"Request mirror policy {mirrors:?}");
         Some(TrafficPolicySpec {
             kind: Some(traffic_policy_spec::Kind::RequestMirror(resource::RequestMirrors { mirrors })),
             ..Default::default()

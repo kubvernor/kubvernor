@@ -4,11 +4,13 @@ use async_trait::async_trait;
 use kube::{Resource, ResourceExt, runtime::controller::Action};
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
-use tracing::info;
+use log::info;
 
 use super::{ControllerError, ResourceChecker, ResourceState, ResourceStateChecker};
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
+
+const TARGET: &str = "Controllers::ResourceHandler";
 
 #[async_trait]
 pub trait ResourceHandler<R>
@@ -32,9 +34,9 @@ where
             ResourceStateChecker::check_status(resource, stored_resource.clone(), resource_spec_checker, resource_status_checker);
 
         info!(
-            "ResourceHandler {} {} version = {} Resource state {resource_state:?}",
+            target: TARGET,  "{} {} version = {} Resource state {resource_state:?}",
             self.resource_key(),
-            std::any::type_name::<R>(),
+            std::any::type_name::<R>().split("::").last().unwrap_or_default(),
             self.version()
         );
 
@@ -50,7 +52,11 @@ where
     }
 
     async fn on_version_not_changed(&self, key: ResourceKey, _: &Arc<R>, _: &State) -> Result<Action> {
-        info!("on_version_not_changed {key}");
+        info!(
+            target: TARGET,  "{key} {} version = {} Version not changed",
+            std::any::type_name::<R>().split("::").last().unwrap_or_default(),
+            self.version()
+        );
         Err(ControllerError::AlreadyAdded)
     }
 

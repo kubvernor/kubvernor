@@ -5,12 +5,14 @@ use std::{
 
 use kube::{Api, Client, Resource, ResourceExt};
 use kube_core::ObjectMeta;
+use log::debug;
 pub use multiset::HashMultiSet;
 use tokio::time;
-use tracing::debug;
 use typed_builder::TypedBuilder;
 
 use crate::common::{ReferenceValidateRequest, ResourceKey};
+
+const TARGET: &str = "RefResolver";
 
 #[derive(Clone, TypedBuilder)]
 pub struct ReferencesResolver<R>
@@ -43,11 +45,11 @@ where
     {
         let reference_keys = references();
         if reference_keys.is_empty() {
-            debug!("Can't add no references Gateway {gateway_key}");
+            debug!(target: TARGET, "Can't add no references Gateway {gateway_key}");
             return;
         }
 
-        debug!("Adding new references for Gateway {gateway_key} Reference {reference_keys:?}");
+        debug!(target: TARGET, "Adding new references for Gateway {gateway_key} Reference {reference_keys:?}");
         let mut lock = self.references.lock().await;
 
         for key in reference_keys {
@@ -69,7 +71,7 @@ where
     {
         let reference_keys = references();
 
-        debug!("Deleting references for Gateway {gateway_key} Reference {reference_keys:?}");
+        debug!(target: TARGET, "Deleting references for Gateway {gateway_key} Reference {reference_keys:?}");
 
         let mut lock = self.references.lock().await;
         for reference_key in &reference_keys {
@@ -79,7 +81,7 @@ where
                     let mut reference_lock = self.resolved_references.lock().await;
                     reference_lock.remove(reference_key);
                 }
-                debug!("Removed reference {reference_key} for Gateway {gateway_key}");
+                debug!(target: TARGET, "Removed reference {reference_key} for Gateway {gateway_key}");
             }
         }
     }
@@ -102,7 +104,7 @@ where
                 let key = key.clone();
                 let myself = (*self).clone();
                 tokio::spawn(async move {
-                    debug!("Checking reference {key}");
+                    debug!(target:TARGET, "Checking reference {key}");
                     let api: Api<R> = Api::namespaced(myself.client.clone(), &key.namespace);
                     let maybe_reference = api.get(&key.name).await;
                     if let Ok(reference) = maybe_reference {
@@ -129,13 +131,13 @@ where
                                 });
                         };
 
-                        debug!("Resolved reference {key} gateway needs an update {update_gateway}");
+                        debug!(target: TARGET, "Resolved reference {key} gateway needs an update {update_gateway}");
 
                         if update_gateway {
                             myself.update_gateways(&key).await;
                         }
                     } else {
-                        debug!("Problem with checking reference {key} {:?}", maybe_reference.err());
+                        debug!(target:TARGET, "Problem with checking reference {key} {:?}", maybe_reference.err());
                         let resolved_references = {
                             let mut resolved_references = myself.resolved_references.lock().await;
                             resolved_references.remove(&key).is_some()
@@ -154,7 +156,7 @@ where
         let references = self.references.lock().await;
         let gateways =
             references.get(key).cloned().map(|set| set.distinct_elements().cloned().collect::<BTreeSet<_>>()).unwrap_or_default();
-        debug!("Reference changed... updating gateways {key} {gateways:?}");
+        debug!(target: TARGET, "Reference changed... updating gateways {key} {gateways:?}");
         let _res = self
             .reference_validate_channel_sender
             .send(ReferenceValidateRequest::UpdatedGateways { reference: key.clone(), gateways })

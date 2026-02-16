@@ -7,8 +7,8 @@ use k8s_openapi::{
 };
 use kubvernor_common::{GatewayImplementationType, ResourceKey};
 use kubvernor_state::State;
+use log::{debug, error, info};
 use tokio::sync::mpsc::{self};
-use tracing::{debug, error, info};
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -16,6 +16,8 @@ use crate::{
     controllers::ControllerError,
     services::patchers::Operation,
 };
+
+const TARGET: &str = super::TARGET;
 
 #[derive(TypedBuilder)]
 pub struct GatewayDeployerServiceInternal<'a> {
@@ -63,7 +65,7 @@ impl GatewayDeployer {
         let sender = self.senders.get(backend_type).expect("Unknown backend??");
         Self::adjust_statuses(&mut backend_gateway);
         Self::resolve_listeners_statuses(&backend_gateway, &mut updated_kube_gateway);
-        info!("Effective gateway {}-{} {:#?}", backend_gateway.name(), backend_gateway.namespace(), backend_gateway);
+        info!(target: TARGET,"Effective gateway {}-{} {:#?}", backend_gateway.name(), backend_gateway.namespace(), backend_gateway);
 
         let listener_event = BackendGatewayEvent::Changed(Box::new(
             ChangedContext::builder()
@@ -84,11 +86,11 @@ impl GatewayDeployer {
             let unresolved_count = unresolved.len();
 
             if l.attached_routes() != resolved_count + unresolved_count {
-                error!("We have a problem here... the route accounting is off ");
+                error!(target: TARGET,"We have a problem here... the route accounting is off ");
             }
             let conditions = l.conditions_mut();
 
-            debug!("Adjusting conditions {} conditions {:?}", name, conditions);
+            debug!(target: TARGET,"Adjusting conditions {name} conditions {conditions:?}");
             if let Some(ListenerCondition::ResolvedRefs(resolved_refs)) =
                 conditions.get(&ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes))
             {
@@ -118,7 +120,7 @@ impl GatewayDeployer {
                 conditions.remove(&ListenerCondition::ResolvedRefs(ResolvedRefs::InvalidAllowedRoutes));
             }
 
-            debug!("Adjusted conditions {conditions:?}");
+            debug!(target: TARGET,"Adjusted conditions {conditions:?}");
         });
     }
 
@@ -129,7 +131,7 @@ impl GatewayDeployer {
 
         gateway.listeners().for_each(|l| {
             let name = l.name().to_owned();
-            debug!("Processing listener {name} {} {:?}", l.attached_routes(), l.conditions().collect::<Vec<_>>());
+            debug!(target: TARGET,"Processing listener {name} {} {:?}", l.attached_routes(), l.conditions().collect::<Vec<_>>());
 
             let mut listener_status = GatewayStatusListeners { name, ..Default::default() };
 

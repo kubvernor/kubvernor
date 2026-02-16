@@ -6,3 +6,5 @@ pub mod orion_xds_backend;
 pub use envoy_cm_backend::EnvoyCMDeployerChannelHandlerService;
 pub use envoy_xds_backend::EnvoyDeployerChannelHandlerService;
 pub use orion_xds_backend::OrionDeployerChannelHandlerService;
+
+const TARGET: &str = super::TARGET;

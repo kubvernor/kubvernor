@@ -6,10 +6,12 @@ use gateway_api::{
 };
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
-use tracing::debug;
+use log::debug;
 
 use super::HostnameMatchFilter;
 use crate::common::{NotResolvedReason, ResolutionStatus, Route, RouteRefKey, RouteToListenersMapping};
+
+const TARGET: &str = super::TARGET;
 
 pub struct RouteListenerMatcher<'a> {
     gateway: &'a gateways::Gateway,
@@ -66,7 +68,7 @@ impl<'a> RouteListenerMatcher<'a> {
                     let matching_gateway_listeners =
                         self.filter_listeners_by_namespace(self.gateway.spec.listeners.clone().into_iter(), gateway_key, route_key);
                     let matching_gateway_listeners = matching_gateway_listeners.collect::<Vec<_>>();
-                    debug!("Matching listeners {:?}", matching_gateway_listeners);
+                    debug!(target: TARGET,"Matching listeners {matching_gateway_listeners:?}");
                     if matching_gateway_listeners.is_empty() {
                         route_resolution_status = Some(ResolutionStatus::NotResolved(NotResolvedReason::NotAllowedByListeners));
                         continue;
@@ -74,7 +76,7 @@ impl<'a> RouteListenerMatcher<'a> {
 
                     let matching_gateway_listeners = Self::filter_listeners_by_hostnames(matching_gateway_listeners.into_iter(), route);
                     let matching_gateway_listeners = matching_gateway_listeners.collect::<Vec<_>>();
-                    debug!("Matching listeners {:?}", matching_gateway_listeners);
+                    debug!(target: TARGET,"Matching listeners {matching_gateway_listeners:?}");
                     if matching_gateway_listeners.is_empty() {
                         route_resolution_status = Some(ResolutionStatus::NotResolved(NotResolvedReason::NoMatchingListenerHostname));
                         continue;
@@ -101,7 +103,7 @@ impl<'a> RouteListenerMatcher<'a> {
                         },
                         (None, None) => filter_listeners_by_name_or_port(matching_gateway_listeners, |_| true),
                     };
-                    debug!("Appending {route_parent:?} {matched:?}");
+                    debug!(target: TARGET,"Appending {route_parent:?} {matched:?}");
                     routes_and_listeners.append(&mut matched);
                 }
             }
@@ -139,7 +141,7 @@ impl<'a> RouteListenerMatcher<'a> {
     ) -> impl Iterator<Item = GatewayListeners> + 'a {
         let route_hostnames = route.hostnames();
         listeners.filter(move |listener| {
-            debug!("Filtering by hostname {:?} {:?}", &listener.hostname, &route_hostnames);
+            debug!(target: TARGET,"Filtering by hostname {:?} {:?}", &listener.hostname, &route_hostnames);
             if let Some(hostname) = &listener.hostname {
                 if hostname.is_empty() { true } else { HostnameMatchFilter::new(hostname, route_hostnames).filter() }
             } else {
@@ -166,13 +168,13 @@ impl<'a> RouteListenerMatcher<'a> {
                     match selector_type {
                         GatewayListenersAllowedRoutesNamespacesFrom::All => {},
                         GatewayListenersAllowedRoutesNamespacesFrom::Selector => {
-                            debug!("Selector {selector:?}");
+                            debug!(target: TARGET,"Selector {selector:?}");
                             is_allowed = false;
                             if let Some(selector) = selector
                                 && let Some(selector_labels) = &selector.match_labels
                             {
                                 let resolved_namespaces = self.resolved_namespaces.get(&route_key.namespace);
-                                debug!("Selector labels {resolved_namespaces:#?}");
+                                debug!(target: TARGET,"Selector labels {resolved_namespaces:#?}");
                                 if let Some(labels) = resolved_namespaces {
                                     for (selector_k, selector_v) in selector_labels {
                                         if labels.get(selector_k) == Some(selector_v) {
