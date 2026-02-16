@@ -18,13 +18,14 @@ jobs:
       contents: read
     steps:
     - uses: actions/checkout@v5
-    - name: Build the Docker image
-      run: docker build . --file docker/Dockerfile --tag $IMAGE_NAME:latest
+    # - name: Build the Docker image
+    #   run: docker build . --file docker/Dockerfile --tag $IMAGE_NAME:latest
     - name: Install Kind    
       run: |
         curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
         chmod +x ./kind
         ./scripts/deploy_kubvernor.sh
+        kubectl get pod -n kubvernor 
         
         
         
