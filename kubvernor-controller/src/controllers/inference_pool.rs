@@ -141,8 +141,7 @@ impl ResourceHandler<InferencePool> for InferencePoolControllerHandler<Inference
         Err(ControllerError::AlreadyAdded)
     }
 
-    async fn on_status_not_changed(&self, id: ResourceKey, resource: &Arc<InferencePool>, state: &State) -> Result<Action> {
-        let () = state.maybe_save_inference_pool(id, resource).expect("We expect the lock to work");
+    async fn on_status_not_changed(&self, _: ResourceKey, _: &Arc<InferencePool>, _: &State) -> Result<Action> {
         Err(ControllerError::AlreadyAdded)
     }
 
@@ -150,8 +149,7 @@ impl ResourceHandler<InferencePool> for InferencePoolControllerHandler<Inference
         self.on_new_or_changed(id, resource, state).await
     }
 
-    async fn on_status_changed(&self, id: ResourceKey, resource: &Arc<InferencePool>, state: &State) -> Result<Action> {
-        let () = state.maybe_save_inference_pool(id, resource).expect("We expect the lock to work");
+    async fn on_status_changed(&self, _: ResourceKey, _: &Arc<InferencePool>, _: &State) -> Result<Action> {
         Err(ControllerError::AlreadyAdded)
     }
 
@@ -439,7 +437,7 @@ pub fn remove_inference_pool_parents(mut inference_pool: InferencePool, gateways
             let key = ResourceKey::from(&p.parent_ref);
             let contains = !gateways_ids.contains(&key);
             info!(target: TARGET,"Filtering inference pools {key:?} in {gateways_ids:?} {contains}");
-            !gateways_ids.contains(&key)
+            contains
         })
         .collect();
 
