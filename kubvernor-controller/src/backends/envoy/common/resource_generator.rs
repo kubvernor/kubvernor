@@ -258,7 +258,7 @@ impl<'a> ResourceGenerator<'a> {
             .flat_map(|listener| {
                 listener.http_listener_map.iter().flat_map(|evc| {
                     evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
-                        debug!(target: TARGET,"Cluster  {} {}", r.backends().len(), r.filter_backends().len());
+                        debug!(target: TARGET,"Cluster backends {} filter_backends {}", r.backends().len(), r.filter_backends().len());
                         let route_type = r.route_type();
                         let backends = r.backends();
                         let service_backends = r.backends();
@@ -311,9 +311,9 @@ impl<'a> ResourceGenerator<'a> {
                 })
             })
             .collect();
-        debug!(target: TARGET,"Clusters produced {} {clusters:?}", clusters.len() );
-        let ext_service_clusters = self.inference_clusters.iter().filter_map(|c| self.generate_ext_service_cluster(c));
-        debug!(target: TARGET,"Ext Service Clusters produced {ext_service_clusters:?}");
+        debug!(target: TARGET,"Clusters produced {}", clusters.len() );
+        let ext_service_clusters: Vec<_> = self.inference_clusters.iter().filter_map(|c| self.generate_ext_service_cluster(c)).collect();
+        debug!(target: TARGET,"ExtService Clusters produced {}",ext_service_clusters.len());
         let clusters = clusters
             .into_iter()
             .chain(ext_service_clusters)

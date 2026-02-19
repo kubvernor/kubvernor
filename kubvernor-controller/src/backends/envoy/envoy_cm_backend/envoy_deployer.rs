@@ -16,7 +16,7 @@ use k8s_openapi::{
     apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
 };
 use kube::{
-    Api, Client,
+    Api, Client, ResourceExt,
     api::{DeleteParams, Patch, PatchParams},
 };
 use kube_core::ObjectMeta;
@@ -129,7 +129,7 @@ impl EnvoyDeployerChannelHandlerService {
         debug!(target: TARGET,"Created service {}-{}", gateway.name(), gateway.namespace());
 
         let service_account = service_account_api.patch(gateway.name(), &pp, &Patch::Apply(&service_account)).await?;
-        debug!(target: TARGET,"Service account status {service_account:?}");
+        debug!(target: TARGET,"Service account status {}-{:?}",service_account.name_any(), service_account.namespace());
 
         Ok(service)
     }

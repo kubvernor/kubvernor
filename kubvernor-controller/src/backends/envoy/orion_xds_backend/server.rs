@@ -190,7 +190,7 @@ impl AdsClients {
 
             {
                 if let Some(resources) = self.managed_resources.lock().expect("We expect the lock to work").get(gateway_id) {
-                    debug!(target: TARGET,"update_client {:?} {gateway_id} - Updating resources {:?}", client.client_id, resources);
+                    debug!(target: TARGET,"update_client {:?} {gateway_id} - Updating resources", client.client_id);
                     client.listeners.clone_from(&resources.all_listeners);
                     client.clusters.clone_from(&resources.all_clusters);
                 } else {
@@ -321,7 +321,7 @@ impl AggregateServerService {
 
                                 for client in &mut clients{
                                     let Delta{to_add, to_remove} = client.cache_clusters_and_calculate_delta(resources.clone());
-                                    debug!(target: TARGET,"Sending resources DELTA clusters discovery response for client {} {to_add:?} {to_remove:?}", client.client_id);
+                                    debug!(target: TARGET,"Sending resources DELTA clusters discovery response for client {} {} {}", client.client_id, to_add.len(), to_remove.len());
                                     let response = DeltaDiscoveryResponse {
                                         type_url: TypeUrl::Cluster.to_string(),
                                         resources: to_add.clone(),
@@ -341,7 +341,7 @@ impl AggregateServerService {
 
                                 for client in &mut clients{
                                     let Delta{to_add, to_remove} = client.cache_listeners_and_calculate_delta(resources.clone());
-                                    debug!(target: TARGET,"Sending resources DELTA listeners discovery response for client {} {to_add:?} {to_remove:?}", client.client_id);
+                                    debug!(target: TARGET,"Sending resources DELTA listeners discovery response for client {} {} {}", client.client_id,to_add.len(), to_remove.len());
                                     let response = DeltaDiscoveryResponse {
                                         type_url: TypeUrl::Listener.to_string(),
                                         resources: to_add.clone(),

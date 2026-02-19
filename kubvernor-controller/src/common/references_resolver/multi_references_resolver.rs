@@ -19,7 +19,7 @@ pub type GatewayKey = ResourceKey;
 pub type RouteToReferenceMapping = BTreeMap<RouteKey, BTreeSet<ReferenceKey>>;
 pub type GatewayToRouteReferenceMapping = BTreeMap<GatewayKey, RouteToReferenceMapping>;
 
-const TARGET: &str = "MultiRefResolver";
+const TARGET: &str = "kubvernor::multi_ref_resover";
 
 #[derive(Clone, Debug)]
 pub struct References<R> {

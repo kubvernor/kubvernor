@@ -26,4 +26,4 @@ impl From<SecureListenerWrapper> for Listener {
     }
 }
 
-const TARGET: &str = "Backend::Agentgateway";
+const TARGET: &str = "kubvernor::backend::agentgateway";

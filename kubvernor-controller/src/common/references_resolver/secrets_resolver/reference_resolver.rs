@@ -12,7 +12,7 @@ use typed_builder::TypedBuilder;
 
 use crate::common::{ReferenceValidateRequest, ResourceKey};
 
-const TARGET: &str = "RefResolver";
+const TARGET: &str = "kubvernor::ref_resover";
 
 #[derive(Clone, TypedBuilder)]
 pub struct ReferencesResolver<R>

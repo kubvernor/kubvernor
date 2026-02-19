@@ -230,7 +230,7 @@ where
                     inference_pool.metadata.managed_fields = None;
                     let inference_pool_resource_key = ResourceKey::from(&inference_pool);
                     let (sender, receiver) = oneshot::channel();
-                    info!("Patching updating inference pools for route delete {} {gateway_ids:?}", route.name());
+                    info!(target: TARGET, "Patching updating inference pools for route delete {} {gateway_ids:?}", route.name());
                     self.state
                         .maybe_save_inference_pool(inference_pool_resource_key.clone(), &Arc::new(inference_pool.clone()))
                         .expect("We expect the lock to work");

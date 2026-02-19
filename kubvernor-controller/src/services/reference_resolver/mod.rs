@@ -18,7 +18,7 @@ use crate::{
     services::patchers::{Operation, PatchContext},
 };
 
-const TARGET: &str = "Services::RefResolver";
+const TARGET: &str = "kubvernor::services::ref_resolver";
 
 #[derive(TypedBuilder)]
 pub struct ReferenceValidatorService {
