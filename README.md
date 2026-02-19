@@ -72,15 +72,9 @@ kubectl apply -f kubernetes/kubvernor-hello-inference-world.yaml
 curl -vki http://GATEWAY_ADDRESS:1080/v1/chat/completions   --header 'Host: www.inference-one.com' -H "Content-Type: application/json"   -d '{"model":"meta-llama/Llama-3.1-8B-Instruct", "messages": [{"role":"user", "content":"What is the story?"}]}'
 ```
 
-
 ## Cleanup
-
 ```bash
-kubectl delete -f kubernetes/kubvernor-hello-inference-world.yaml
-kubectl delete -f kubernetes/kubvernor-hello-world.yaml
-kubectl delete -f kubernetes/kubvernor-deployment.yaml
-helm uninstall vllm-llama3-8b-instruct
-kubectl delete -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api-inference-extension/refs/tags/v1.1.0/config/manifests/vllm/sim-deployment.yaml
+scripts/clear_kind.sh
 ```
 
 
