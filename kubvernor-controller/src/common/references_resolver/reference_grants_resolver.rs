@@ -9,7 +9,7 @@ use log::{info, trace, warn};
 use tokio::time;
 use typed_builder::TypedBuilder;
 
-const TARGET: &str = "RefGrantResolver";
+const TARGET: &str = "kubvernor::ref_grant_resolver";
 
 use crate::{
     common::{Backend, Gateway, ProtocolType, ReferenceValidateRequest, ResourceKey, TlsType, resource_key::DEFAULT_GROUP_NAME},

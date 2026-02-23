@@ -110,7 +110,7 @@ impl GatewayController {
                         Api::namespaced(ctx.client.clone(), &resource_key.namespace);
 
                     if let Ok(configuration) = configuration_api.get(&config_reference.name).await {
-                        debug!(target: TARGET,"reconcile_gateway: {controller_name} {name} retrieved configuration {configuration:?}");
+                        debug!(target: TARGET,"reconcile_gateway: {controller_name} {name} retrieved configuration {:?}",configuration.spec);
                         let Ok(backend_type) = GatewayImplementationType::try_from(configuration.spec.backendtype.as_ref()) else {
                             info!(target: TARGET,
                                 "reconcile_gateway: {controller_name} {name} Invalid backend type {:?}",

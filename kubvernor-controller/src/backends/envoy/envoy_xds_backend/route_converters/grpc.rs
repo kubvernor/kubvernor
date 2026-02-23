@@ -72,7 +72,7 @@ impl From<GRPCEffectiveRoutingRule> for EnvoyRoute {
             })
             .collect();
         let cluster_action = RouteAction {
-            cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::NotFound.into(),
+            cluster_not_found_response_code: route_action::ClusterNotFoundResponseCode::InternalServerError.into(),
             cluster_specifier: Some(ClusterSpecifier::WeightedClusters(WeightedCluster { clusters: cluster_names, ..Default::default() })),
             ..Default::default()
         };

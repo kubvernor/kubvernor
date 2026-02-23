@@ -10,7 +10,7 @@ use super::{ControllerError, ResourceChecker, ResourceState, ResourceStateChecke
 
 type Result<T, E = ControllerError> = std::result::Result<T, E>;
 
-const TARGET: &str = "Controllers::ResourceHandler";
+const TARGET: &str = "kubvernor::controllers::resource_handler";
 
 #[async_trait]
 pub trait ResourceHandler<R>

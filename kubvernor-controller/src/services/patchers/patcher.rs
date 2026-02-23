@@ -43,7 +43,7 @@ pub struct DeleteContext<R> {
     pub controller_name: String,
 }
 
-const TARGET: &str = "Services::PatcherService";
+const TARGET: &str = "kubvernor::services::patcher_service";
 
 #[async_trait]
 pub trait Patcher<R>

@@ -32,7 +32,7 @@ pub enum ControllerError {
 const RECONCILE_LONG_WAIT: Duration = Duration::from_secs(3600);
 const RECONCILE_ERROR_WAIT: Duration = Duration::from_secs(100);
 
-const TARGET: &str = "Controller";
+const TARGET: &str = "kubvernor::controller";
 
 impl std::fmt::Display for ControllerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

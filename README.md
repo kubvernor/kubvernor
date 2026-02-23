@@ -28,40 +28,19 @@ Objectives:
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/refs/heads/main/hack/implementations/common/create-cluster.sh | bash
 ```
-
-2. Install required CRDs for Gateway API
+2. Run scipt to apply necessary CDRs, configure and run Kubvernor in Kind Cluster
 ```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/standard-install.yaml
+./scripts/deploy_kubvernor.sh
 ```
-
-3. Install Kubvernor CRDs
-```bash
-kubectl apply -f kubernetes/kubvernor-crds.yaml
-```
-
-3. Configure Kubvernor
-```bash
-kubectl apply -f kubernetes/kubvernor-config.yaml
-```
-    
-> [!NOTE]
-> 4. **(Optionally)** install CRDs for Gateway API Inference Extension
->```bash
->kubectl apply -f https://github.com/kubernetes-sigs/gateway-api-inference-extension/releases/download/v1.1.0/manifests.yaml
->```
-
-## Running Inside the Kubernetes Cluster
-1. Deploy Kubvernor
-```bash
-kubectl apply -f kubernetes/kubvernor-deployment.yaml
-```
-
-2. All is well if you see a pod in running state
+3. All is well if you see a pod in running state
 ```bash
 kubectl get pod -n kubvernor
 ```
 
 ## Run Hello World Gateway API!
+
+This should deploy three different gateways using Envoy Proxy, Agentgateway and Orion Proxy
+
 1.  Deploy hello world... two gateways, two http routes, one backend
 ```bash
 kubectl apply -f kubernetes/kubvernor-hello-world.yaml
@@ -93,15 +72,9 @@ kubectl apply -f kubernetes/kubvernor-hello-inference-world.yaml
 curl -vki http://GATEWAY_ADDRESS:1080/v1/chat/completions   --header 'Host: www.inference-one.com' -H "Content-Type: application/json"   -d '{"model":"meta-llama/Llama-3.1-8B-Instruct", "messages": [{"role":"user", "content":"What is the story?"}]}'
 ```
 
-
 ## Cleanup
-
 ```bash
-kubectl delete -f kubernetes/kubvernor-hello-inference-world.yaml
-kubectl delete -f kubernetes/kubvernor-hello-world.yaml
-kubectl delete -f kubernetes/kubvernor-deployment.yaml
-helm uninstall vllm-llama3-8b-instruct
-kubectl delete -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api-inference-extension/refs/tags/v1.1.0/config/manifests/vllm/sim-deployment.yaml
+scripts/clear_kind.sh
 ```
 
 

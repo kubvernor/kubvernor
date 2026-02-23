@@ -33,9 +33,12 @@ use kubvernor_common::ResourceKey;
 use log::{debug, info, warn};
 
 use crate::{
-    backends::envoy::common::{
-        HTTPEffectiveRoutingRule, INFERENCE_EXT_PROC_FILTER_NAME, converters, envoy_route_name, get_inference_extension_configurations,
-        inference_cluster_name,
+    backends::envoy::{
+        common::{
+            HTTPEffectiveRoutingRule, INFERENCE_EXT_PROC_FILTER_NAME, converters, envoy_route_name, get_inference_extension_configurations,
+            inference_cluster_name,
+        },
+        envoy_xds_backend::route_converters::ServiceClusterWeight,
     },
     common::{DEFAULT_NAMESPACE_NAME, InferencePoolTypeConfig},
 };
@@ -151,11 +154,11 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
         let response_headers_to_remove = response_filter_headers.remove;
 
         let service_cluster_names: Vec<_> =
-            super::create_cluster_weights(effective_routing_rule.backends.iter().filter_map(|b| match b.backend_type() {
+            super::create_cluster_weights(effective_routing_rule.backends.iter().map(|b| match b.backend_type() {
                 crate::common::BackendType::Service(service_type_config) | crate::common::BackendType::Invalid(service_type_config) => {
-                    Some(service_type_config)
+                    ServiceClusterWeight::from(service_type_config)
                 },
-                crate::common::BackendType::InferencePool(_) => None,
+                crate::common::BackendType::InferencePool(infrence_config) => ServiceClusterWeight::from(infrence_config),
             }));
 
         let mirror_policy = effective_routing_rule.mirror_filter.as_ref().map(|mirror_filter| {

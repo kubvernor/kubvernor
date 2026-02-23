@@ -32,6 +32,7 @@ fn init_tracing_logging(configuration: &Configuration) -> Guard {
     let tracing_filter = tracing_subscriber::EnvFilter::new(std::env::var("RUST_TRACE_LOG").unwrap_or_else(|_| "info".to_owned()));
 
     let console_layer = fmt::layer()
+        .event_format(fmt::format().compact())
         .with_target(true)
         .with_span_events(FmtSpan::NONE)
         .with_ansi(false)

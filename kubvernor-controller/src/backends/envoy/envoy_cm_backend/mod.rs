@@ -3,4 +3,4 @@ mod xds_generator;
 
 pub use envoy_deployer::EnvoyDeployerChannelHandlerService as EnvoyCMDeployerChannelHandlerService;
 
-const TARGET: &str = "Backend::EnvoyCM";
+const TARGET: &str = "kubvernor::backend::envoy_cm";
