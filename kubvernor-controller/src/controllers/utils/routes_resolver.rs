@@ -19,7 +19,7 @@ use kube::{Api, Client, api::ListParams};
 use kube_core::{Expression, Selector, object::HasSpec};
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
-use log::{debug, info, warn};
+use log::{debug, info, trace, warn};
 use tokio::sync::{mpsc, oneshot};
 use typed_builder::TypedBuilder;
 
@@ -257,6 +257,8 @@ impl RouteResolver<'_> {
                             .map(|p| (*p).clone())
                             .unwrap_or(inference_pool);
 
+                        trace!("process_inference_pool_backend retrieved inference pool {inference_pool:#?}");
+
                         let inference_pool_spec = inference_pool.spec();
 
                         let model_endpoints =
@@ -280,14 +282,18 @@ impl RouteResolver<'_> {
 
                         debug!(target: TARGET,"Inference Pool: Setting backend config {inference_pool_resource_key} {backend_resource_key:?}",);
 
+                        let gateways =
+                            self.state.find_gateways_by_inference_pool(&inference_pool_resource_key).expect("we expect this to work");
                         if inference_pool.metadata.name.is_some() {
                             let mut inference_pool = inference_pool::update_inference_pool_parents(
                                 &self.controller_name,
-                                self.gateway_resource_key,
+                                &gateways,
                                 inference_pool,
                                 resolved_endpoint_picker,
                             );
                             inference_pool.metadata.managed_fields = None;
+
+                            trace!("process_inference_pool_backend saving inference pool {inference_pool:#?}");
                             self.state
                                 .save_inference_pool(inference_pool_resource_key.clone(), &Arc::new(inference_pool.clone()))
                                 .expect("we expect this to work");

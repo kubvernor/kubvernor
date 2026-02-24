@@ -8,7 +8,8 @@
 //
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
+    hash::Hash,
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -26,6 +27,29 @@ impl std::fmt::Display for StorageError {
     }
 }
 
+#[derive(Debug, Eq)]
+struct RouteToInferencePool {
+    route_id: ResourceKey,
+    inference_pool_ids: Vec<ResourceKey>,
+}
+impl Hash for RouteToInferencePool {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.route_id.hash(state);
+    }
+}
+
+impl PartialEq for RouteToInferencePool {
+    fn eq(&self, other: &Self) -> bool {
+        self.route_id == other.route_id
+    }
+}
+
+impl PartialOrd for RouteToInferencePool {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.route_id.partial_cmp(&other.route_id)
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct State {
     gateway_classes: Arc<Mutex<HashMap<ResourceKey, Arc<GatewayClass>>>>,
@@ -34,6 +58,7 @@ pub struct State {
     grpc_routes: Arc<Mutex<HashMap<ResourceKey, Arc<GRPCRoute>>>>,
     gateways_with_routes: Arc<Mutex<HashMap<ResourceKey, BTreeSet<ResourceKey>>>>,
     inference_pools: Arc<Mutex<HashMap<ResourceKey, Arc<InferencePool>>>>,
+    gateways_with_routes_with_inference_pools: Arc<Mutex<HashMap<ResourceKey, HashSet<RouteToInferencePool>>>>,
     gateway_implementation_types: Arc<Mutex<HashMap<ResourceKey, GatewayImplementationType>>>,
 }
 #[allow(dead_code)]
@@ -46,6 +71,7 @@ impl State {
             grpc_routes: Arc::new(Mutex::new(HashMap::new())),
             gateways_with_routes: Arc::new(Mutex::new(HashMap::new())),
             inference_pools: Arc::new(Mutex::new(HashMap::new())),
+            gateways_with_routes_with_inference_pools: Arc::new(Mutex::new(HashMap::new())),
             gateway_implementation_types: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -59,14 +85,6 @@ impl State {
         let mut lock = self.gateways.lock().map_err(|_| StorageError::LockingError)?;
         if lock.contains_key(&id) {
             lock.insert(id, Arc::clone(gateway));
-        }
-        Ok(())
-    }
-
-    pub fn maybe_save_inference_pool(&self, id: ResourceKey, inference_pool: &Arc<InferencePool>) -> Result<(), StorageError> {
-        let mut lock = self.inference_pools.lock().map_err(|_| StorageError::LockingError)?;
-        if lock.contains_key(&id) {
-            lock.insert(id, Arc::clone(inference_pool));
         }
         Ok(())
     }
@@ -243,6 +261,14 @@ impl State {
         Ok(())
     }
 
+    pub fn maybe_save_inference_pool(&self, id: ResourceKey, inference_pool: &Arc<InferencePool>) -> Result<(), StorageError> {
+        let mut lock = self.inference_pools.lock().map_err(|_| StorageError::LockingError)?;
+        if lock.contains_key(&id) {
+            lock.insert(id, Arc::clone(inference_pool));
+        }
+        Ok(())
+    }
+
     pub fn get_inference_pool(&self, id: &ResourceKey) -> Result<Option<Arc<InferencePool>>, StorageError> {
         let lock = self.inference_pools.lock().map_err(|_| StorageError::LockingError)?;
         Ok(lock.get(id).cloned())
@@ -268,5 +294,88 @@ impl State {
             }
         }
         Ok(owned_gateways)
+    }
+
+    pub fn find_gateways_by_inference_pool(
+        &self,
+        inference_pool_resource_key: &ResourceKey,
+    ) -> Result<BTreeSet<ResourceKey>, StorageError> {
+        let gateways_with_routes_with_inference_pools =
+            self.gateways_with_routes_with_inference_pools.lock().map_err(|_| StorageError::LockingError)?;
+        let mut gateway_ids = BTreeSet::new();
+        for (gateway, routes) in gateways_with_routes_with_inference_pools.iter() {
+            for RouteToInferencePool { route_id: _, inference_pool_ids } in routes {
+                if inference_pool_ids.contains(inference_pool_resource_key) {
+                    gateway_ids.insert(gateway.clone());
+                }
+            }
+        }
+        Ok(gateway_ids)
+    }
+
+    pub fn find_gateways_by_route_and_inference_pool(&self, route_id: &ResourceKey) -> Result<BTreeSet<ResourceKey>, StorageError> {
+        let gateways_with_routes_with_inference_pools =
+            self.gateways_with_routes_with_inference_pools.lock().map_err(|_| StorageError::LockingError)?;
+        let mut gateway_ids = BTreeSet::new();
+
+        let inference_pools_associated_with_route = gateways_with_routes_with_inference_pools
+            .values()
+            .filter_map(|p| {
+                p.get(&RouteToInferencePool { route_id: route_id.clone(), inference_pool_ids: vec![] })
+                    .as_ref()
+                    .map(|f| &f.inference_pool_ids)
+            })
+            .flatten()
+            .collect::<BTreeSet<_>>();
+
+        for (gateway, routes) in gateways_with_routes_with_inference_pools.iter() {
+            for RouteToInferencePool { route_id: _, inference_pool_ids } in routes {
+                for inference_pool in &inference_pools_associated_with_route {
+                    if inference_pool_ids.contains(inference_pool) {
+                        gateway_ids.insert(gateway.clone());
+                    }
+                }
+            }
+        }
+
+        Ok(gateway_ids)
+    }
+
+    pub fn attach_inference_pool_to_gateway(
+        &self,
+        gateway_id: ResourceKey,
+        route_id: ResourceKey,
+        inference_pool_ids: Vec<ResourceKey>,
+    ) -> Result<(), StorageError> {
+        let mut gateways_with_routes_with_inference_pools =
+            self.gateways_with_routes_with_inference_pools.lock().map_err(|_| StorageError::LockingError)?;
+        if let Some(routes_with_pools) = gateways_with_routes_with_inference_pools.get_mut(&gateway_id) {
+            routes_with_pools.insert(RouteToInferencePool { route_id, inference_pool_ids });
+        } else {
+            let mut routes_with_pools = HashSet::new();
+            routes_with_pools.insert(RouteToInferencePool { route_id, inference_pool_ids });
+            gateways_with_routes_with_inference_pools.insert(gateway_id, routes_with_pools);
+        }
+
+        Ok(())
+    }
+
+    pub fn detach_infererence_pool_from_gateway(
+        &self,
+        gateway_id: &ResourceKey,
+        route_id: &ResourceKey,
+    ) -> Result<Vec<ResourceKey>, StorageError> {
+        {
+            let mut gateways_with_routes_with_inference_pools =
+                self.gateways_with_routes_with_inference_pools.lock().map_err(|_| StorageError::LockingError)?;
+            if let Some(routes_with_pools) = gateways_with_routes_with_inference_pools.get_mut(gateway_id)
+                && let Some(inference_pools) =
+                    routes_with_pools.take(&RouteToInferencePool { route_id: route_id.clone(), inference_pool_ids: vec![] })
+            {
+                return Ok(inference_pools.inference_pool_ids);
+            }
+        }
+
+        Ok(vec![])
     }
 }

@@ -13,7 +13,6 @@ serde                          = { workspace = true }
 serde_json                     = { workspace = true }
 tokio                          = { workspace = true }
 tower                          = "0.5"
-tracing                        = { workspace = true }
 log.workspace                  = true
 
 [lints]

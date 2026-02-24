@@ -117,7 +117,7 @@ impl GatewayProcessedHandler<'_> {
                     match maybe_patched {
                         Ok(_patched_route) => {},
                         Err(e) => {
-                            warn!("Error while patching {e}");
+                            warn!(target:TARGET, "Error while patching {e}");
                         },
                     }
                 }

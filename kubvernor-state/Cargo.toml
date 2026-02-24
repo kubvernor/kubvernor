@@ -9,6 +9,7 @@ gateway-api.workspace                     = true
 gateway-api-inference-extension.workspace = true
 kubvernor-common.workspace                = true
 thiserror.workspace                       = true
+log.workspace                             = true
 
 [lints]
 workspace = true

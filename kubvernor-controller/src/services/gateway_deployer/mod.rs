@@ -101,7 +101,7 @@ impl GatewayDeployerService {
                                                 .controller_name(controller_name.clone()).build();
                                             svc.on_version_not_changed(&gateway_id, &gateway_class_name, &patched_gateway).await;
                                         }
-                                        Err(e) => warn!("GatewayDeployerService Error while patching {e}"),
+                                        Err(e) => warn!(target: TARGET, "GatewayDeployerService Error while patching {e}"),
                                     }
                                 }
                             }
