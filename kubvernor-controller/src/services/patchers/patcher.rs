@@ -77,7 +77,10 @@ where
                     let res = api.patch_status(&resource_key.name, &patch_params, &Patch::Apply(resource)).await;
                     match &res {
                         Ok(_new_gateway) => debug!(target: TARGET,"patch status result ok"),
-                        Err(e) => error!(target: TARGET,"patch status failed {e:?}"),
+                        Err(kube::Error::Api(e)) if e.code == 404 => {
+                            debug!(target: TARGET,"Patch status failed, resource doesn't exist {}-{} {:?}", resource_key.name, resource_key.namespace, e);
+                        },
+                        Err(e) => error!(target: TARGET,"Patch status failed {e:?}"),
                     }
                     let _ = response_sender.send(res);
                 },
@@ -88,8 +91,11 @@ where
                     let res = FinalizerPatcher::patch_finalizer(&api, &resource_key.name, &controller_name, &finalizer_name).await;
                     match &res {
                         Ok(_new_gateway) => debug!(target: TARGET, "finalizer ok"),
+                        Err(e) if *e == ControllerError::UnknownResource => {
+                            debug!(target: TARGET,"Finalizer failed, resource doesn't exist {}-{} {:?}", resource_key.name, resource_key.namespace, e);
+                        },
                         Err(e) => {
-                            error!(target: TARGET, "finalizer failed {resource_key} {controller_name} {finalizer_name} {e:?}");
+                            error!(target: TARGET, "Finalizer failed {resource_key} {controller_name} {finalizer_name} {e:?}");
                         },
                     }
                 },
@@ -99,8 +105,8 @@ where
                     let res: Result<kube::runtime::controller::Action, kube::runtime::finalizer::Error<ControllerError>> =
                         ResourceFinalizer::delete_resource(&api, &controller_name, &Arc::new(resource)).await;
                     match res {
-                        Ok(_new_gateway) => debug!(target: TARGET, "delete result ok"),
-                        Err(e) => error!(target: TARGET, "{resource_key} {controller_name} delete failed {e:?}"),
+                        Ok(_new_gateway) => debug!(target: TARGET, "Patch delete result ok"),
+                        Err(e) => error!(target: TARGET, "{resource_key} {controller_name} patch delete failed {e:?}"),
                     }
                 },
             }

@@ -274,11 +274,11 @@ where
                         }))
                         .await;
                     match receiver.await {
-                        Ok(Err(_)) | Err(_) => warn!(target: TARGET,"Could't patch status"),
+                        Ok(Err(_)) | Err(_) => debug!(target: TARGET,"Could't patch status"),
                         _ => (),
                     }
                 } else {
-                    warn!(target: TARGET,"No inference pool - Updating inference pools of route delete {} {gateway_ids:?}", route.name());
+                    warn!(target: TARGET,"No inference pool - Updating inference pools of route delete {} inference pool {inference_pool_backend} {gateway_ids:?}", route.name());
                 }
             }
         }

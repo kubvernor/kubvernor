@@ -508,7 +508,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                     },
 
                     Err(e) => {
-                        warn!(target: TARGET,"delta_aggregated_resources Discovery request error {e:?}");
+                        info!(target: TARGET,"delta_aggregated_resources Discovery request error {e:?}");
                     },
                 }
             }
