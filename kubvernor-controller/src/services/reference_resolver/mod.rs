@@ -7,15 +7,12 @@
 //
 //
 
-use std::{collections::BTreeSet, sync::Arc};
-
 use gateway_api::gateways::Gateway;
 use gateway_api_inference_extension::inferencepools::InferencePool;
 use kube::Client;
-use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
-use log::{error, info, warn};
-use tokio::sync::{mpsc, oneshot};
+use log::{info, warn};
+use tokio::sync::mpsc;
 use typed_builder::TypedBuilder;
 
 use crate::{
@@ -23,8 +20,8 @@ use crate::{
         self, BackendReferenceResolver, GatewayDeployRequest, ReferenceGrantsResolver, ReferenceValidateRequest, RequestContext,
         SecretsResolver,
     },
-    controllers::{ListenerTlsConfigValidator, RoutesResolver, inference_pool::clear_all_conditions},
-    services::patchers::{Operation, PatchContext},
+    controllers::{ListenerTlsConfigValidator, RoutesResolver},
+    services::patchers::Operation,
 };
 
 const TARGET: &str = "kubvernor::services::ref_resolver";
@@ -121,7 +118,7 @@ impl ReferenceResolverHandler {
                 info!(target: TARGET,"ReferenceResolverService action = DeleteRouteAndValidateRequest {route_key:?} {references:?}");
                 let affected_gateways = self.backend_references_resolver.delete_route_references(&route_key, &references).await;
 
-                self.update_inference_pools(route_key, references, &affected_gateways).await;
+                //self.update_inference_pools(route_key, references, &affected_gateways).await;
 
                 info!(target: TARGET,"Update gateways affected gateways  {affected_gateways:?}");
                 for gateway_id in affected_gateways {
@@ -214,38 +211,39 @@ impl ReferenceResolverHandler {
         resolver.validate().await
     }
 
-    async fn update_inference_pools(
-        &self,
-        route_key: ResourceKey,
-        references: BTreeSet<ResourceKey>,
-        affected_gateways: &BTreeSet<ResourceKey>,
-    ) {
-        info!(target: TARGET,"Updating inference pools for deleted route {route_key} {references:?} {affected_gateways:?}");
-        for pool_reference in references.iter().filter(|r| r.kind == "InferencePool") {
-            if let Some(pool) = self.state.get_inference_pool(pool_reference).expect("We expect this to work") {
-                let mut pool = clear_all_conditions((*pool).clone(), affected_gateways);
-                pool.metadata.managed_fields = None;
-                self.state.save_inference_pool(pool_reference.clone(), &Arc::new(pool.clone())).expect("We expect this to work");
-                let (sender, receiver) = oneshot::channel();
-                let _ = self
-                    .inference_pool_patcher_sender
-                    .send(Operation::PatchStatus(PatchContext {
-                        resource_key: pool_reference.clone(),
-                        resource: pool,
-                        controller_name: self.controller_name.clone(),
-                        response_sender: sender,
-                    }))
-                    .await;
-                match receiver.await {
-                    Err(e) => error!(target: TARGET,"Sytem error  {e:?}"),
-                    Ok(Err(e)) => {
-                        warn!("Inference Pool: Can't update the status {e:?}");
-                    },
-                    _ => (),
-                }
-            } else {
-                warn!("No pool for {pool_reference:?}");
-            }
-        }
-    }
+    // async fn update_inference_pools(
+    //     &self,
+    //     route_key: ResourceKey,
+    //     references: BTreeSet<ResourceKey>,
+    //     affected_gateways: &BTreeSet<ResourceKey>,
+    // ) {
+    //     info!(target: TARGET,"Updating inference pools for deleted route {route_key} {references:?} {affected_gateways:?}");
+    //     for pool_reference in references.iter().filter(|r| r.kind == "InferencePool") {
+    //         if let Some(pool) = self.state.get_inference_pool(pool_reference).expect("We expect this to work") {
+    //             let mut pool = clear_all_conditions((*pool).clone(), affected_gateways);
+    //             pool.metadata.managed_fields = None;
+    //             trace!(target: TARGET,"Updated inference pool {pool:#?}");
+    //             self.state.save_inference_pool(pool_reference.clone(), &Arc::new(pool.clone())).expect("We expect this to work");
+    //             let (sender, receiver) = oneshot::channel();
+    //             let _ = self
+    //                 .inference_pool_patcher_sender
+    //                 .send(Operation::PatchStatus(PatchContext {
+    //                     resource_key: pool_reference.clone(),
+    //                     resource: pool,
+    //                     controller_name: self.controller_name.clone(),
+    //                     response_sender: sender,
+    //                 }))
+    //                 .await;
+    //             match receiver.await {
+    //                 Err(e) => error!(target: TARGET,"Sytem error  {e:?}"),
+    //                 Ok(Err(e)) => {
+    //                     warn!("Inference Pool: Can't update the status {e:?}");
+    //                 },
+    //                 _ => (),
+    //             }
+    //         } else {
+    //             warn!("No pool for {pool_reference:?}");
+    //         }
+    //     }
+    // }
 }

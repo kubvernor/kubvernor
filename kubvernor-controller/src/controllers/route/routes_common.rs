@@ -21,7 +21,7 @@ use k8s_openapi::{
 use kube::{Resource, runtime::controller::Action};
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
-use log::{debug, info, warn};
+use log::{debug, info, trace, warn};
 use tokio::sync::{mpsc, oneshot};
 use typed_builder::TypedBuilder;
 
@@ -120,8 +120,19 @@ where
 
         let (resolved_gateways, unknown_gateways) = VerifiyItems::verify(parent_gateway_refs);
 
+        let inference_pools =
+            route
+                .backends()
+                .into_iter()
+                .filter_map(|b| {
+                    if let BackendType::InferencePool(config) = b.backend_type() { Some(config.resource_key.clone()) } else { None }
+                })
+                .collect::<Vec<_>>();
         parent_gateway_refs_keys.for_each(|(_ref, key)| {
             state.attach_http_route_to_gateway(key.as_ref().clone(), route_key.clone()).expect("We expect the lock to work");
+            state
+                .attach_inference_pool_to_gateway(key.as_ref().clone(), route_key.clone(), inference_pools.clone())
+                .expect("We expect the lock to work");
         });
 
         let matching_gateways = RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
@@ -187,18 +198,27 @@ where
         let parent_gateway_refs_keys =
             parent_gateway_refs.iter().map(|parent_ref| (parent_ref, RouteRefKey::from((parent_ref, route_key.namespace.clone()))));
 
-        debug!(target: TARGET,"Parent keys = {parent_gateway_refs_keys:?}");
         let gateway_ids = parent_gateway_refs_keys.map(|(_, r)| r.resource_key).collect::<BTreeSet<_>>();
+        debug!(target: TARGET,"Route parent/gateway keys = {gateway_ids:?}");
+
         gateway_ids.clone().iter().for_each(|gateway_key| {
             state.detach_http_route_from_gateway(gateway_key, &route_key).expect("We expect the lock to work");
+            let detached_inference_pools =
+                state.detach_infererence_pool_from_gateway(gateway_key, &route_key).expect("We expect the lock to work");
+            debug!(target: TARGET,"Detached inference pools for gateway {gateway_key:?} route {route_key:?} {detached_inference_pools:?}");
         });
+
+        let gateway_ids_with_inference_pools =
+            state.find_gateways_by_route_and_inference_pool(&route_key).expect("We expect the lock to work");
+        debug!(target: TARGET,"Gateways with inference pools  = {gateway_ids_with_inference_pools:?}");
 
         let Some(route) = state.delete_http_route(&route_key).expect("We expect the lock to work") else {
             return Err(ControllerError::InvalidPayload("Route doesn't exist".to_owned()));
         };
 
         let route = Route::try_from(&*route)?;
-        Self::update_inference_pools(self, &route, &gateway_ids).await;
+
+        Self::update_inference_pools(self, &route, &gateway_ids_with_inference_pools).await;
 
         let http_route = (*self.resource).clone();
         let resource_key = route_key;
@@ -234,8 +254,10 @@ where
                 _ => None,
             }) {
                 if let Some(inference_pool) = self.state.get_inference_pool(inference_pool_backend).expect("We expect the lock to work") {
-                    debug!(target: TARGET,"Retrieved inference pool is {inference_pool:#?}");
-                    let mut inference_pool = inference_pool::remove_inference_pool_parents((*inference_pool).clone(), gateway_ids);
+                    trace!(target: TARGET,"Retrieved inference pool is {inference_pool:#?}");
+                    let mut inference_pool =
+                        inference_pool::update_inference_pool_parents(&self.controller_name, gateway_ids, (*inference_pool).clone(), true);
+                    trace!(target: TARGET,"Updated inference pool {inference_pool:#?}");
                     inference_pool.metadata.managed_fields = None;
                     let inference_pool_resource_key = ResourceKey::from(&inference_pool);
                     let (sender, receiver) = oneshot::channel();
@@ -252,11 +274,11 @@ where
                         }))
                         .await;
                     match receiver.await {
-                        Ok(Err(_)) | Err(_) => warn!(target: TARGET,"Could't patch status"),
+                        Ok(Err(_)) | Err(_) => debug!(target: TARGET,"Could't patch status"),
                         _ => (),
                     }
                 } else {
-                    warn!(target: TARGET,"No inference pool - Updating inference pools of route delete {} {gateway_ids:?}", route.name());
+                    warn!(target: TARGET,"No inference pool - Updating inference pools of route delete {} inference pool {inference_pool_backend} {gateway_ids:?}", route.name());
                 }
             }
         }

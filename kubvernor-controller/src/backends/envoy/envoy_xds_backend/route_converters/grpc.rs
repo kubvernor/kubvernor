@@ -22,7 +22,7 @@ use envoy_api_rs::{
     google::protobuf::UInt32Value,
 };
 use gateway_api::common::{self};
-use tracing::warn;
+use log::warn;
 
 use super::super::super::common::GRPCEffectiveRoutingRule;
 use crate::common::BackendTypeConfig;

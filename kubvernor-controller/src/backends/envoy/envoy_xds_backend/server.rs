@@ -426,7 +426,7 @@ impl AggregatedDiscoveryService for AggregateServer {
                         },
                     }
                 } else {
-                    warn!(target: TARGET,"Discovery request error {:?}", item.err());
+                    info!(target: TARGET,"Discovery request error {:?}", item.err());
                 }
             }
 

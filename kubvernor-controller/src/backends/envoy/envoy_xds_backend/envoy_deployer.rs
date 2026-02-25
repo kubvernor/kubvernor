@@ -180,7 +180,7 @@ impl EnvoyDeployerChannelHandlerService {
     fn print_delete_error<S>(f: Result<itertools::Either<S, kube_core::Status>, kube::Error>, gateway: &Gateway) {
         match f {
             Ok(_) => (),
-            Err(kube::Error::Api(e)) if e.code != 404 => {
+            Err(kube::Error::Api(e)) if e.code == 404 => {
                 debug!(target: TARGET,"Could not delete {}-{} {:?}", gateway.name(), gateway.namespace(), e);
             },
             Err(e) => {
