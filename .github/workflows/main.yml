@@ -43,7 +43,7 @@ jobs:
           echo "Coformance Tests Passed"
           pwd
           ls -l ../kubvernor
-          ls -l ../kubvernor/kubvernor
+          ls -l ../../
           touch ../kubvernor/conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
           echo "Blah" > ../kubvernor/conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
         else
