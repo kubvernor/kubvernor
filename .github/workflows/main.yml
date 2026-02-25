@@ -6,22 +6,18 @@ on:
   workflow_run:
     workflows: [Docker Image CI]
     types:
-      - completed
-      
-permissions:  
-  contents: write
-  pull-requests: write
-  
+      - completed    
 env:
   IMAGE_NAME: kubvernor
   VERSION: 0.2.0
   
 jobs:
-  build:
+  build:    
     runs-on: ubuntu-latest
     permissions:
       packages: write
-      contents: read
+      contents: write
+      pull-requests: write
     steps:
     - uses: actions/checkout@v6
       name: Checkout repo
@@ -46,6 +42,7 @@ jobs:
         fi
     - name: Create Pull Request
       uses: peter-evans/create-pull-request@v8.1.0
+      
       with:
         commit-message: Envoy Conformance Tests Result
         branch: gateway_envoy_conformance_test
