@@ -13,16 +13,15 @@ env:
   VERSION: 0.2.0
   
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
     permissions:
       packages: write
       contents: read
     steps:
-    - uses: actions/checkout@v5    
-    - name: Install Kind    
+    - uses: actions/checkout@v6
+      name: Checkout repo
+    - name: Install Kind      
       run: |
         curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
         chmod +x ./kind
@@ -36,10 +35,21 @@ jobs:
         result=$(grep "Failed: [1-9]" conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml | wc -l)
         if [ $result -eq 0 ]; then
           echo "Test passed"
+          cp conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml ../kubvernor/conformance
         else
           echo "Test failed"
           echo "::error Conformance tests failed"
         fi
+    - name: Create Pull Request
+      uses: peter-evans/create-pull-request@v8.1.0
+      with:
+        commit-message: Envoy Conformance Tests Result
+        branch: gateway_envoy_conformance_test
+        title: 'Envoy Conformance Tests Result'        
+        
+        
+      
+    
         
         
         
