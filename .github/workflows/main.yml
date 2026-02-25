@@ -45,12 +45,20 @@ jobs:
           echo "Coformance Tests Failed"
           echo "::error Conformance tests failed"
         fi
+    - name: Test Cleanup
+      run : |
+        cd ..
+        ./scripts/clear_kind.sh
+        rm -rf gateway-api
+        rm -rf ./kind
     - name: Create Pull Request
       uses: peter-evans/create-pull-request@v8.1.0      
       with:
         commit-message: Envoy Conformance Tests Result
         branch: gateway_envoy_conformance_test
-        title: 'Envoy Conformance Tests Result'        
+        title: 'Envoy Conformance Tests Result'
+        add-paths: |
+            conformance/*.yaml            
         
         
       
