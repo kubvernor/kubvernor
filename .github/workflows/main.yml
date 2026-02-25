@@ -10,14 +10,13 @@ on:
 env:
   IMAGE_NAME: kubvernor
   VERSION: 0.2.0
-  
+permissions:
+  packages: write
+  contents: write
+  pull-requests: write  
 jobs:
   build:    
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-      contents: write
-      pull-requests: write
+    runs-on: ubuntu-latest   
     steps:
     - uses: actions/checkout@v6
       name: Checkout repo
@@ -25,24 +24,29 @@ jobs:
       run: |
         curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
         chmod +x ./kind
+    - name: Deploy Kubvernor 
+      run: |
         ./scripts/deploy_kubvernor.sh
         sleep 10
         kubectl get pod -n kubvernor
         sleep 10
+    - name: Checkout Gateway API Conformance  
+      run: |            
         git clone --depth 1 --branch v1.4.0 https://github.com/kubernetes-sigs/gateway-api.git
+    - name: Run Gateway API Conformance  
+      run: |                    
         cd gateway-api
         go test ./conformance -count=1 -v -run TestConformance -failfast=true -timeout=1h -args --gateway-class=kubvernor-conformance-gateway-envoy --conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC --organization=kubvernor  --allow-crds-mismatch --project=kubvernor  --url=github.com/kubvernor/kubvernor --version=0.2.0   --skip-tests=HTTPRouteHostnameIntersection  --supported-features=Gateway,HTTPRoute,GatewayPort8080,HTTPRouteHostRewrite,HTTPRoutePathRedirect,HTTPRouteRequestMirror,HTTPRouteRequestPercentageMirror,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect  --report-output=kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
         result=$(grep "Failed: [1-9]" conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml | wc -l)
         if [ $result -eq 0 ]; then
-          echo "Test passed"
+          echo "Coformance Tests Passed"
           cp conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml ../kubvernor/conformance
         else
-          echo "Test failed"
+          echo "Coformance Tests Failed"
           echo "::error Conformance tests failed"
         fi
     - name: Create Pull Request
-      uses: peter-evans/create-pull-request@v8.1.0
-      
+      uses: peter-evans/create-pull-request@v8.1.0      
       with:
         commit-message: Envoy Conformance Tests Result
         branch: gateway_envoy_conformance_test
