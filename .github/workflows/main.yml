@@ -41,7 +41,8 @@ jobs:
         result=0
         if [ $result -eq 0 ]; then
           echo "Coformance Tests Passed"
-          cp conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml ../kubvernor/conformance
+          #cp conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml ../kubvernor/conformance
+          echo "Blah" >> ../kubvernor/conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
         else
           echo "Coformance Tests Failed"
           echo "::error Conformance tests failed"
