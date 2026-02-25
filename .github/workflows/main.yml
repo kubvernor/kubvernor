@@ -26,10 +26,10 @@ jobs:
         chmod +x ./kind
     - name: Deploy Kubvernor 
       run: |
-        ./scripts/deploy_kubvernor.sh
-        sleep 10
-        kubectl get pod -n kubvernor
-        sleep 10
+        # ./scripts/deploy_kubvernor.sh
+        # sleep 10
+        # kubectl get pod -n kubvernor
+        # sleep 10
     - name: Checkout Gateway API Conformance  
       run: |            
         git clone --depth 1 --branch v1.4.0 https://github.com/kubernetes-sigs/gateway-api.git
@@ -42,6 +42,8 @@ jobs:
         if [ $result -eq 0 ]; then
           echo "Coformance Tests Passed"
           pwd
+          ls -l ../kubvernor
+          ls -l ../kubvernor/kubvernor
           touch ../kubvernor/conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
           echo "Blah" > ../kubvernor/conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
         else
