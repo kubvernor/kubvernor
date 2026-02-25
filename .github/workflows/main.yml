@@ -40,7 +40,9 @@ jobs:
         # result=$(grep "Failed: [1-9]" conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml | wc -l)
         result=0
         if [ $result -eq 0 ]; then
-          echo "Coformance Tests Passed"                    
+          echo "Coformance Tests Passed"
+          pwd
+          touch ../kubvernor/conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
           echo "Blah" > ../kubvernor/conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
         else
           echo "Coformance Tests Failed"
