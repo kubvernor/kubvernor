@@ -44,8 +44,8 @@ jobs:
           pwd
           ls -l ../kubvernor
           ls -l ../../
-          touch ../kubvernor/conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
-          echo "Blah" > ../kubvernor/conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
+          touch ../../kubvernor/conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
+          echo "Blah" > ../../kubvernor/conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml          
         else
           echo "Coformance Tests Failed"
           echo "::error Conformance tests failed"
