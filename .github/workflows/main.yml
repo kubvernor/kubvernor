@@ -36,12 +36,12 @@ jobs:
     - name: Run Gateway API Conformance  
       run: |                    
         cd gateway-api
-        go test ./conformance -count=1 -v -run TestConformance -failfast=true -timeout=1h -args --gateway-class=kubvernor-conformance-gateway-envoy --conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC --organization=kubvernor  --allow-crds-mismatch --project=kubvernor  --url=github.com/kubvernor/kubvernor --version=0.2.0   --skip-tests=HTTPRouteHostnameIntersection  --supported-features=Gateway,HTTPRoute,GatewayPort8080,HTTPRouteHostRewrite,HTTPRoutePathRedirect,HTTPRouteRequestMirror,HTTPRouteRequestPercentageMirror,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect  --report-output=kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
+        ../scripts/run_conformance.sh
         result=$(grep "Failed: [1-9]" conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml | wc -l)
         result=0
         if [ $result -eq 0 ]; then
           echo "Coformance Tests Passed"          
-          cp conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml ../../kubvernor/conformance/          
+          cp conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml ../conformance/          
         else
           echo "Coformance Tests Failed"
           echo "::error Conformance tests failed"
