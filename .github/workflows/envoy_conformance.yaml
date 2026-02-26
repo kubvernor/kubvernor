@@ -16,7 +16,7 @@ jobs:
     steps:
     - uses: actions/checkout@v6
       name: Checkout repo
-    - uses: .github/workflows/conformance_workflow
+    - uses: .github/workflows/conformance_workflow/action.yml
       name: Conformance Workflow
       with:
         conformance_test_name: envoy
