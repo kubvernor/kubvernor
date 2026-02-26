@@ -1,20 +1,21 @@
 name: Conformance Workflow
+
 on:
   workflow_call:
     inputs:
-      test_name:
+      conformance_test_name:
         required: true
         type: string
-      repo:
+      confromance_repo:
         required: true
         type: string
-      tag:
+      conformance_tag:
         required: true
         type: string
-      script:
+      conformance_script:
         required: true
         type: string
-      report_name:
+      confromance_report_name:
         required: true
         type: string
 permissions:
@@ -23,10 +24,8 @@ permissions:
   pull-requests: write  
 jobs:
   conformance:    
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest   
     steps:
-    - uses: actions/checkout@v6
-      name: Checkout repo      
     - name: Install Kind      
       run: |
         curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
@@ -39,16 +38,16 @@ jobs:
         sleep 10
     - name: Checkout Gateway API Conformance  
       run: |            
-        git clone --depth 1 --branch ${{inputs.tag}} ${{inputs.repo}} test_directory
+        git clone --depth 1 --branch ${{inputs.conformance_tag}} ${{inputs.confromance_repo}} test_directory
     - name: Run Gateway API Conformance  
       run: |                    
         cd test_directory
-        ./${{inputs.script}}
-        result=$(grep "Failed: [1-9]" conformance/${{inputs.report_name}} | wc -l)
+        ./${{inputs.conformance_script}}
+        result=$(grep "Failed: [1-9]" conformance/${{inputs.confromance_report_name}} | wc -l)
         result=0
         if [ $result -eq 0 ]; then
           echo "Coformance Tests Passed"          
-          cp conformance/${{inputs.report_name}} ../conformance/          
+          cp conformance/${{inputs.confromance_report_name}} ../conformance/          
         else
           echo "Coformance Tests Failed"
           echo "::error Conformance tests failed"
