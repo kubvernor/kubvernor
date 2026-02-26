@@ -24,8 +24,10 @@ permissions:
   pull-requests: write  
 jobs:
   conformance:    
-    runs-on: ubuntu-latest   
+    runs-on: ubuntu-latest
     steps:
+    - uses: actions/checkout@v6
+      name: Checkout repo      
     - name: Install Kind      
       run: |
         curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
