@@ -11,17 +11,27 @@ permissions:
   pull-requests: write
   
 jobs:
-  build:    
-    runs-on: ubuntu-latest      
-    steps:
-    - uses: actions/checkout@v6
-      name: Checkout repo
-    - uses: ./.github/workflows/conformance_workflow
-      name: Conformance Workflow
-      with:
-        conformance_test_name: envoy
-        conformance_repo: https://github.com/kubernetes-sigs/gateway-api.git
-        conformance_tag: v1.4.0
-        conformance_script: "../scripts/run_conformance.sh"
-        confromance_report_name: kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
+  conformance-test:
+    uses: ./.github/workflows/conformance_workflow.yaml
+    name: Conformance Workflow
+    with:
+      conformance_test_name: envoy
+      conformance_repo: https://github.com/kubernetes-sigs/gateway-api.git
+      conformance_tag: v1.4.0
+      conformance_script: "../scripts/run_conformance.sh"
+      confromance_report_name: kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
+      
+  # build:    
+  #   runs-on: ubuntu-latest      
+  #   steps:
+  #   - uses: actions/checkout@v6
+  #     name: Checkout repo
+  #   - uses: ./.github/workflows/conformance_workflow
+  #     name: Conformance Workflow
+  #     with:
+  #       conformance_test_name: envoy
+  #       conformance_repo: https://github.com/kubernetes-sigs/gateway-api.git
+  #       conformance_tag: v1.4.0
+  #       conformance_script: "../scripts/run_conformance.sh"
+  #       confromance_report_name: kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
         
