@@ -3,19 +3,19 @@ name: Conformance Workflow
 on:
   workflow_call:
     inputs:
-      conformance_test_name:
+      test_name:
         required: true
         type: string
-      confromance_repo:
+      repo:
         required: true
         type: string
-      conformance_tag:
+      tag:
         required: true
         type: string
-      conformance_script:
+      script:
         required: true
         type: string
-      confromance_report_name:
+      report_name:
         required: true
         type: string
 permissions:
@@ -38,16 +38,16 @@ jobs:
         sleep 10
     - name: Checkout Gateway API Conformance  
       run: |            
-        git clone --depth 1 --branch ${{inputs.conformance_tag}} ${{inputs.confromance_repo}} test_directory
+        git clone --depth 1 --branch ${{inputs.tag}} ${{inputs.repo}} test_directory
     - name: Run Gateway API Conformance  
       run: |                    
         cd test_directory
-        ./${{inputs.conformance_script}}
-        result=$(grep "Failed: [1-9]" conformance/${{inputs.confromance_report_name}} | wc -l)
+        ./${{inputs.script}}
+        result=$(grep "Failed: [1-9]" conformance/${{inputs.report_name}} | wc -l)
         result=0
         if [ $result -eq 0 ]; then
           echo "Coformance Tests Passed"          
-          cp conformance/${{inputs.confromance_report_name}} ../conformance/          
+          cp conformance/${{inputs.report_name}} ../conformance/          
         else
           echo "Coformance Tests Failed"
           echo "::error Conformance tests failed"
