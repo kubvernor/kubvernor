@@ -1,23 +1,31 @@
-name: Conformance Testing with Envoy
+name: Conformance Workflow
 
-on:  
-  workflow_run:
-    workflows: [Docker Image CI]
-    types:
-      - completed    
-env:
-  IMAGE_NAME: kubvernor
-  VERSION: 0.2.0
+on:
+  workflow_call:
+    inputs:
+      conformance_test_name:
+        required: true
+        type: string
+      confromance_repo:
+        required: true
+        type: string
+      conformance_tag:
+        required: true
+        type: string
+      conformance_script:
+        required: true
+        type: string
+      confromance_report_name:
+        required: true
+        type: string
 permissions:
   packages: write
   contents: write
   pull-requests: write  
 jobs:
-  build:    
+  conformance:    
     runs-on: ubuntu-latest   
     steps:
-    - uses: actions/checkout@v6
-      name: Checkout repo
     - name: Install Kind      
       run: |
         curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
@@ -30,16 +38,16 @@ jobs:
         sleep 10
     - name: Checkout Gateway API Conformance  
       run: |            
-        git clone --depth 1 --branch v1.4.0 https://github.com/kubernetes-sigs/gateway-api.git
+        git clone --depth 1 --branch ${{inputs.conformance_tag}} ${{inputs.confromance_repo}} test_directory
     - name: Run Gateway API Conformance  
       run: |                    
-        cd gateway-api
-        ../scripts/run_conformance.sh
-        result=$(grep "Failed: [1-9]" conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml | wc -l)
+        cd test_directory
+        ./${{inputs.conformance_script}}
+        result=$(grep "Failed: [1-9]" conformance/${{inputs.confromance_report_name}} | wc -l)
         result=0
         if [ $result -eq 0 ]; then
           echo "Coformance Tests Passed"          
-          cp conformance/kubvernor-gateway-conformance-report-1.4.0-envoy.yaml ../conformance/          
+          cp conformance/${{inputs.confromance_report_name}} ../conformance/          
         else
           echo "Coformance Tests Failed"
           echo "::error Conformance tests failed"
@@ -47,14 +55,14 @@ jobs:
     - name: Test Cleanup
       run : |
         ./scripts/clear_kind.sh
-        rm -rf gateway-api
+        rm -rf test_directory
         rm -rf ./kind
     - name: Create Pull Request
       uses: peter-evans/create-pull-request@v8.1.0      
       with:
-        commit-message: Envoy Conformance Tests Result
-        branch: gateway_envoy_conformance_test
-        title: 'Envoy Conformance Tests Result'
+        commit-message: '${{inputs.conformance_test_name}} Conformance Tests Result'
+        branch: '${{inputs.conformance_test_name}}_envoy_conformance_test'
+        title: '${{inputs.conformance_test_name}} Conformance Tests Result'
         add-paths: |
             conformance/*.yaml            
         

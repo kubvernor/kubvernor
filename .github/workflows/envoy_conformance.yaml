@@ -1,0 +1,22 @@
+name: Conformance Testing with Envoy 2
+on:
+  push:
+    branches: [ "dawid.nowak/git_action_conformance_testing_2" ]       
+env:
+  IMAGE_NAME: kubvernor
+  VERSION: 0.2.0
+permissions:
+  packages: write
+  contents: write
+  pull-requests: write  
+jobs:
+  build:    
+    runs-on: ubuntu-latest   
+    steps:
+    - uses: ./.github/workflows/conformance_workflow.yaml
+      with:
+        conformance_test_name: envoy
+        conformance_repo: https://github.com/kubernetes-sigs/gateway-api.git
+        conformance_tag: v1.4.0
+        conformance_script: "../scripts/run_conformance.sh"
+        confromance_report_name: kubvernor-gateway-conformance-report-1.4.0-envoy.yaml        
