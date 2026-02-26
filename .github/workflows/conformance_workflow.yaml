@@ -62,7 +62,7 @@ jobs:
       uses: peter-evans/create-pull-request@v8.1.0      
       with:
         commit-message: '${{inputs.test_name}} Conformance Tests Result'
-        branch: '${{inputs.test_name}}_envoy_conformance_test'
+        branch: 'actionbot/${{inputs.test_name}}_envoy_conformance_test'
         title: '${{inputs.test_name}} Conformance Tests Result'
         add-paths: |
             conformance/*.yaml            
