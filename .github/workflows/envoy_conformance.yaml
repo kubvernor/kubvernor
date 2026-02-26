@@ -1,7 +1,11 @@
 name: Gateway API Conformance Testing 
 on:
   push:
-    branches: [ "dawid.nowak/git_action_conformance_testing_2" ]       
+    branches: [ "dawid.nowak/git_action_conformance_testing_2" ]    
+  workflow_run:
+    workflows: [Docker Image CI]
+    types:
+      - completed    
 env:
   IMAGE_NAME: kubvernor
   VERSION: 0.2.0
@@ -24,11 +28,11 @@ jobs:
     uses: ./.github/workflows/conformance_workflow.yaml
     name: Conformance Workflow
     with:
-      test_name: Orion
+      test_name: OrionProxy
       repo: https://github.com/kubernetes-sigs/gateway-api.git
       tag: v1.4.0
-      script: "../scripts/run_conformance_orion.sh"
-      report_name: kubvernor-gateway-conformance-report-1.4.0-orion.yaml
+      script: "../scripts/run_conformance_orionproxy.sh"
+      report_name: kubvernor-gateway-conformance-report-1.4.0-orionproxy.yaml
   conformance-test-agentgateway:
     uses: ./.github/workflows/conformance_workflow.yaml
     name: Conformance Workflow
@@ -38,18 +42,4 @@ jobs:
       tag: v1.4.0
       script: "../scripts/run_conformance_agentgateway.sh"
       report_name: kubvernor-gateway-conformance-report-1.4.0-agentgateway.yaml            
-      
-  # build:    
-  #   runs-on: ubuntu-latest      
-  #   steps:
-  #   - uses: actions/checkout@v6
-  #     name: Checkout repo
-  #   - uses: ./.github/workflows/conformance_workflow
-  #     name: Conformance Workflow
-  #     with:
-  #       conformance_test_name: envoy
-  #       conformance_repo: https://github.com/kubernetes-sigs/gateway-api.git
-  #       conformance_tag: v1.4.0
-  #       conformance_script: "../scripts/run_conformance.sh"
-  #       confromance_report_name: kubvernor-gateway-conformance-report-1.4.0-envoy.yaml
         
