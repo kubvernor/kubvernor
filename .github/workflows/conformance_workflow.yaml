@@ -1,5 +1,4 @@
 name: Conformance Workflow
-
 on:
   workflow_call:
     inputs:
