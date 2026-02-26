@@ -1,4 +1,4 @@
-name: Gateway API Conformance Testing 
+name: Gateway API Conformance Testing
 on:
   # push:
   #   branches: [ "dawid.nowak/git_action_conformance_testing_2" ]    
