@@ -2,6 +2,9 @@ name: Conformance Workflow
 on:
   workflow_call:
     inputs:
+      commit_messages:
+        required: true
+        type: string
       test_name:
         required: true
         type: string
@@ -61,7 +64,7 @@ jobs:
     - name: Create Pull Request
       uses: peter-evans/create-pull-request@v8.1.0      
       with:
-        commit-message: '${{inputs.test_name}} Conformance Tests Result'
+        commit-message: '${{inputs.commit_message}}'
         branch: 'actionbot/${{inputs.test_name}}_envoy_conformance_test'
         title: '${{inputs.test_name}} Conformance Tests Result'
         base: main

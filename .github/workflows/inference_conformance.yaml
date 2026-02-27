@@ -19,7 +19,8 @@ jobs:
     uses: ./.github/workflows/conformance_workflow.yaml
     name: Conformance Workflow
     with:
-      test_name: Envoy Inference
+      commit_message: Envoy Gateway API Inference Extension Conformance Testing Result
+      test_name: Envoy
       repo: https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
       tag: v1.1.0
       script: "../scripts/run_inference_conformance.sh"
@@ -28,7 +29,8 @@ jobs:
     uses: ./.github/workflows/conformance_workflow.yaml
     name: Conformance Workflow
     with:
-      test_name: OrionProxy Inference
+      commit_message: OrionProxy Gateway API Inference Extension Conformance Testing Result
+      test_name: OrionProxy
       repo: https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
       tag: v1.1.0
       script: "../scripts/run_inference_conformance_orionproxy.sh"
@@ -37,7 +39,8 @@ jobs:
     uses: ./.github/workflows/conformance_workflow.yaml
     name: Conformance Workflow
     with:
-      test_name: Agentgateway Inference
+      commit_message: Agentgateway Gateway API Inference Extension Conformance Testing Result
+      test_name: Agentgateway
       repo: https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
       tag: v1.1.0
       script: "../scripts/run_inference_conformance_agentgateway.sh"
