@@ -94,10 +94,10 @@ impl GatewayProcessedHandler<'_> {
         let (attached_routes, unresolved_routes) = self.effective_gateway.routes();
         let attached_routes: BTreeSet<&Route> = attached_routes.into_iter().filter(|r| only_http_routes(r)).collect();
         let unresolved_routes: BTreeSet<&Route> = unresolved_routes.into_iter().filter(|r| only_http_routes(r)).collect();
-
-        let routes_with_no_hostnames = self.effective_gateway.orphaned_routes();
-        debug!(target: TARGET,"HTTP Updating attached routes {attached_routes:?}");
         let gateway_id = &self.effective_gateway.key();
+        let routes_with_no_hostnames = self.effective_gateway.orphaned_routes();
+        debug!(target: TARGET,"HTTP Updating attached routes {gateway_id} {:?}", attached_routes.iter().map(|r| r.resource_key()));
+
         for attached_route in attached_routes {
             let updated_route = self.update_http_attached_route_parents(attached_route, gateway_id);
             if let Some(route) = updated_route {
@@ -123,7 +123,7 @@ impl GatewayProcessedHandler<'_> {
                 }
             }
         }
-        debug!(target: TARGET,"HTTP Updating unresolved routes {unresolved_routes:?}");
+        debug!(target: TARGET,"HTTP Updating unresolved routes {gateway_id} {:?}",unresolved_routes.iter().map(|r| r.resource_key()));
         for unresolve_route in unresolved_routes {
             let updated_route = self.update_http_unresolved_route_parents(unresolve_route, gateway_id);
             if let Some(route) = updated_route {
@@ -150,7 +150,7 @@ impl GatewayProcessedHandler<'_> {
                 }
             }
         }
-        debug!(target: TARGET,"HTTP Updating routes with no hostnames  {routes_with_no_hostnames:?}");
+        debug!(target: TARGET,"HTTP Updating routes with no hostnames {gateway_id} {:?}",routes_with_no_hostnames.iter().map(Route::resource_key));
         for route_with_no_hostname in self.effective_gateway.orphaned_routes() {
             let updated_route = self.update_http_non_attached_route_parents(route_with_no_hostname, gateway_id);
             if let Some(route) = updated_route {
@@ -184,9 +184,10 @@ impl GatewayProcessedHandler<'_> {
         let attached_routes: BTreeSet<&Route> = attached_routes.into_iter().filter(|r| only_grpc_routes(r)).collect();
         let unresolved_routes: BTreeSet<&Route> = unresolved_routes.into_iter().filter(|r| only_grpc_routes(r)).collect();
 
-        let routes_with_no_hostnames = self.effective_gateway.orphaned_routes();
-        debug!(target: TARGET,"GRPC Updating attached routes {attached_routes:?}");
         let gateway_id = &self.effective_gateway.key();
+        let routes_with_no_hostnames = self.effective_gateway.orphaned_routes();
+        debug!(target: TARGET,"GRPC Updating attached routes {gateway_id} {:?}",attached_routes.iter().map(|r| r.resource_key()));
+
         for attached_route in attached_routes {
             let updated_route = self.update_grpc_attached_route_parents(attached_route, gateway_id);
             if let Some(route) = updated_route {
@@ -212,7 +213,7 @@ impl GatewayProcessedHandler<'_> {
                 }
             }
         }
-        debug!(target: TARGET,"GRPC Updating unresolved routes  {unresolved_routes:?}");
+        debug!(target: TARGET,"GRPC Updating unresolved routes {gateway_id} {:?}",unresolved_routes.iter().map(|r| r.resource_key()));
         for unresolve_route in unresolved_routes {
             let updated_route = self.update_grpc_unresolved_route_parents(unresolve_route, gateway_id);
             if let Some(route) = updated_route {
@@ -239,7 +240,7 @@ impl GatewayProcessedHandler<'_> {
                 }
             }
         }
-        debug!(target: TARGET,"GRPC Updating routes with no hostnames  {routes_with_no_hostnames:?}");
+        debug!(target: TARGET,"GRPC Updating routes with no hostnames {gateway_id} {:?}",routes_with_no_hostnames.iter().map(Route::resource_key));
         for route_with_no_hostname in self.effective_gateway.orphaned_routes() {
             let updated_route = self.update_grpc_non_attached_route_parents(route_with_no_hostname, gateway_id);
             if let Some(route) = updated_route {
