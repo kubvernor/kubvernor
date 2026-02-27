@@ -1,0 +1,45 @@
+name: Gateway API Inference Extension Conformance Testing 
+on:
+  # push:
+  #   branches: [ "dawid.nowak/git_action_conformance_testing_2" ]    
+  workflow_run:
+    workflows: [Gateway API Conformance Testing]
+    types:
+      - completed    
+env:
+  IMAGE_NAME: kubvernor
+  VERSION: 0.2.0
+permissions:
+  packages: write
+  contents: write
+  pull-requests: write
+  
+jobs:
+  inference-conformance-test-envoy:
+    uses: ./.github/workflows/conformance_workflow.yaml
+    name: Conformance Workflow
+    with:
+      test_name: Envoy Inference
+      repo: https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
+      tag: v1.1.0
+      script: "../scripts/run_inference_conformance.sh"
+      report_name: kubvernor-inference-conformance-report-1.1.0-envoy.yaml
+  conformance-test-orion:
+    uses: ./.github/workflows/conformance_workflow.yaml
+    name: Conformance Workflow
+    with:
+      test_name: OrionProxy Inference
+      repo: https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
+      tag: v1.1.0
+      script: "../scripts/run_inference_conformance_orionproxy.sh"
+      report_name: kubvernor-inference-conformance-report-1.1.0-orionproxy.yaml
+  conformance-test-agentgateway:
+    uses: ./.github/workflows/conformance_workflow.yaml
+    name: Conformance Workflow
+    with:
+      test_name: Agentgateway Inference
+      repo: https://github.com/kubernetes-sigs/gateway-api-inference-extension.git
+      tag: v1.1.0
+      script: "../scripts/run_inference_conformance_agentgateway.sh"
+      report_name: kubvernor-inference-conformance-report-1.1.0-agentgateway.yaml            
+        
