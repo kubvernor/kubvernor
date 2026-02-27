@@ -2,7 +2,7 @@ name: Conformance Workflow
 on:
   workflow_call:
     inputs:
-      commit_messages:
+      commit_message:
         required: true
         type: string
       test_name:
