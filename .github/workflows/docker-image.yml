@@ -18,15 +18,18 @@ jobs:
     steps:    
     - uses: actions/checkout@v5
     - name: Set version
+      id: set_version
       run: |
-        KUBVERNOR_VERSION=$(grep -m 1 '^version' Cargo.toml | sed 's/version\s*=\s*"\(.*\)"/\1/')        
-        echo $KUBVERNOR_VERSION
-    - name: Build the Docker image
+        KUBVERNOR_VERSION=$(grep -m 1 '^version' Cargo.toml | sed 's/version\s*=\s*"\(.*\)"/\1/')                
+        echo "KUBVERNOR_VERSION=$KUBVERNOR_VERSION" >> $GITHUB_ENV
+    - name: Show version
+      run: echo $KUBVERNOR_VERSION
+    - name: Build the Docker image      
       run: docker build . --file docker/Dockerfile --tag $IMAGE_NAME:latest
     - name: Log in to registry
       run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
     - name: Push image
-      run: |
+      run: |        
         IMAGE_ID=ghcr.io/${{ github.repository_owner }}/$IMAGE_NAME
         docker tag $IMAGE_NAME:latest $IMAGE_ID:$KUBVERNOR_VERSION
         docker push $IMAGE_ID:$KUBVERNOR_VERSION
