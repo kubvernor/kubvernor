@@ -1471,7 +1471,7 @@ dependencies = [
 
 [[package]]
 name = "kubvernor"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "clap_derive",
@@ -1496,7 +1496,7 @@ dependencies = [
 
 [[package]]
 name = "kubvernor-admin"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "axum",
  "kubvernor-common",
@@ -1527,7 +1527,7 @@ dependencies = [
 
 [[package]]
 name = "kubvernor-common"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "gateway-api",
  "gateway-api-inference-extension",
@@ -1540,7 +1540,7 @@ dependencies = [
 
 [[package]]
 name = "kubvernor-controller"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "agentgateway-api-rs",
  "async-trait",
@@ -1577,7 +1577,7 @@ dependencies = [
 
 [[package]]
 name = "kubvernor-state"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "gateway-api",
  "gateway-api-inference-extension",
