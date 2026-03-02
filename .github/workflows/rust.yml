@@ -17,6 +17,7 @@ jobs:
           rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
       - run: |
           echo $GITHUB_WORKSPACE
+          KUBVERNOR_VERSION=$(grep -m 1 '^version' Cargo.toml | sed 's/version\s*=\s*"\(.*\)"/\1/')
       - uses: actions/checkout@v6
       - name: Check format
         run: cargo +nightly fmt --check
