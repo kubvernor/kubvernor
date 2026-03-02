@@ -20,6 +20,7 @@ jobs:
     - name: Set version
       run: |
         KUBVERNOR_VERSION=$(grep -m 1 '^version' Cargo.toml | sed 's/version\s*=\s*"\(.*\)"/\1/')        
+        echo $KUBVERNOR_VERSION
     - name: Build the Docker image
       run: docker build . --file docker/Dockerfile --tag $IMAGE_NAME:latest
     - name: Log in to registry
