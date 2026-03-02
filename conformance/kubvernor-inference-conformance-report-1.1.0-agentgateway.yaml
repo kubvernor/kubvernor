@@ -1,0 +1,26 @@
+GatewayAPIInferenceExtensionVersion: v1.1.0
+apiVersion: gateway.networking.k8s.io/v1
+date: "2026-02-27T18:35:19Z"
+gatewayAPIChannel: standard
+gatewayAPIVersion: v1.4.0
+implementation:
+  contact:
+  - https://github.com/kubvernor/kubvernor/issues
+  organization: kubvernor
+  project: kubvernor
+  url: github.com/kubvernor/kubvernor
+  version: 0.2.0
+kind: ConformanceReport
+mode: default
+profiles:
+- core:
+    result: partial
+    skippedTests:
+    - GatewayWeightedAcrossTwoInferencePools
+    - InferencePoolResolvedRefsCondition
+    statistics:
+      Failed: 0
+      Passed: 8
+      Skipped: 2
+  name: Gateway
+  summary: Core tests partially succeeded with 2 test skips.
