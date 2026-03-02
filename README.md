@@ -20,6 +20,10 @@ Objectives:
 
 ![Diaagram](assets/kubvernor.architecture.png)
 
+
+## Gateway API Conformance Reports
+[Conformance reports](./conformance)
+
 ## Prerequisites
 
 0. Install Rust, Docker and Kind, Helm ...
@@ -76,8 +80,3 @@ curl -vki http://GATEWAY_ADDRESS:1080/v1/chat/completions   --header 'Host: www.
 ```bash
 scripts/clear_kind.sh
 ```
-
-
-## Gateway API Conformance Reports
-[1.2.1](./conformance/kubvernor-conformance-output-1.2.1.yaml)
-[1.2.0](./conformance/kubvernor-conformance-output-1.2.0.yaml)
