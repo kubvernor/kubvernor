@@ -1,11 +1,11 @@
 name: Gateway API Conformance Testing
 on:
-  # push:
-  #   branches: [ "dawid.nowak/git_action_conformance_testing_2" ]    
-  workflow_run:
-    workflows: [Docker Image CI]
-    types:
-      - completed    
+  push:
+    tags: [v0.2.0]
+  # workflow_run:
+  #   workflows: [Docker Image CI]
+  #   types:
+  #     - completed    
 env:
   IMAGE_NAME: kubvernor
   VERSION: 0.2.0
