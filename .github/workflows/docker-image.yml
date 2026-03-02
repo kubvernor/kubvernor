@@ -19,7 +19,7 @@ jobs:
     - uses: actions/checkout@v5
     - name: Set version
       run: |
-        KUBVERNOR_VERSION=$(grep -m 1 '^version' "$CARGO_FILE" | sed 's/version\s*=\s*"\(.*\)"/\1/')
+        KUBVERNOR_VERSION=$(grep -m 1 '^version' Cargo.toml | sed 's/version\s*=\s*"\(.*\)"/\1/')
         
     - name: Build the Docker image
       run: docker build . --file docker/Dockerfile --tag $IMAGE_NAME:latest
