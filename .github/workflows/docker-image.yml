@@ -2,8 +2,9 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "main" ]  
-
+#   branches: [ "main" ]
+    tags: ["2.0.0"]
+    
 env:
   IMAGE_NAME: kubvernor
   VERSION: 0.2.0
