@@ -18,6 +18,7 @@ jobs:
       - run: |
           echo $GITHUB_WORKSPACE
           KUBVERNOR_VERSION=$(grep -m 1 '^version' Cargo.toml | sed 's/version\s*=\s*"\(.*\)"/\1/')
+          echo "KUBVERNOR_VERSION=$KUBVERNOR_VERSION" >> $GITHUB_ENV
       - uses: actions/checkout@v6
       - name: Check format
         run: cargo +nightly fmt --check
@@ -36,8 +37,5 @@ jobs:
           prerelease: true
           draft: false
           files: |
-            ${{ github.workspace }}/releases/0.1.0
+            ${{ github.workspace }}/releases/$KUBVERNOR_VERSION
             ${{ github.workspace }}/target/release/kubvernor
-
-#    - name: Run tests
-#      run: cargo test --verbose
