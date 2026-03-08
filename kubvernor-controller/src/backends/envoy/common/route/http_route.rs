@@ -9,8 +9,8 @@
 
 use std::cmp;
 
-use gateway_api::{
-    common::{HttpRouteUrlRewrite, RequestMirror, RequestRedirect},
+use gateway_api_with_extensions::{
+    common::{FilterRequestRedirect, HttpRouteUrlRewrite, RequestMirror},
     httproutes::RouteMatch,
 };
 use log::debug;
@@ -31,7 +31,7 @@ pub struct HTTPEffectiveRoutingRule {
     pub request_headers: FilterHeaders,
     pub response_headers: FilterHeaders,
 
-    pub redirect_filter: Option<RequestRedirect>,
+    pub redirect_filter: Option<FilterRequestRedirect>,
     pub mirror_filter: Option<RequestMirror>,
     pub rewrite_url_filter: Option<HttpRouteUrlRewrite>,
 }

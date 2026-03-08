@@ -7,7 +7,7 @@
 //
 //
 
-use gateway_api::common::ParentReference;
+use gateway_api_with_extensions::common::ParentReference;
 use kubvernor_common::ResourceKey;
 
 pub const DEFAULT_GROUP_NAME: &str = "gateway.networking.k8s.io";

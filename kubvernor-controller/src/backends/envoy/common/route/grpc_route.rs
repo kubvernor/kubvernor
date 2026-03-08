@@ -9,7 +9,7 @@
 
 use std::cmp;
 
-use gateway_api::grpcroutes::GrpcRouteMatch;
+use gateway_api_with_extensions::grpcroutes::GrpcRouteMatch;
 use log::debug;
 
 use crate::common::{Backend, FilterHeaders};

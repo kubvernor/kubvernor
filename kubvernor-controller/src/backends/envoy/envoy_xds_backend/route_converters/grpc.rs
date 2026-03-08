@@ -21,7 +21,7 @@ use envoy_api_rs::{
     },
     google::protobuf::UInt32Value,
 };
-use gateway_api::common::{self};
+use gateway_api_with_extensions::common::{self};
 use log::warn;
 
 use super::super::super::common::GRPCEffectiveRoutingRule;

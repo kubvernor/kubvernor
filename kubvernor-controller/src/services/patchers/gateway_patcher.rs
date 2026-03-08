@@ -7,7 +7,7 @@
 //
 //
 
-use gateway_api::gateways::Gateway;
+use gateway_api_with_extensions::gateways::Gateway;
 use kube::{Api, Client};
 use tokio::sync::mpsc;
 use typed_builder::TypedBuilder;

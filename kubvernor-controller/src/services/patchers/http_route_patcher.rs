@@ -7,7 +7,7 @@
 //
 //
 
-use gateway_api::httproutes::HTTPRoute;
+use gateway_api_with_extensions::httproutes::HTTPRoute;
 use kube::{Api, Client};
 use tokio::sync::mpsc;
 use typed_builder::TypedBuilder;

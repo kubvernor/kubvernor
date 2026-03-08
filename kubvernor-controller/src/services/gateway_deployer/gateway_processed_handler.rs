@@ -9,7 +9,7 @@
 
 use std::collections::BTreeSet;
 
-use gateway_api::{
+use gateway_api_with_extensions::{
     common::{ParentReference, ParentRouteStatus, RouteStatus},
     constants,
     gateways::{Gateway, GatewayStatusAddresses},
@@ -18,7 +18,7 @@ use gateway_api::{
 };
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
-    chrono::Utc,
+    jiff::Timestamp,
 };
 use kube::Resource;
 use kubvernor_common::ResourceKey;
@@ -67,14 +67,14 @@ impl GatewayProcessedHandler<'_> {
 
         conditions.retain(|f| f.type_ != constants::GatewayConditionType::Ready.to_string());
         for f in &mut conditions {
-            f.last_transition_time = Time(Utc::now());
+            f.last_transition_time = Time(Timestamp::now());
             f.observed_generation = observed_generation;
             f.status = String::from("True");
             f.reason = constants::GatewayConditionReason::Ready.to_string();
         }
 
         let new_condition = Condition {
-            last_transition_time: Time(Utc::now()),
+            last_transition_time: Time(Timestamp::now()),
             message: GATEWAY_CONDITION_MESSAGE.to_owned(),
             observed_generation,
             reason: constants::GatewayConditionReason::Ready.to_string(),
@@ -275,7 +275,7 @@ impl GatewayProcessedHandler<'_> {
             gateway_id,
             vec![
                 Condition {
-                    last_transition_time: Time(Utc::now()),
+                    last_transition_time: Time(Timestamp::now()),
                     message: ROUTE_CONDITION_MESSAGE.to_owned(),
                     observed_generation: None,
                     reason: "Accepted".to_owned(),
@@ -283,7 +283,7 @@ impl GatewayProcessedHandler<'_> {
                     type_: "Accepted".to_owned(),
                 },
                 Condition {
-                    last_transition_time: Time(Utc::now()),
+                    last_transition_time: Time(Timestamp::now()),
                     message: ROUTE_CONDITION_MESSAGE.to_owned(),
                     observed_generation: None,
                     reason: "ResolvedRefs".to_owned(),
@@ -300,7 +300,7 @@ impl GatewayProcessedHandler<'_> {
             gateway_id,
             vec![
                 Condition {
-                    last_transition_time: Time(Utc::now()),
+                    last_transition_time: Time(Timestamp::now()),
                     message: ROUTE_CONDITION_MESSAGE.to_owned(),
                     observed_generation: None,
                     reason: "Accepted".to_owned(),
@@ -308,7 +308,7 @@ impl GatewayProcessedHandler<'_> {
                     type_: "Accepted".to_owned(),
                 },
                 Condition {
-                    last_transition_time: Time(Utc::now()),
+                    last_transition_time: Time(Timestamp::now()),
                     message: ROUTE_CONDITION_MESSAGE.to_owned(),
                     observed_generation: None,
                     reason: "ResolvedRefs".to_owned(),
@@ -324,7 +324,7 @@ impl GatewayProcessedHandler<'_> {
         info!(target: TARGET,"Unresolved route resolution status  {key:?}  {:?}", rejected_route.resolution_status());
         let conditions = match rejected_route.resolution_status() {
             ResolutionStatus::Resolved => vec![Condition {
-                last_transition_time: Time(Utc::now()),
+                last_transition_time: Time(Timestamp::now()),
                 message: ROUTE_CONDITION_MESSAGE.to_owned(),
                 observed_generation: None,
                 reason: constants::ListenerConditionReason::Invalid.to_string(),
@@ -336,7 +336,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::InvalidBackend => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "InvalidKind".to_owned(),
@@ -344,7 +344,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Programmed.to_string(),
@@ -352,7 +352,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Programmed.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Accepted.to_string(),
@@ -364,7 +364,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::BackendNotFound => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "BackendNotFound".to_owned(),
@@ -372,7 +372,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Programmed.to_string(),
@@ -380,7 +380,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Programmed.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Accepted.to_string(),
@@ -392,7 +392,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::RefNotPermitted => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "RefNotPermitted".to_owned(),
@@ -400,7 +400,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Accepted.to_string(),
@@ -412,7 +412,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::NoMatchingParent => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "NoMatchingParent".to_owned(),
@@ -420,7 +420,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "NoMatchingParent".to_owned(),
@@ -432,7 +432,7 @@ impl GatewayProcessedHandler<'_> {
                 _ => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::ResolvedRefs.to_string(),
@@ -440,7 +440,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Programmed.to_string(),
@@ -459,7 +459,7 @@ impl GatewayProcessedHandler<'_> {
         info!(target: TARGET,"Unresolved route resolution status  {key:?}  {:?}", rejected_route.resolution_status());
         let conditions = match rejected_route.resolution_status() {
             ResolutionStatus::Resolved => vec![Condition {
-                last_transition_time: Time(Utc::now()),
+                last_transition_time: Time(Timestamp::now()),
                 message: ROUTE_CONDITION_MESSAGE.to_owned(),
                 observed_generation: None,
                 reason: constants::ListenerConditionReason::Invalid.to_string(),
@@ -471,7 +471,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::InvalidBackend => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "InvalidKind".to_owned(),
@@ -479,7 +479,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Programmed.to_string(),
@@ -487,7 +487,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Programmed.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Accepted.to_string(),
@@ -499,7 +499,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::BackendNotFound => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "BackendNotFound".to_owned(),
@@ -507,7 +507,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Programmed.to_string(),
@@ -515,7 +515,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Programmed.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Accepted.to_string(),
@@ -527,7 +527,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::RefNotPermitted => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "RefNotPermitted".to_owned(),
@@ -535,7 +535,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Accepted.to_string(),
@@ -547,7 +547,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::NoMatchingParent => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "NoMatchingParent".to_owned(),
@@ -555,7 +555,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "NoMatchingParent".to_owned(),
@@ -567,7 +567,7 @@ impl GatewayProcessedHandler<'_> {
                 _ => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::ResolvedRefs.to_string(),
@@ -575,7 +575,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Programmed.to_string(),
@@ -595,7 +595,7 @@ impl GatewayProcessedHandler<'_> {
         let conditions = match non_attached_route.resolution_status() {
             ResolutionStatus::Resolved => vec![
                 Condition {
-                    last_transition_time: Time(Utc::now()),
+                    last_transition_time: Time(Timestamp::now()),
                     message: ROUTE_CONDITION_MESSAGE.to_owned(),
                     observed_generation: None,
                     reason: constants::ListenerConditionType::Accepted.to_string(),
@@ -603,7 +603,7 @@ impl GatewayProcessedHandler<'_> {
                     type_: constants::ListenerConditionType::Accepted.to_string(),
                 },
                 Condition {
-                    last_transition_time: Time(Utc::now()),
+                    last_transition_time: Time(Timestamp::now()),
                     message: ROUTE_CONDITION_MESSAGE.to_owned(),
                     observed_generation: None,
                     reason: constants::ListenerConditionType::ResolvedRefs.to_string(),
@@ -614,7 +614,7 @@ impl GatewayProcessedHandler<'_> {
 
             ResolutionStatus::NotResolved(resolution_reason) => match resolution_reason {
                 NotResolvedReason::Unknown => vec![Condition {
-                    last_transition_time: Time(Utc::now()),
+                    last_transition_time: Time(Timestamp::now()),
                     message: ROUTE_CONDITION_MESSAGE.to_owned(),
                     observed_generation: None,
                     reason: "Uknown reason".to_owned(),
@@ -625,7 +625,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::NotAllowedByListeners => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "NotAllowedByListeners".to_owned(),
@@ -633,7 +633,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionType::ResolvedRefs.to_string(),
@@ -646,7 +646,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::RefNotPermitted => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "RefNotPermitted".to_owned(),
@@ -654,7 +654,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "RefNotPermitted".to_owned(),
@@ -667,7 +667,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::NoMatchingListenerHostname => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "NoMatchingListenerHostname".to_owned(),
@@ -675,7 +675,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionType::ResolvedRefs.to_string(),
@@ -688,7 +688,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::NoMatchingParent => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "NoMatchingParent".to_owned(),
@@ -696,7 +696,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "NoMatchingParent".to_owned(),
@@ -709,7 +709,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::InvalidBackend | NotResolvedReason::BackendNotFound => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::ResolvedRefs.to_string(),
@@ -717,7 +717,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Programmed.to_string(),
@@ -737,7 +737,7 @@ impl GatewayProcessedHandler<'_> {
         let conditions = match non_attached_route.resolution_status() {
             ResolutionStatus::Resolved => vec![
                 Condition {
-                    last_transition_time: Time(Utc::now()),
+                    last_transition_time: Time(Timestamp::now()),
                     message: ROUTE_CONDITION_MESSAGE.to_owned(),
                     observed_generation: None,
                     reason: constants::ListenerConditionType::Accepted.to_string(),
@@ -745,7 +745,7 @@ impl GatewayProcessedHandler<'_> {
                     type_: constants::ListenerConditionType::Accepted.to_string(),
                 },
                 Condition {
-                    last_transition_time: Time(Utc::now()),
+                    last_transition_time: Time(Timestamp::now()),
                     message: ROUTE_CONDITION_MESSAGE.to_owned(),
                     observed_generation: None,
                     reason: constants::ListenerConditionType::ResolvedRefs.to_string(),
@@ -756,7 +756,7 @@ impl GatewayProcessedHandler<'_> {
 
             ResolutionStatus::NotResolved(resolution_reason) => match resolution_reason {
                 NotResolvedReason::Unknown => vec![Condition {
-                    last_transition_time: Time(Utc::now()),
+                    last_transition_time: Time(Timestamp::now()),
                     message: ROUTE_CONDITION_MESSAGE.to_owned(),
                     observed_generation: None,
                     reason: "Uknown reason".to_owned(),
@@ -767,7 +767,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::NotAllowedByListeners => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "NotAllowedByListeners".to_owned(),
@@ -775,7 +775,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionType::ResolvedRefs.to_string(),
@@ -788,7 +788,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::RefNotPermitted => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "RefNotPermitted".to_owned(),
@@ -796,7 +796,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "RefNotPermitted".to_owned(),
@@ -809,7 +809,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::NoMatchingListenerHostname => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "NoMatchingListenerHostname".to_owned(),
@@ -817,7 +817,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::Accepted.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionType::ResolvedRefs.to_string(),
@@ -830,7 +830,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::NoMatchingParent => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "NoMatchingParent".to_owned(),
@@ -838,7 +838,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: "NoMatchingParent".to_owned(),
@@ -851,7 +851,7 @@ impl GatewayProcessedHandler<'_> {
                 NotResolvedReason::InvalidBackend | NotResolvedReason::BackendNotFound => {
                     vec![
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::ResolvedRefs.to_string(),
@@ -859,7 +859,7 @@ impl GatewayProcessedHandler<'_> {
                             type_: constants::ListenerConditionType::ResolvedRefs.to_string(),
                         },
                         Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: ROUTE_CONDITION_MESSAGE.to_owned(),
                             observed_generation: None,
                             reason: constants::ListenerConditionReason::Programmed.to_string(),

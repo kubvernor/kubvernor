@@ -36,8 +36,11 @@ use envoy_api_rs::{
     },
     google::protobuf::BoolValue,
 };
-use gateway_api::{common::RequestRedirectScheme, httproutes};
-use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
+use gateway_api_with_extensions::{
+    common::{self, RequestRedirectScheme},
+    httproutes,
+    inferencepools::InferencePoolEndpointPickerRefFailureMode,
+};
 use kubvernor_common::ResourceKey;
 use log::{debug, info, warn};
 
@@ -236,14 +239,14 @@ impl From<HTTPEffectiveRoutingRule> for EnvoyRoute {
         let action: Action = if let Some(redirect_action) = effective_routing_rule.redirect_filter.clone().map(|f| RedirectAction {
             host_redirect: f.hostname.unwrap_or_default(),
             scheme_rewrite_specifier: f.scheme.clone().map(|s| match s {
-                gateway_api::common::RequestRedirectScheme::Http => SchemeRewriteSpecifier::SchemeRedirect("http".to_owned()),
-                gateway_api::common::RequestRedirectScheme::Https => SchemeRewriteSpecifier::HttpsRedirect(true),
+                common::RequestRedirectScheme::Http => SchemeRewriteSpecifier::SchemeRedirect("http".to_owned()),
+                common::RequestRedirectScheme::Https => SchemeRewriteSpecifier::HttpsRedirect(true),
             }),
             path_rewrite_specifier: f.path.map(|p| match p.r#type {
-                gateway_api::common::RequestOperationType::ReplaceFullPath => {
+                common::RequestOperationType::ReplaceFullPath => {
                     PathRewriteSpecifier::PathRedirect(p.replace_full_path.unwrap_or_default())
                 },
-                gateway_api::common::RequestOperationType::ReplacePrefixMatch => {
+                common::RequestOperationType::ReplacePrefixMatch => {
                     PathRewriteSpecifier::PrefixRewrite(p.replace_prefix_match.unwrap_or_default())
                 },
             }),

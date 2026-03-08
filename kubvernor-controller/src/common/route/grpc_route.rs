@@ -9,7 +9,7 @@
 
 use std::net::IpAddr;
 
-use gateway_api::{
+use gateway_api_with_extensions::{
     common::{GRPCFilterType, GrpcRouteFilter, HTTPHeader, HeaderModifier},
     grpcroutes::{GRPCRoute, GrpcRouteMatch, GrpcRouteRule},
 };

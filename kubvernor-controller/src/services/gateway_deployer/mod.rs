@@ -11,7 +11,7 @@ pub mod gateway_deployer_internal;
 pub mod gateway_processed_handler;
 use std::{collections::HashMap, sync::Arc};
 
-use gateway_api::{gatewayclasses::GatewayClass, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
+use gateway_api_with_extensions::{gatewayclasses::GatewayClass, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
 use gateway_deployer_internal::{GatewayDeployer, GatewayDeployerServiceInternal};
 pub(crate) use gateway_processed_handler::GatewayProcessedHandler;
 use kubvernor_common::GatewayImplementationType;

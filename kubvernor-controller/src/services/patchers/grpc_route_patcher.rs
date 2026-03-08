@@ -7,7 +7,7 @@
 //
 //
 
-use gateway_api::grpcroutes::GRPCRoute;
+use gateway_api_with_extensions::grpcroutes::GRPCRoute;
 use kube::{Api, Client};
 use tokio::sync::mpsc;
 use typed_builder::TypedBuilder;

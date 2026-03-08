@@ -7,8 +7,7 @@
 //
 //
 
-use gateway_api::gateways::Gateway;
-use gateway_api_inference_extension::inferencepools::InferencePool;
+use gateway_api_with_extensions::{gateways::Gateway, inferencepools::InferencePool};
 use kube::Client;
 use kubvernor_state::State;
 use log::{info, warn};

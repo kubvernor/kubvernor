@@ -9,7 +9,7 @@
 
 use std::collections::BTreeSet;
 
-use gateway_api::httproutes::{HTTPRoute, HttpRouteRule, RouteMatch};
+use gateway_api_with_extensions::httproutes::{HTTPRoute, HttpRouteRule, RouteMatch};
 
 use crate::common::ListenerCondition;
 

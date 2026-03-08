@@ -22,11 +22,11 @@ use agentgateway_api_rs::{
     },
     istio::workload::{LoadBalancing, NetworkAddress, Port, Service},
 };
-use gateway_api::{
-    common::{HTTPFilterType, HTTPHeader},
-    httproutes::HttpRouteFilter,
+use gateway_api_with_extensions::{
+    common::{self, HTTPFilterType, HTTPHeader},
+    httproutes::{self, HttpRouteFilter},
+    inferencepools::InferencePoolEndpointPickerRefFailureMode,
 };
-use gateway_api_inference_extension::inferencepools::InferencePoolEndpointPickerRefFailureMode;
 use kubvernor_common::ResourceKey;
 use log::{debug, info, warn};
 
@@ -34,11 +34,14 @@ const TARGET: &str = super::TARGET;
 
 use crate::{
     backends::agentgateway::SecureListenerWrapper,
-    common::{self, Backend, BackendType, DEFAULT_NAMESPACE_NAME, HTTPRoutingRule, InferencePoolTypeConfig, KeyData, ProtocolType},
+    common::{
+        Backend, BackendType, DEFAULT_NAMESPACE_NAME, Gateway, HTTPRoutingRule, InferencePoolTypeConfig, KeyData, ProtocolType, RouteType,
+        TlsType,
+    },
 };
 
 pub(crate) struct ResourceGenerator<'a> {
-    effective_gateway: &'a common::Gateway,
+    effective_gateway: &'a Gateway,
 }
 
 impl From<ProtocolType> for i32 {
@@ -74,7 +77,7 @@ impl From<KeyData> for TlsConfig {
 }
 
 impl<'a> ResourceGenerator<'a> {
-    pub fn new(effective_gateway: &'a common::Gateway) -> Self {
+    pub fn new(effective_gateway: &'a Gateway) -> Self {
         Self { effective_gateway }
     }
 
@@ -110,11 +113,11 @@ impl<'a> ResourceGenerator<'a> {
                 protocol: listener.protocol().into(),
                 tls: match listener.protocol() {
                     ProtocolType::Https | ProtocolType::Tls => listener.config().tls_type.as_ref().and_then(|tls_type| match tls_type {
-                        common::TlsType::Terminate(certificates) => {
+                        TlsType::Terminate(certificates) => {
                             let valid_cert: Vec<TlsConfig> = certificates
                                 .iter()
                                 .filter_map(|c| {
-                                    if let common::Certificate::ResolvedSameSpace(_, data) = c {
+                                    if let crate::common::Certificate::ResolvedSameSpace(_, data) = c {
                                         Some(TlsConfig::from(data.clone()))
                                     } else {
                                         None
@@ -123,7 +126,7 @@ impl<'a> ResourceGenerator<'a> {
                                 .collect();
                             valid_cert.first().cloned()
                         },
-                        common::TlsType::Passthrough => None,
+                        crate::common::TlsType::Passthrough => None,
                     }),
 
                     _ => None,
@@ -157,8 +160,8 @@ impl<'a> ResourceGenerator<'a> {
                 let routes = resolved.into_iter().chain(unresolved);
                 routes
                     .filter_map(|route| match route.route_type() {
-                        common::RouteType::Http(configuration) => Some((route, &configuration.routing_rules)),
-                        common::RouteType::Grpc(_) => None,
+                        RouteType::Http(configuration) => Some((route, &configuration.routing_rules)),
+                        RouteType::Grpc(_) => None,
                     })
                     .flat_map(|(route, routing_rules)| {
                         routing_rules
@@ -230,8 +233,8 @@ impl<'a> ResourceGenerator<'a> {
                                 Route {
                                     name: Some(RouteName {
                                         kind: match route.route_type() {
-                                            common::RouteType::Http(_) => "HTTP".to_owned(),
-                                            common::RouteType::Grpc(_) => "GRPC".to_owned(),
+                                            RouteType::Http(_) => "HTTP".to_owned(),
+                                            RouteType::Grpc(_) => "GRPC".to_owned(),
                                         },
                                         name: routing_rule.name.clone(),
                                         namespace: route.namespace().to_owned(),
@@ -279,10 +282,10 @@ fn map_url_rewrite_filter(filter: &HttpRouteFilter) -> Option<TrafficPolicySpec>
             host: url_rewrite.hostname.clone().unwrap_or_default(),
             path: match url_rewrite.path.as_ref() {
                 Some(path) => match path.r#type {
-                    gateway_api::common::RequestOperationType::ReplaceFullPath => {
+                    common::RequestOperationType::ReplaceFullPath => {
                         Some(resource::url_rewrite::Path::Full(path.replace_full_path.clone().unwrap_or_default()))
                     },
-                    gateway_api::common::RequestOperationType::ReplacePrefixMatch => {
+                    common::RequestOperationType::ReplacePrefixMatch => {
                         Some(resource::url_rewrite::Path::Prefix(path.replace_prefix_match.clone().unwrap_or_default()))
                     },
                 },
@@ -301,27 +304,23 @@ fn map_redirect_filter(filter: &HttpRouteFilter, listener_port: u32) -> Option<T
                 .scheme
                 .as_ref()
                 .map(|s| match s {
-                    gateway_api::common::RequestRedirectScheme::Http => "HTTP".to_owned(),
-                    gateway_api::common::RequestRedirectScheme::Https => "HTTPS".to_owned(),
+                    common::RequestRedirectScheme::Http => "HTTP".to_owned(),
+                    common::RequestRedirectScheme::Https => "HTTPS".to_owned(),
                 })
                 .unwrap_or_default(),
             host: redirect_filter.hostname.clone().unwrap_or_default(),
             port: redirect_filter.port.map(|p| p as u32).map_or_else(
                 || match redirect_filter.scheme {
-                    Some(gateway_api::common::RequestRedirectScheme::Http) => 80,
-                    Some(gateway_api::common::RequestRedirectScheme::Https) => 443,
+                    Some(common::RequestRedirectScheme::Http) => 80,
+                    Some(common::RequestRedirectScheme::Https) => 443,
                     None => listener_port,
                 },
                 |p| p,
             ),
             status: redirect_filter.status_code.unwrap_or(302) as u32,
             path: redirect_filter.path.as_ref().map(|path| match path.r#type {
-                gateway_api::common::RequestOperationType::ReplaceFullPath => {
-                    Path::Full(path.replace_full_path.clone().unwrap_or_default())
-                },
-                gateway_api::common::RequestOperationType::ReplacePrefixMatch => {
-                    Path::Prefix(path.replace_prefix_match.clone().unwrap_or_default())
-                },
+                common::RequestOperationType::ReplaceFullPath => Path::Full(path.replace_full_path.clone().unwrap_or_default()),
+                common::RequestOperationType::ReplacePrefixMatch => Path::Prefix(path.replace_prefix_match.clone().unwrap_or_default()),
             }),
         })),
         ..Default::default()
@@ -405,7 +404,9 @@ fn map_response_header_modifier_filter(filter: &HttpRouteFilter) -> Option<Traff
     })
 }
 
-fn convert_route_match(route_match: &gateway_api::httproutes::RouteMatch) -> agentgateway_api_rs::agentgateway::dev::resource::RouteMatch {
+fn convert_route_match(
+    route_match: &gateway_api_with_extensions::httproutes::RouteMatch,
+) -> agentgateway_api_rs::agentgateway::dev::resource::RouteMatch {
     agentgateway_api_rs::agentgateway::dev::resource::RouteMatch {
         path: convert_path_match(route_match.path.as_ref()),
         headers: convert_headers(route_match.headers.as_ref()),
@@ -597,24 +598,22 @@ fn create_inference_policies(
     )
 }
 
-fn convert_path_match(
-    path_match: Option<&gateway_api::httproutes::PathMatch>,
-) -> Option<agentgateway_api_rs::agentgateway::dev::resource::PathMatch> {
+fn convert_path_match(path_match: Option<&httproutes::PathMatch>) -> Option<agentgateway_api_rs::agentgateway::dev::resource::PathMatch> {
     match path_match {
         Some(path_match) => {
             let match_value = path_match.value.clone().unwrap_or_default();
             match path_match.r#type {
-                Some(gateway_api::httproutes::HttpRouteRulesMatchesPathType::Exact) => {
+                Some(httproutes::HttpRouteRulesMatchesPathType::Exact) => {
                     Some(agentgateway_api_rs::agentgateway::dev::resource::PathMatch {
                         kind: Some(agentgateway_api_rs::agentgateway::dev::resource::path_match::Kind::Exact(match_value)),
                     })
                 },
-                Some(gateway_api::httproutes::HttpRouteRulesMatchesPathType::PathPrefix) => {
+                Some(httproutes::HttpRouteRulesMatchesPathType::PathPrefix) => {
                     Some(agentgateway_api_rs::agentgateway::dev::resource::PathMatch {
                         kind: Some(agentgateway_api_rs::agentgateway::dev::resource::path_match::Kind::PathPrefix(match_value)),
                     })
                 },
-                Some(gateway_api::httproutes::HttpRouteRulesMatchesPathType::RegularExpression) => {
+                Some(httproutes::HttpRouteRulesMatchesPathType::RegularExpression) => {
                     Some(agentgateway_api_rs::agentgateway::dev::resource::PathMatch {
                         kind: Some(agentgateway_api_rs::agentgateway::dev::resource::path_match::Kind::Regex(match_value)),
                     })
@@ -626,9 +625,7 @@ fn convert_path_match(
     }
 }
 
-fn convert_headers(
-    header_match: Option<&Vec<gateway_api::common::HeaderMatch>>,
-) -> Vec<agentgateway_api_rs::agentgateway::dev::resource::HeaderMatch> {
+fn convert_headers(header_match: Option<&Vec<common::HeaderMatch>>) -> Vec<agentgateway_api_rs::agentgateway::dev::resource::HeaderMatch> {
     match header_match {
         Some(header_match) => header_match
             .iter()
@@ -636,10 +633,10 @@ fn convert_headers(
             .map(|hm| agentgateway_api_rs::agentgateway::dev::resource::HeaderMatch {
                 name: hm.name,
                 value: match hm.r#type {
-                    Some(gateway_api::common::HeaderMatchType::Exact) => {
+                    Some(common::HeaderMatchType::Exact) => {
                         Some(agentgateway_api_rs::agentgateway::dev::resource::header_match::Value::Exact(hm.value))
                     },
-                    Some(gateway_api::common::HeaderMatchType::RegularExpression) => {
+                    Some(common::HeaderMatchType::RegularExpression) => {
                         Some(agentgateway_api_rs::agentgateway::dev::resource::header_match::Value::Regex(hm.value))
                     },
                     None => None,
@@ -651,14 +648,14 @@ fn convert_headers(
 }
 
 fn convert_method_match(
-    method_match: Option<&gateway_api::httproutes::HTTPMethodMatch>,
+    method_match: Option<&httproutes::HTTPMethodMatch>,
 ) -> Option<agentgateway_api_rs::agentgateway::dev::resource::MethodMatch> {
     method_match
         .map(|mm| agentgateway_api_rs::agentgateway::dev::resource::MethodMatch { exact: serde_json::to_string(&mm).unwrap_or_default() })
 }
 
 fn convert_query_params(
-    query_match: Option<&Vec<gateway_api::common::HeaderMatch>>,
+    query_match: Option<&Vec<common::HeaderMatch>>,
 ) -> Vec<agentgateway_api_rs::agentgateway::dev::resource::QueryMatch> {
     match query_match {
         Some(query_match) => query_match
@@ -667,10 +664,10 @@ fn convert_query_params(
             .map(|hm| agentgateway_api_rs::agentgateway::dev::resource::QueryMatch {
                 name: hm.name,
                 value: match hm.r#type {
-                    Some(gateway_api::common::HeaderMatchType::Exact) => {
+                    Some(common::HeaderMatchType::Exact) => {
                         Some(agentgateway_api_rs::agentgateway::dev::resource::query_match::Value::Exact(hm.value))
                     },
-                    Some(gateway_api::common::HeaderMatchType::RegularExpression) => {
+                    Some(common::HeaderMatchType::RegularExpression) => {
                         Some(agentgateway_api_rs::agentgateway::dev::resource::query_match::Value::Regex(hm.value))
                     },
                     None => None,

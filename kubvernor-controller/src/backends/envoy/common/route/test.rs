@@ -7,7 +7,7 @@
 //
 //
 
-use gateway_api::{
+use gateway_api_with_extensions::{
     common::HeaderMatch,
     httproutes::{HttpRouteRulesMatchesPathType, PathMatch, RouteMatch},
 };

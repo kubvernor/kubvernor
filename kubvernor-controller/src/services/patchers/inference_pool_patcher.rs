@@ -7,7 +7,7 @@
 //
 //
 
-use gateway_api_inference_extension::inferencepools::InferencePool;
+use gateway_api_with_extensions::inferencepools::InferencePool;
 use kube::{Api, Client};
 use tokio::sync::mpsc;
 use typed_builder::TypedBuilder;

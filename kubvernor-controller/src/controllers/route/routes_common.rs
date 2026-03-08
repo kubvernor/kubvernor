@@ -9,14 +9,14 @@
 
 use std::{collections::BTreeSet, convert::TryFrom, sync::Arc, time::Duration};
 
-use gateway_api::{
+use gateway_api_with_extensions::{
     common::{ParentReference, ParentRouteStatus, RouteStatus},
     gateways::Gateway,
+    inferencepools::InferencePool,
 };
-use gateway_api_inference_extension::inferencepools::InferencePool;
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
-    chrono::Utc,
+    jiff::Timestamp,
 };
 use kube::{Resource, runtime::controller::Action};
 use kubvernor_common::ResourceKey;
@@ -46,7 +46,7 @@ pub fn generate_status_for_unknown_gateways(
         .iter()
         .map(|(gateway, _)| ParentRouteStatus {
             conditions: vec![Condition {
-                last_transition_time: Time(Utc::now()),
+                last_transition_time: Time(Timestamp::now()),
                 message: CONDITION_MESSAGE.to_owned(),
                 observed_generation: generation,
                 reason: "BackendNotFound".to_owned(),

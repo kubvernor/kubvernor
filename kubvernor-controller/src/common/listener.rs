@@ -9,9 +9,9 @@
 
 use std::{collections::BTreeSet, fmt::Display};
 
-use gateway_api::{
+use gateway_api_with_extensions::{
+    common::{Listeners, TlsMode},
     constants,
-    gateways::{self, GatewayListeners},
 };
 use kubvernor_common::ResourceKey;
 use thiserror::Error;
@@ -236,10 +236,10 @@ pub enum TlsType {
     Passthrough,
 }
 
-impl TryFrom<&GatewayListeners> for Listener {
+impl TryFrom<&Listeners> for Listener {
     type Error = ListenerError;
 
-    fn try_from(gateway_listener: &GatewayListeners) -> std::result::Result<Self, Self::Error> {
+    fn try_from(gateway_listener: &Listeners) -> std::result::Result<Self, Self::Error> {
         let mut config = ListenerConfig::new(gateway_listener.name.clone(), gateway_listener.port, gateway_listener.hostname.clone());
 
         let condition = validate_allowed_routes(gateway_listener);
@@ -251,8 +251,8 @@ impl TryFrom<&GatewayListeners> for Listener {
             .tls
             .as_ref()
             .map(|tls| match tls.mode {
-                Some(gateways::GatewayListenersTlsMode::Passthrough) => Ok(TlsType::Passthrough),
-                Some(gateways::GatewayListenersTlsMode::Terminate) => {
+                Some(TlsMode::Passthrough) => Ok(TlsType::Passthrough),
+                Some(TlsMode::Terminate) => {
                     let secrets = tls
                         .certificate_refs
                         .as_ref()
@@ -418,7 +418,7 @@ impl ListenerCondition {
 
 const APPROVED_ROUTES: [&str; 3] = ["GRPCRoute", "HTTPRoute", "TCPRoute"];
 
-fn validate_allowed_routes(gateway_listeners: &GatewayListeners) -> ListenerCondition {
+fn validate_allowed_routes(gateway_listeners: &Listeners) -> ListenerCondition {
     if let Some(ar) = gateway_listeners.allowed_routes.as_ref() {
         if let Some(kinds) = ar.kinds.as_ref() {
             let cloned_kinds = kinds.clone().into_iter().map(|k| k.kind);

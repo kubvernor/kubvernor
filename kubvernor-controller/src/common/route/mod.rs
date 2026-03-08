@@ -9,7 +9,7 @@
 
 pub mod grpc_route;
 pub mod http_route;
-use gateway_api::common::{HTTPHeader, HeaderModifier, ParentReference};
+use gateway_api_with_extensions::common::{HTTPHeader, HeaderModifier, ParentReference};
 use thiserror::Error;
 
 use super::{Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, ResourceKey, ServiceTypeConfig};
