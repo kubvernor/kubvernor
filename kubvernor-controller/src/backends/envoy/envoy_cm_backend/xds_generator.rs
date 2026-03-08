@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use gateway_api::{common::HTTPHeader, httproutes};
+use gateway_api_with_extensions::{common::HTTPHeader, httproutes};
 use log::{debug, info, warn};
 use serde::Serialize;
 

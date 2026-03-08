@@ -10,7 +10,7 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use futures::{FutureExt, future::BoxFuture};
-use gateway_api::referencegrants::{ReferenceGrant, ReferenceGrantFrom, ReferenceGrantTo};
+use gateway_api_with_extensions::referencegrants::{ReferenceGrant, ReferenceGrantFrom, ReferenceGrantTo};
 use kube::{Api, Client, ResourceExt, api::ListParams};
 use kube_core::ObjectList;
 use kubvernor_state::State;
@@ -282,7 +282,7 @@ impl ReferenceGrantsResolver {
 
 #[cfg(test)]
 mod tests {
-    use gateway_api::referencegrants;
+    use gateway_api_with_extensions::referencegrants;
     use http::{Request, Response};
     use kube::client::Body;
     use kube_core::{ApiResource, ListMeta, ObjectMeta, TypeMeta};

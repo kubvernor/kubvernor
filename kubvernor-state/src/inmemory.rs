@@ -13,8 +13,9 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use gateway_api::{gatewayclasses::GatewayClass, gateways::Gateway, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
-use gateway_api_inference_extension::inferencepools::InferencePool;
+use gateway_api_with_extensions::{
+    gatewayclasses::GatewayClass, gateways::Gateway, grpcroutes::GRPCRoute, httproutes::HTTPRoute, inferencepools::InferencePool,
+};
 use kubvernor_common::{GatewayImplementationType, ResourceKey};
 
 #[derive(thiserror::Error, Debug, PartialEq, PartialOrd)]

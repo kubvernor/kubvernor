@@ -9,9 +9,9 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
-use gateway_api::{
-    common::ParentReference,
-    gateways::{self, GatewayListeners, GatewayListenersAllowedRoutesNamespaces, GatewayListenersAllowedRoutesNamespacesFrom},
+use gateway_api_with_extensions::{
+    common::{AllowedRoutesNamespaces, AllowedRoutesNamespacesFrom, Listeners, ParentReference},
+    gateways::{self},
 };
 use kubvernor_common::ResourceKey;
 use kubvernor_state::State;
@@ -65,10 +65,10 @@ impl<'a> RouteListenerMatcher<'a> {
         &'a self,
         route_parents: Option<&Vec<ParentReference>>,
         route: &'a Route,
-    ) -> (Vec<GatewayListeners>, Option<ResolutionStatus>) {
+    ) -> (Vec<Listeners>, Option<ResolutionStatus>) {
         let route_key = route.resource_key();
         let mut route_resolution_status = None;
-        let mut routes_and_listeners: Vec<GatewayListeners> = vec![];
+        let mut routes_and_listeners: Vec<Listeners> = vec![];
         if let Some(route_parents) = route_parents {
             for route_parent in route_parents {
                 let route_parent_key = RouteRefKey::from((route_parent, route_key.namespace.clone()));
@@ -92,7 +92,7 @@ impl<'a> RouteListenerMatcher<'a> {
                     }
 
                     let matching_gateway_listeners = matching_gateway_listeners.into_iter();
-                    let mut matched: Vec<GatewayListeners> = match (route_parent.port, &route_parent.section_name) {
+                    let mut matched: Vec<Listeners> = match (route_parent.port, &route_parent.section_name) {
                         (Some(port), Some(section_name)) => {
                             let matched = filter_listeners_by_name_or_port(matching_gateway_listeners, |gl| {
                                 gl.port == port && gl.name == *section_name
@@ -145,9 +145,9 @@ impl<'a> RouteListenerMatcher<'a> {
     }
 
     fn filter_listeners_by_hostnames(
-        listeners: impl Iterator<Item = GatewayListeners> + 'a,
+        listeners: impl Iterator<Item = Listeners> + 'a,
         route: &'a Route,
-    ) -> impl Iterator<Item = GatewayListeners> + 'a {
+    ) -> impl Iterator<Item = Listeners> + 'a {
         let route_hostnames = route.hostnames();
         listeners.filter(move |listener| {
             debug!(target: TARGET,"Filtering by hostname {:?} {:?}", &listener.hostname, &route_hostnames);
@@ -160,10 +160,10 @@ impl<'a> RouteListenerMatcher<'a> {
     }
     fn filter_listeners_by_namespace(
         &'a self,
-        listeners: impl Iterator<Item = GatewayListeners> + 'a,
+        listeners: impl Iterator<Item = Listeners> + 'a,
         gateway_key: ResourceKey,
         route_key: &'a ResourceKey,
-    ) -> impl Iterator<Item = GatewayListeners> + 'a {
+    ) -> impl Iterator<Item = Listeners> + 'a {
         listeners.filter(move |l| {
             let mut is_allowed = true;
             if let Some(allowed_routes) = &l.allowed_routes {
@@ -173,10 +173,10 @@ impl<'a> RouteListenerMatcher<'a> {
                     is_allowed = allowed_kinds.iter().map(|k| &k.kind).any(|f| f == "HTTPRoute");
                 }
 
-                if let Some(GatewayListenersAllowedRoutesNamespaces { from: Some(selector_type), selector }) = &allowed_routes.namespaces {
+                if let Some(AllowedRoutesNamespaces { from: Some(selector_type), selector }) = &allowed_routes.namespaces {
                     match selector_type {
-                        GatewayListenersAllowedRoutesNamespacesFrom::All => {},
-                        GatewayListenersAllowedRoutesNamespacesFrom::Selector => {
+                        AllowedRoutesNamespacesFrom::All => {},
+                        AllowedRoutesNamespacesFrom::Selector => {
                             debug!(target: TARGET,"Selector {selector:?}");
                             is_allowed = false;
                             if let Some(selector) = selector
@@ -193,7 +193,7 @@ impl<'a> RouteListenerMatcher<'a> {
                                 }
                             }
                         },
-                        GatewayListenersAllowedRoutesNamespacesFrom::Same => {
+                        AllowedRoutesNamespacesFrom::Same => {
                             if route_key.namespace != gateway_key.namespace {
                                 is_allowed = false;
                             }
@@ -206,9 +206,9 @@ impl<'a> RouteListenerMatcher<'a> {
     }
 }
 
-fn filter_listeners_by_name_or_port<F>(gateway_listeners: impl Iterator<Item = GatewayListeners>, filter: F) -> Vec<GatewayListeners>
+fn filter_listeners_by_name_or_port<F>(gateway_listeners: impl Iterator<Item = Listeners>, filter: F) -> Vec<Listeners>
 where
-    F: Fn(&GatewayListeners) -> bool,
+    F: Fn(&Listeners) -> bool,
 {
     gateway_listeners.filter(|f| filter(f)).collect()
 }

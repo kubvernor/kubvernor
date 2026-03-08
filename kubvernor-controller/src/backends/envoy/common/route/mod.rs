@@ -10,7 +10,7 @@
 mod grpc_route;
 mod http_route;
 
-use gateway_api::common::HeaderMatch;
+use gateway_api_with_extensions::common::HeaderMatch;
 pub use grpc_route::GRPCEffectiveRoutingRule;
 pub use http_route::HTTPEffectiveRoutingRule;
 use typed_builder::TypedBuilder;

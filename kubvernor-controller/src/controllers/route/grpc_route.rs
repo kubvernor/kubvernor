@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gateway_api::{
+use gateway_api_with_extensions::{
     common::RouteStatus,
     grpcroutes::{self, GRPCRoute},
 };

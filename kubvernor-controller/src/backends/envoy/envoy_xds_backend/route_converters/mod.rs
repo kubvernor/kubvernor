@@ -17,7 +17,7 @@ use envoy_api_rs::{
     },
     google::protobuf::UInt32Value,
 };
-use gateway_api::common::{HTTPHeader, HeaderMatch};
+use gateway_api_with_extensions::common::{HTTPHeader, HeaderMatch};
 
 use crate::common::{BackendTypeConfig, InferencePoolTypeConfig, ServiceTypeConfig};
 

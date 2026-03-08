@@ -12,8 +12,10 @@ use std::{
     sync::Arc,
 };
 
-use gateway_api::gateways::Gateway;
-use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolSpec};
+use gateway_api_with_extensions::{
+    gateways::Gateway,
+    inferencepools::{InferencePool, InferencePoolSpec},
+};
 use k8s_openapi::api::core::v1::{Pod, Service};
 use kube::{Api, Client, api::ListParams};
 use kube_core::{Expression, Selector, object::HasSpec};
@@ -244,7 +246,7 @@ impl RouteResolver<'_> {
                 let backend_resource_key = backend_config.resource_key();
                 let backend_namespace = &backend_resource_key.namespace;
                 if PermittedBackends(gateway_namespace.to_owned()).is_permitted(route_namespace, backend_namespace) {
-                    let maybe_inference_pool: Option<gateway_api_inference_extension::inferencepools::InferencePool> =
+                    let maybe_inference_pool: Option<InferencePool> =
                         self.backend_reference_resolver.get_inference_pool_reference(&backend_resource_key).await;
 
                     if let Some(inference_pool) = maybe_inference_pool {

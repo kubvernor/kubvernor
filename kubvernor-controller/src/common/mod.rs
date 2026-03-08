@@ -18,10 +18,11 @@ mod test;
 use std::{cmp, collections::BTreeSet, fmt::Display, net::IpAddr};
 
 pub use gateway::{ChangedContext, Gateway};
-pub use gateway_api::gateways::Gateway as KubeGateway;
-use gateway_api::{gatewayclasses::GatewayClass, gateways::GatewayListeners};
-use gateway_api_inference_extension::inferencepools::{
-    InferencePoolEndpointPickerRef, InferencePoolEndpointPickerRefFailureMode, InferencePoolSpec,
+pub use gateway_api_with_extensions::gateways::Gateway as KubeGateway;
+use gateway_api_with_extensions::{
+    common::Listeners,
+    gatewayclasses::GatewayClass,
+    inferencepools::{InferencePoolEndpointPickerRef, InferencePoolEndpointPickerRefFailureMode, InferencePoolSpec},
 };
 use kubvernor_common::ResourceKey;
 pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
@@ -323,11 +324,11 @@ pub enum BackendGatewayResponse {
 #[derive(Debug, Clone)]
 pub struct RouteToListenersMapping {
     pub route: Route,
-    pub listeners: Vec<GatewayListeners>,
+    pub listeners: Vec<Listeners>,
 }
 
 impl RouteToListenersMapping {
-    pub fn new(route: Route, listeners: Vec<GatewayListeners>) -> Self {
+    pub fn new(route: Route, listeners: Vec<Listeners>) -> Self {
         Self { route, listeners }
     }
 }

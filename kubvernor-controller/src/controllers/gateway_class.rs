@@ -11,10 +11,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gateway_api::gatewayclasses::{GatewayClass, GatewayClassStatus};
+use gateway_api_with_extensions::gatewayclasses::{GatewayClass, GatewayClassStatus};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
-    chrono::Utc,
+    jiff::Timestamp,
 };
 use kube::{
     Client, Resource,
@@ -150,7 +150,7 @@ impl GatewayClassResourceHandler<GatewayClass> {
     fn update_status_conditions(mut new_gateway_class: GatewayClass) -> GatewayClass {
         let mut conditions: Vec<Condition> = vec![];
         let new_condition = Condition {
-            last_transition_time: Time(Utc::now()),
+            last_transition_time: Time(Timestamp::now()),
             message: "Updated by controller".to_owned(),
             observed_generation: new_gateway_class.metadata.generation,
             reason: "AcceptedByController".to_owned(),

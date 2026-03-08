@@ -37,7 +37,7 @@ use envoy_api_rs::{
     },
     google::protobuf::UInt32Value,
 };
-use gateway_api::{
+use gateway_api_with_extensions::{
     common::HTTPFilterType,
     grpcroutes::GrpcRouteMatch,
     httproutes::{HttpRouteRulesMatchesPathType, PathMatch, RouteMatch},

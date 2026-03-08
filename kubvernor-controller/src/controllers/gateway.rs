@@ -11,7 +11,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gateway_api::{constants, gatewayclasses::GatewayClass, gateways::Gateway};
+use gateway_api_with_extensions::{constants, gatewayclasses::GatewayClass, gateways::Gateway};
 use kube::{
     Api, Client, Resource,
     runtime::{Controller, controller::Action, watcher::Config},

@@ -9,15 +9,15 @@
 
 use std::fmt::Display;
 
-use gateway_api::{
-    common::BackendObjectReference,
-    gatewayclasses::{GatewayClass, GatewayClassParametersRef},
+use gateway_api_with_extensions::{
+    common::{BackendObjectReference, GatewayParametersRef, ParentReference},
+    gatewayclasses::GatewayClass,
     gateways,
     grpcroutes::{GRPCBackendReference, GRPCRoute},
     httproutes::{HTTPBackendReference, HTTPRoute},
+    inferencepools::InferencePool,
     referencegrants::{ReferenceGrantFrom, ReferenceGrantTo},
 };
-use gateway_api_inference_extension::inferencepools::{InferencePool, InferencePoolStatusParentsParentRef};
 use k8s_openapi::api::core::v1::Service;
 use kube::{Resource, ResourceExt};
 
@@ -158,16 +158,16 @@ impl From<&InferencePool> for ResourceKey {
     }
 }
 
-impl From<&GatewayClassParametersRef> for ResourceKey {
-    fn from(value: &GatewayClassParametersRef) -> Self {
+impl From<&GatewayParametersRef> for ResourceKey {
+    fn from(value: &GatewayParametersRef) -> Self {
         let namespace = value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
 
         Self { group: value.group.clone(), namespace, name: value.name.clone(), kind: value.kind.clone() }
     }
 }
 
-impl From<&InferencePoolStatusParentsParentRef> for ResourceKey {
-    fn from(value: &InferencePoolStatusParentsParentRef) -> Self {
+impl From<&ParentReference> for ResourceKey {
+    fn from(value: &ParentReference) -> Self {
         Self {
             group: DEFAULT_GROUP_NAME.to_owned(),
             namespace: value.namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned()),

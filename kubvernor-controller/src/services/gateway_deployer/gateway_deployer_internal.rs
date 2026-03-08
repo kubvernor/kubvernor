@@ -9,10 +9,14 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use gateway_api::{common::Kind, constants, gatewayclasses::GatewayClass, gateways::GatewayStatusListeners};
+use gateway_api_with_extensions::{
+    common::{Kind, ListenerStatus},
+    constants,
+    gatewayclasses::GatewayClass,
+};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
-    chrono::Utc,
+    jiff::Timestamp,
 };
 use kubvernor_common::{GatewayImplementationType, ResourceKey};
 use kubvernor_state::State;
@@ -142,7 +146,7 @@ impl GatewayDeployer {
             let name = l.name().to_owned();
             debug!(target: TARGET,"Processing listener {name} {} {:?}", l.attached_routes(), l.conditions().collect::<Vec<_>>());
 
-            let mut listener_status = GatewayStatusListeners { name, ..Default::default() };
+            let mut listener_status = ListenerStatus { name, ..Default::default() };
 
             let listener_conditions = &mut listener_status.conditions;
             listener_status.attached_routes = i32::try_from(l.attached_routes()).unwrap_or_default();
@@ -162,7 +166,7 @@ impl GatewayDeployer {
                         | ResolvedRefs::RefNotPermitted(_),
                     ) => {
                         listener_conditions.push(Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: CONDITION_MESSAGE.to_owned(),
                             observed_generation: generation,
                             reason,
@@ -170,11 +174,11 @@ impl GatewayDeployer {
                             type_,
                         });
                         listener_status.supported_kinds =
-                            condition.supported_routes().iter().map(|r| Kind { group: None, kind: r.clone() }).collect();
+                            Some(condition.supported_routes().iter().map(|r| Kind { group: None, kind: r.clone() }).collect());
                     },
                     ListenerCondition::UnresolvedRouteRefs => {
                         listener_conditions.push(Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: CONDITION_MESSAGE.to_owned(),
                             observed_generation: generation,
                             reason,
@@ -182,11 +186,11 @@ impl GatewayDeployer {
                             type_,
                         });
                         listener_status.supported_kinds =
-                            condition.supported_routes().iter().map(|r| Kind { group: None, kind: r.clone() }).collect();
+                            Some(condition.supported_routes().iter().map(|r| Kind { group: None, kind: r.clone() }).collect());
                     },
                     _ => {
                         listener_conditions.push(Condition {
-                            last_transition_time: Time(Utc::now()),
+                            last_transition_time: Time(Timestamp::now()),
                             message: CONDITION_MESSAGE.to_owned(),
                             observed_generation: generation,
                             reason,

@@ -5,8 +5,8 @@ rust-version.workspace = true
 version.workspace      = true
 
 [dependencies]
-gateway-api.workspace                     = true
-gateway-api-inference-extension.workspace = true
+gateway-api-with-extensions.workspace                     = true
+#gateway-api-inference-extension.workspace = true
 k8s-openapi.workspace                     = true
 kube.workspace                            = true
 serde.workspace                           = true

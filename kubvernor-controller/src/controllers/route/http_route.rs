@@ -11,11 +11,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gateway_api::{
+use gateway_api_with_extensions::{
     common::RouteStatus,
     httproutes::{self, HTTPRoute},
+    inferencepools::InferencePool,
 };
-use gateway_api_inference_extension::inferencepools::InferencePool;
 use kube::{
     Api, Client, Resource,
     runtime::{Controller, controller::Action, watcher::Config},

@@ -11,13 +11,14 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gateway_api::httproutes::{HTTPRoute, HttpRouteRule};
-use gateway_api_inference_extension::inferencepools::{
-    InferencePool, InferencePoolStatus, InferencePoolStatusParents, InferencePoolStatusParentsParentRef,
+use gateway_api_with_extensions::{
+    common::Reference,
+    httproutes::{HTTPRoute, HttpRouteRule},
+    inferencepools::{InferencePool, InferencePoolStatus, InferencePoolStatusParents},
 };
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::{Condition, Time},
-    chrono::Utc,
+    jiff::Timestamp,
 };
 use kube::{
     Api, Client, Resource,
@@ -307,7 +308,7 @@ fn create_inference_pool_status_with_conditions(
             .iter()
             .map(|id| InferencePoolStatusParents {
                 conditions: Some(conditions.to_vec()),
-                parent_ref: InferencePoolStatusParentsParentRef {
+                parent_ref: Reference {
                     kind: Some(id.kind.clone()),
                     name: id.name.clone(),
                     namespace: Some(id.namespace.clone()),
@@ -358,7 +359,7 @@ pub fn update_inference_pool_parents(
         .iter()
         .map(|gateway| InferencePoolStatusParents {
             conditions: Some(conditions.clone()),
-            parent_ref: InferencePoolStatusParentsParentRef {
+            parent_ref: Reference {
                 name: gateway.name.clone(),
                 namespace: Some(gateway.namespace.clone()),
                 kind: Some("Gateway".to_owned()),
@@ -456,7 +457,7 @@ impl InferencePoolCondition {
     pub fn get_condition(self) -> Condition {
         match self {
             InferencePoolCondition::Accepted(generation) => Condition {
-                last_transition_time: Time(Utc::now()),
+                last_transition_time: Time(Timestamp::now()),
                 message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
                 observed_generation: generation,
                 reason: "Accepted".to_owned(),
@@ -464,7 +465,7 @@ impl InferencePoolCondition {
                 type_: "Accepted".to_owned(),
             },
             InferencePoolCondition::Resolved => Condition {
-                last_transition_time: Time(Utc::now()),
+                last_transition_time: Time(Timestamp::now()),
                 message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
                 observed_generation: None,
                 reason: "ResolvedRefs".to_owned(),
@@ -472,7 +473,7 @@ impl InferencePoolCondition {
                 type_: "ResolvedRefs".to_owned(),
             },
             InferencePoolCondition::NotResolved => Condition {
-                last_transition_time: Time(Utc::now()),
+                last_transition_time: Time(Timestamp::now()),
                 message: INFERENCE_POOL_CONDITION_MESSAGE.to_owned(),
                 observed_generation: None,
                 reason: "ResolvedRefs".to_owned(),

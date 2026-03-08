@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use futures::FutureExt;
-use gateway_api_inference_extension::inferencepools::InferencePool;
+use gateway_api_with_extensions::inferencepools::InferencePool;
 use k8s_openapi::api::core::v1::Service;
 use kube::Client;
 use kubvernor_common::ResourceKey;
