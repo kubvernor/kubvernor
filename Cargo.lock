@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "agentgateway-api-rs"
 version = "0.11.0"
-source = "git+https://github.com/kubvernor/agentgateway-api-rs#480075d48abd51257322cf78de3075f96bfe172c"
+source = "git+https://github.com/kubvernor/agentgateway-api-rs?rev=480075d48abd51257322cf78de3075f96bfe172c#480075d48abd51257322cf78de3075f96bfe172c"
 dependencies = [
  "glob",
  "prost 0.13.5",
@@ -603,7 +603,7 @@ dependencies = [
 [[package]]
 name = "envoy-api-rs"
 version = "0.2.0"
-source = "git+https://github.com/kubvernor/envoy-api-rs?branch=main#8dc7a399bdac267e08a69c916429e25f4edadabb"
+source = "git+https://github.com/kubvernor/envoy-api-rs?rev=8dc7a399bdac267e08a69c916429e25f4edadabb#8dc7a399bdac267e08a69c916429e25f4edadabb"
 dependencies = [
  "glob",
  "prost 0.13.5",
@@ -790,7 +790,7 @@ dependencies = [
 [[package]]
 name = "gateway-api-with-extensions"
 version = "0.150.130"
-source = "git+https://github.com/kubvernor/gateway-api-rs.git?branch=dawid.nowak%2Fgeneral_refactoring#34ed4e03a50acf073c5b9aa67d0db1e6f3fb2dc2"
+source = "git+https://github.com/kubvernor/gateway-api-rs.git?rev=8deaa3719481dcb6b2960f9c42c50b2b08258c87#8deaa3719481dcb6b2960f9c42c50b2b08258c87"
 dependencies = [
  "cfg-if",
  "delegate",
@@ -1517,7 +1517,7 @@ dependencies = [
 [[package]]
 name = "kubvernor-api"
 version = "0.2.1"
-source = "git+https://github.com/kubvernor/kubvernor-api-rs?branch=dependency_bump#079bd1b5725c2d53984780e45c2b70f562b3af33"
+source = "git+https://github.com/kubvernor/kubvernor-api-rs?rev=f904a07b9da646df5a0deda65cfb3007de65cb08#f904a07b9da646df5a0deda65cfb3007de65cb08"
 dependencies = [
  "k8s-openapi",
  "kube",

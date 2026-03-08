@@ -9,25 +9,21 @@ rust-version = "1.91.1"
 version      = "0.2.1"
 
 [workspace.dependencies]
-agentgateway-api-rs             = { version = "0.11.0", git = "https://github.com/kubvernor/agentgateway-api-rs" }
+agentgateway-api-rs             = { version = "0.11.0", git = "https://github.com/kubvernor/agentgateway-api-rs", rev="480075d48abd51257322cf78de3075f96bfe172c"}
 async-trait                     = "0.1.89"
 atomic-take                     = "1.1.0"
 cfg-if                          = "1.0"
 eater_domainmatcher             = "0.1.2"
 env_logger                      = "0.11.8"
-envoy-api-rs                    = { version = "0.2.0", git = "https://github.com/kubvernor/envoy-api-rs", branch = "main" }
+envoy-api-rs                    = { version = "0.2.0", git = "https://github.com/kubvernor/envoy-api-rs", rev = "8dc7a399bdac267e08a69c916429e25f4edadabb"}
 futures                         = "0.3"
-#gateway-api                     = { version = "0.19.0", git = "https://github.com/kubvernor/gateway-api-rs", branch = "main" }
-#gateway-api-inference-extension = { version = "1.1.0", git = "https://github.com/kubvernor/gateway-api-inference-extension-rs.git" }
-#gateway-api-inference-extension = { version = "1.1.0", path = "../gateway-api-inference-extension-rs/gateway-api-inference-extension" }
-gateway-api-with-extensions      = { version = "0.150.130", git = "https://github.com/kubvernor/gateway-api-rs.git", branch="dawid.nowak/general_refactoring" }
+gateway-api-with-extensions      = { version = "0.150.130", git = "https://github.com/kubvernor/gateway-api-rs.git", rev="8deaa3719481dcb6b2960f9c42c50b2b08258c87" }
 http                            = "1.3"
 itertools                       = "0.14"
 k8s-openapi                     = { version = "0.27", features = ["schemars", "v1_33"] }
 kube                            = { version = "3", features = ["client", "derive", "http-proxy", "runtime"] }
 kube-core                       = "3"
-kubvernor-api                   = { version = "0.2.1", git = "https://github.com/kubvernor/kubvernor-api-rs", branch="dependency_bump" }
-#kubvernor-api                   = { version = "0.2.0", path = "../kubvernor-api-rs/kubvernor-api" }
+kubvernor-api                   = { version = "0.2.1", git = "https://github.com/kubvernor/kubvernor-api-rs", rev="f904a07b9da646df5a0deda65cfb3007de65cb08"}
 kubvernor-common                = { path = "./kubvernor-common" }
 kubvernor-controller            = { path = "./kubvernor-controller" }
 kubvernor-state                 = { path = "./kubvernor-state" }
