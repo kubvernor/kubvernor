@@ -7,18 +7,25 @@
 //
 //
 
-mod gateway_class_patcher;
-mod gateway_patcher;
-mod grpc_route_patcher;
-mod http_route_patcher;
-mod inference_pool_patcher;
-mod patcher;
-mod tls_route_patcher;
+use gateway_api_with_extensions::tlsroutes::TLSRoute;
+use kube::{Api, Client};
+use tokio::sync::mpsc;
+use typed_builder::TypedBuilder;
 
-pub use gateway_class_patcher::GatewayClassPatcherService;
-pub use gateway_patcher::GatewayPatcherService;
-pub use grpc_route_patcher::GRPCRoutePatcherService;
-pub use http_route_patcher::HttpRoutePatcherService;
-pub use inference_pool_patcher::InferencePoolPatcherService;
-pub use patcher::{DeleteContext, FinalizerContext, Operation, PatchContext, Patcher};
-pub use tls_route_patcher::TlsRoutePatcherService;
+use super::patcher::{Operation, Patcher};
+
+#[derive(TypedBuilder)]
+pub struct TlsRoutePatcherService {
+    client: Client,
+    receiver: mpsc::Receiver<Operation<TLSRoute>>,
+}
+
+impl Patcher<TLSRoute> for TlsRoutePatcherService {
+    fn receiver(&mut self) -> &mut mpsc::Receiver<Operation<TLSRoute>> {
+        &mut self.receiver
+    }
+
+    fn api(&self, namespace: &str) -> Api<TLSRoute> {
+        Api::namespaced(self.client.clone(), namespace)
+    }
+}

@@ -12,7 +12,9 @@ pub mod patchers;
 mod reference_resolver;
 
 pub use gateway_deployer::GatewayDeployerService;
-pub use patchers::{GatewayClassPatcherService, GatewayPatcherService, HttpRoutePatcherService, Patcher};
+pub use patchers::{
+    GRPCRoutePatcherService, GatewayClassPatcherService, GatewayPatcherService, HttpRoutePatcherService, Patcher, TlsRoutePatcherService,
+};
 pub use reference_resolver::ReferenceValidatorService;
 
 pub const TARGET: &str = "kubvernor::services";
