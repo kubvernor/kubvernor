@@ -14,7 +14,9 @@ use gateway_api_with_extensions::common::{HTTPHeader, HeaderModifier, ParentRefe
 use thiserror::Error;
 
 use super::{Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, ResourceKey, ServiceTypeConfig};
-use crate::common::route::{grpc_route::GRPCRoutingConfiguration, http_route::HTTPRoutingConfiguration, tls_route::TlsRoutingConfiguration};
+use crate::common::route::{
+    grpc_route::GRPCRoutingConfiguration, http_route::HTTPRoutingConfiguration, tls_route::TlsRoutingConfiguration,
+};
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum RouteStatus {

@@ -10,13 +10,14 @@
 use gateway_api_with_extensions::tlsroutes::{TLSRoute, TlsRouteRules, TlsRouteRulesBackendRefs};
 use kube::ResourceExt;
 
-use crate::common::resource_key::DEFAULT_GROUP_NAME;
-
 use super::{
-    Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig, RouteType,
-    ServiceTypeConfig,
+    Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig,
+    RouteType, ServiceTypeConfig,
 };
-use crate::{common::BackendType, controllers::ControllerError};
+use crate::{
+    common::{BackendType, resource_key::DEFAULT_GROUP_NAME},
+    controllers::ControllerError,
+};
 
 impl TryFrom<TLSRoute> for Route {
     type Error = ControllerError;
@@ -45,11 +46,8 @@ impl TryFrom<&TLSRoute> for Route {
             })
             .collect();
 
-        let hostnames = if kube_route.spec.hostnames.is_empty() {
-            vec![DEFAULT_ROUTE_HOSTNAME.to_owned()]
-        } else {
-            kube_route.spec.hostnames.clone()
-        };
+        let hostnames =
+            if kube_route.spec.hostnames.is_empty() { vec![DEFAULT_ROUTE_HOSTNAME.to_owned()] } else { kube_route.spec.hostnames.clone() };
 
         let config = RouteConfig {
             resource_key: key,
