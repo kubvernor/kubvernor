@@ -7,9 +7,25 @@
 //
 //
 
-pub mod grpc_route;
-pub mod http_route;
-mod routes_common;
-pub mod tls_route;
+use gateway_api_with_extensions::tlsroutes::TLSRoute;
+use kube::{Api, Client};
+use tokio::sync::mpsc;
+use typed_builder::TypedBuilder;
 
-const TARGET: &str = super::TARGET;
+use super::patcher::{Operation, Patcher};
+
+#[derive(TypedBuilder)]
+pub struct TLSRoutePatcherService {
+    client: Client,
+    receiver: mpsc::Receiver<Operation<TLSRoute>>,
+}
+
+impl Patcher<TLSRoute> for TLSRoutePatcherService {
+    fn receiver(&mut self) -> &mut mpsc::Receiver<Operation<TLSRoute>> {
+        &mut self.receiver
+    }
+
+    fn api(&self, namespace: &str) -> Api<TLSRoute> {
+        Api::namespaced(self.client.clone(), namespace)
+    }
+}

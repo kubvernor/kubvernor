@@ -180,7 +180,7 @@ impl<'a> EnvoyXDSGenerator<'a> {
             .into_iter()
             .filter(|r| match &r.config.route_type {
                 RouteType::Http(_) => true,
-                RouteType::Grpc(_) => false,
+                RouteType::Grpc(_) | RouteType::Tls(_) => false,
             })
             .collect();
 

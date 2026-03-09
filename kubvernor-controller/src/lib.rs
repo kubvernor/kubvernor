@@ -20,7 +20,7 @@ use kubvernor_state::State;
 use log::info;
 use services::{
     GatewayClassPatcherService, GatewayDeployerService, GatewayPatcherService, HttpRoutePatcherService, Patcher, ReferenceValidatorService,
-    patchers::GRPCRoutePatcherService,
+    patchers::{GRPCRoutePatcherService, TLSRoutePatcherService},
 };
 use thiserror::Error;
 use tokio::{
@@ -57,6 +57,7 @@ use controllers::{
     route::{
         grpc_route::{self, GRPCRouteController},
         http_route::{self, HttpRouteController},
+        tls_route::{self, TLSRouteController},
     },
 };
 
@@ -76,6 +77,7 @@ pub async fn start(configuration: Configuration) -> Result<()> {
     let (gateway_class_patcher_channel_sender, gateway_class_patcher_channel_receiver) = mpsc::channel(1024);
     let (http_route_patcher_channel_sender, http_route_patcher_channel_receiver) = mpsc::channel(1024);
     let (grpc_route_patcher_channel_sender, grpc_route_patcher_channel_receiver) = mpsc::channel(1024);
+    let (tls_route_patcher_channel_sender, tls_route_patcher_channel_receiver) = mpsc::channel(1024);
     let (inference_pool_patcher_channel_sender, inference_pool_patcher_channel_receiver) = mpsc::channel(1024);
     let (envoy_backend_deployer_channel_sender, envoy_backend_deployer_channel_receiver) = mpsc::channel(1024);
     let (backend_response_channel_sender, backend_response_channel_receiver) = mpsc::channel(1024);
@@ -115,6 +117,7 @@ pub async fn start(configuration: Configuration) -> Result<()> {
         .gateway_class_patcher_channel_sender(gateway_class_patcher_channel_sender.clone())
         .http_route_patcher_channel_sender(http_route_patcher_channel_sender.clone())
         .grpc_route_patcher_channel_sender(grpc_route_patcher_channel_sender.clone())
+        .tls_route_patcher_channel_sender(tls_route_patcher_channel_sender.clone())
         .controller_name(configuration.controller_name.clone())
         .build();
 
@@ -138,6 +141,8 @@ pub async fn start(configuration: Configuration) -> Result<()> {
         HttpRoutePatcherService::builder().client(client.clone()).receiver(http_route_patcher_channel_receiver).build();
     let mut grpc_route_patcher_service =
         GRPCRoutePatcherService::builder().client(client.clone()).receiver(grpc_route_patcher_channel_receiver).build();
+    let mut tls_route_patcher_service =
+        TLSRoutePatcherService::builder().client(client.clone()).receiver(tls_route_patcher_channel_receiver).build();
     let mut inference_pool_patcher_service =
         InferencePoolPatcherService::builder().client(client.clone()).receiver(inference_pool_patcher_channel_receiver).build();
 
@@ -186,6 +191,18 @@ pub async fn start(configuration: Configuration) -> Result<()> {
         ))
         .build();
 
+    let tls_route_controller = TLSRouteController::builder()
+        .ctx(Arc::new(
+            tls_route::TLSRouteControllerContext::builder()
+                .client(client.clone())
+                .controller_name(configuration.controller_name.clone())
+                .state(state.clone())
+                .tls_route_patcher(tls_route_patcher_channel_sender.clone())
+                .validate_references_channel_sender(reference_validate_channel_sender.clone())
+                .build(),
+        ))
+        .build();
+
     let inference_pool_controller = InferencePoolController::builder()
         .ctx(Arc::new(
             inference_pool::InferencePoolControllerContext::builder()
@@ -204,6 +221,7 @@ pub async fn start(configuration: Configuration) -> Result<()> {
     let gateway_class_patcher_service = gateway_class_patcher_service.start().boxed();
     let http_route_patcher_service = http_route_patcher_service.start().boxed();
     let grpc_route_patcher_service = grpc_route_patcher_service.start().boxed();
+    let tls_route_patcher_service = tls_route_patcher_service.start().boxed();
     let inference_pool_patcher_service = inference_pool_patcher_service.start().boxed();
 
     let gateway_class_controller_task = async move {
@@ -236,6 +254,14 @@ pub async fn start(configuration: Configuration) -> Result<()> {
         crate::Result::<()>::Ok(())
     };
 
+    let tls_route_controller_task = async move {
+        sleep(2 * STARTUP_DURATION).await;
+        info!("TLS Route controller...started");
+        tls_route_controller.get_controller().await;
+        info!("TLS Route controller...stopped");
+        crate::Result::<()>::Ok(())
+    };
+
     let inference_pool_controller_task = async move {
         sleep(2 * STARTUP_DURATION).await;
         info!("Inference Pool controller...started");
@@ -257,11 +283,13 @@ pub async fn start(configuration: Configuration) -> Result<()> {
         gateway_patcher_service,
         http_route_patcher_service,
         grpc_route_patcher_service,
+        tls_route_patcher_service,
         inference_pool_patcher_service,
         gateway_class_controller_task.boxed(),
         gateway_controller_task.boxed(),
         http_route_controller_task.boxed(),
         grpc_route_controller_task.boxed(),
+        tls_route_controller_task.boxed(),
         inference_pool_controller_task.boxed(),
     ];
 

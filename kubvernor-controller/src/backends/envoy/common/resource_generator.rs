@@ -150,7 +150,7 @@ impl Listener {
             .chain(unresolved.iter())
             .filter_map(|r| match &r.config.route_type {
                 RouteType::Http(configuration) => Some((&r.config.hostnames, configuration)),
-                RouteType::Grpc(_) => None,
+                RouteType::Grpc(_) | RouteType::Tls(_) => None,
             })
             .flat_map(|(hostnames, config)| self.create_http_effective_route(hostnames, config))
             .collect();
@@ -164,7 +164,7 @@ impl Listener {
             .iter()
             .chain(unresolved.iter())
             .filter_map(|r| match &r.config.route_type {
-                RouteType::Http(_) => None,
+                RouteType::Http(_) | RouteType::Tls(_) => None,
                 RouteType::Grpc(configuration) => Some((&r.config.hostnames, configuration)),
             })
             .flat_map(|(hostnames, config)| Self::create_grpc_effective_route(hostnames, config))
@@ -587,7 +587,7 @@ fn create_service_cluster(
                 ..Default::default()
             }),
             typed_extension_protocol_options: match route_type {
-                common::RouteType::Http(_) => HashMap::new(),
+                common::RouteType::Http(_) | common::RouteType::Tls(_) => HashMap::new(),
                 common::RouteType::Grpc(_) => {
                     vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
                         .into_iter()

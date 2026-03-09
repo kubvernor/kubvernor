@@ -9,11 +9,12 @@
 
 pub mod grpc_route;
 pub mod http_route;
+pub mod tls_route;
 use gateway_api_with_extensions::common::{HTTPHeader, HeaderModifier, ParentReference};
 use thiserror::Error;
 
 use super::{Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, ResourceKey, ServiceTypeConfig};
-use crate::common::route::{grpc_route::GRPCRoutingConfiguration, http_route::HTTPRoutingConfiguration};
+use crate::common::route::{grpc_route::GRPCRoutingConfiguration, http_route::HTTPRoutingConfiguration, tls_route::TlsRoutingConfiguration};
 
 #[derive(Error, Debug, PartialEq, PartialOrd)]
 pub enum RouteStatus {
@@ -85,6 +86,7 @@ impl Route {
 pub enum RouteType {
     Http(HTTPRoutingConfiguration),
     Grpc(GRPCRoutingConfiguration),
+    Tls(TlsRoutingConfiguration),
 }
 
 #[derive(Clone, Debug)]
@@ -105,6 +107,9 @@ impl RouteConfig {
             RouteType::Grpc(routing_rules_configuration) => {
                 routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect()
             },
+            RouteType::Tls(routing_rules_configuration) => {
+                routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect()
+            },
         }
     }
 
@@ -116,6 +121,7 @@ impl RouteConfig {
             RouteType::Grpc(routing_rules_configuration) => {
                 routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.filter_backends).collect()
             },
+            RouteType::Tls(_) => vec![],
         }
     }
 }

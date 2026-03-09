@@ -170,7 +170,7 @@ impl<'a> RouteListenerMatcher<'a> {
                 if let Some(allowed_kinds) = &allowed_routes.kinds
                     && !allowed_kinds.is_empty()
                 {
-                    is_allowed = allowed_kinds.iter().map(|k| &k.kind).any(|f| f == "HTTPRoute");
+                    is_allowed = allowed_kinds.iter().map(|k| &k.kind).any(|f| f == "HTTPRoute" || f == "GRPCRoute" || f == "TLSRoute");
                 }
 
                 if let Some(AllowedRoutesNamespaces { from: Some(selector_type), selector }) = &allowed_routes.namespaces {
