@@ -17,6 +17,7 @@ use gateway_api_with_extensions::{
     httproutes::{HTTPBackendReference, HTTPRoute},
     inferencepools::InferencePool,
     referencegrants::{ReferenceGrantFrom, ReferenceGrantTo},
+    tlsroutes::TLSRoute,
 };
 use k8s_openapi::api::core::v1::Service;
 use kube::{Resource, ResourceExt};
@@ -123,6 +124,14 @@ impl From<&GRPCRoute> for ResourceKey {
         let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
 
         Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name_any(), kind: "GRPCRoute".to_owned() }
+    }
+}
+
+impl From<&TLSRoute> for ResourceKey {
+    fn from(value: &TLSRoute) -> Self {
+        let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+
+        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name_any(), kind: "TLSRoute".to_owned() }
     }
 }
 

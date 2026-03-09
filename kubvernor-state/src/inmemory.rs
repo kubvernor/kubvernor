@@ -15,6 +15,7 @@ use std::{
 
 use gateway_api_with_extensions::{
     gatewayclasses::GatewayClass, gateways::Gateway, grpcroutes::GRPCRoute, httproutes::HTTPRoute, inferencepools::InferencePool,
+    tlsroutes::TLSRoute,
 };
 use kubvernor_common::{GatewayImplementationType, ResourceKey};
 
@@ -57,6 +58,7 @@ pub struct State {
     gateways: Arc<Mutex<HashMap<ResourceKey, Arc<Gateway>>>>,
     http_routes: Arc<Mutex<HashMap<ResourceKey, Arc<HTTPRoute>>>>,
     grpc_routes: Arc<Mutex<HashMap<ResourceKey, Arc<GRPCRoute>>>>,
+    tls_routes: Arc<Mutex<HashMap<ResourceKey, Arc<TLSRoute>>>>,
     gateways_with_routes: Arc<Mutex<HashMap<ResourceKey, BTreeSet<ResourceKey>>>>,
     inference_pools: Arc<Mutex<HashMap<ResourceKey, Arc<InferencePool>>>>,
     gateways_with_routes_with_inference_pools: Arc<Mutex<HashMap<ResourceKey, HashSet<RouteToInferencePool>>>>,
@@ -70,6 +72,7 @@ impl State {
             gateways: Arc::new(Mutex::new(HashMap::new())),
             http_routes: Arc::new(Mutex::new(HashMap::new())),
             grpc_routes: Arc::new(Mutex::new(HashMap::new())),
+            tls_routes: Arc::new(Mutex::new(HashMap::new())),
             gateways_with_routes: Arc::new(Mutex::new(HashMap::new())),
             inference_pools: Arc::new(Mutex::new(HashMap::new())),
             gateways_with_routes_with_inference_pools: Arc::new(Mutex::new(HashMap::new())),
@@ -244,6 +247,59 @@ impl State {
 
     pub fn get_grpc_route_by_id(&self, id: &ResourceKey) -> Result<Option<Arc<GRPCRoute>>, StorageError> {
         let lock = self.grpc_routes.lock().map_err(|_| StorageError::LockingError)?;
+        Ok(lock.get(id).cloned())
+    }
+
+    pub fn attach_tls_route_to_gateway(&self, gateway_id: ResourceKey, route_id: ResourceKey) -> Result<(), StorageError> {
+        let mut gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
+        if let Some(routes) = gateways_with_routes.get_mut(&gateway_id) {
+            routes.insert(route_id);
+        } else {
+            let mut routes = BTreeSet::new();
+            routes.insert(route_id);
+            gateways_with_routes.insert(gateway_id, routes);
+        }
+        Ok(())
+    }
+
+    pub fn detach_tls_route_from_gateway(&self, gateway_id: &ResourceKey, route_id: &ResourceKey) -> Result<(), StorageError> {
+        let mut gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
+        if let Some(routes) = gateways_with_routes.get_mut(gateway_id) {
+            routes.retain(|key| key != route_id);
+        }
+        Ok(())
+    }
+
+    pub fn get_tls_routes_attached_to_gateway(&self, gateway_key: &ResourceKey) -> Result<Option<Vec<Arc<TLSRoute>>>, StorageError> {
+        let gateways_with_routes = self.gateways_with_routes.lock().map_err(|_| StorageError::LockingError)?;
+        let tls_routes = self.tls_routes.lock().map_err(|_| StorageError::LockingError)?;
+        Ok(gateways_with_routes
+            .get(gateway_key)
+            .cloned()
+            .map(|keys| keys.iter().filter_map(|k| tls_routes.get(k).cloned()).collect::<Vec<_>>()))
+    }
+
+    pub fn maybe_save_tls_route(&self, id: ResourceKey, route: &Arc<TLSRoute>) -> Result<(), StorageError> {
+        let mut lock = self.tls_routes.lock().map_err(|_| StorageError::LockingError)?;
+        if lock.contains_key(&id) {
+            lock.insert(id, Arc::clone(route));
+        }
+        Ok(())
+    }
+
+    pub fn save_tls_route(&self, id: ResourceKey, route: &Arc<TLSRoute>) -> Result<(), StorageError> {
+        let mut lock = self.tls_routes.lock().map_err(|_| StorageError::LockingError)?;
+        lock.insert(id, Arc::clone(route));
+        Ok(())
+    }
+
+    pub fn delete_tls_route(&self, id: &ResourceKey) -> Result<Option<Arc<TLSRoute>>, StorageError> {
+        let mut lock = self.tls_routes.lock().map_err(|_| StorageError::LockingError)?;
+        Ok(lock.remove(id))
+    }
+
+    pub fn get_tls_route_by_id(&self, id: &ResourceKey) -> Result<Option<Arc<TLSRoute>>, StorageError> {
+        let lock = self.tls_routes.lock().map_err(|_| StorageError::LockingError)?;
         Ok(lock.get(id).cloned())
     }
 

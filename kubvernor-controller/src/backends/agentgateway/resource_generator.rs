@@ -161,7 +161,7 @@ impl<'a> ResourceGenerator<'a> {
                 routes
                     .filter_map(|route| match route.route_type() {
                         RouteType::Http(configuration) => Some((route, &configuration.routing_rules)),
-                        RouteType::Grpc(_) => None,
+                        RouteType::Grpc(_) | RouteType::Tls(_) => None,
                     })
                     .flat_map(|(route, routing_rules)| {
                         routing_rules
@@ -235,6 +235,7 @@ impl<'a> ResourceGenerator<'a> {
                                         kind: match route.route_type() {
                                             RouteType::Http(_) => "HTTP".to_owned(),
                                             RouteType::Grpc(_) => "GRPC".to_owned(),
+                                            RouteType::Tls(_) => "TLS".to_owned(),
                                         },
                                         name: routing_rule.name.clone(),
                                         namespace: route.namespace().to_owned(),

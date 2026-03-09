@@ -91,6 +91,15 @@ impl RouteResolver<'_> {
                     rule.backends.clone_from(&new_backends);
                 }
             },
+            common::RouteType::Tls(tlsrouting_configuration) => {
+                for rule in &mut tlsrouting_configuration.routing_rules {
+                    let (new_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;
+                    if resolution_status != ResolutionStatus::Resolved {
+                        route_resolution_status = resolution_status;
+                    }
+                    rule.backends.clone_from(&new_backends);
+                }
+            },
         }
 
         route_config.resolution_status = route_resolution_status;

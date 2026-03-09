@@ -163,7 +163,13 @@ pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route>
         .expect("We expect the lock to work")
         .map(|routes| routes.iter().filter_map(|r| Route::try_from(&**r).ok()).collect())
         .unwrap_or_default();
+    let mut tls_routes: Vec<Route> = state
+        .get_tls_routes_attached_to_gateway(gateway_id)
+        .expect("We expect the lock to work")
+        .map(|routes| routes.iter().filter_map(|r| Route::try_from(&**r).ok()).collect())
+        .unwrap_or_default();
     http_routes.append(&mut grpc_routes);
+    http_routes.append(&mut tls_routes);
     http_routes
 }
 
