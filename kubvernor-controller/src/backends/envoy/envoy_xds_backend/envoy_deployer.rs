@@ -20,7 +20,7 @@ use envoy_api_rs::{
                 GrpcService, TransportSocket,
                 grpc_service::{GoogleGrpc, TargetSpecifier},
             },
-            listener::v3::{Filter, FilterChain, Listener as EnvoyListener, ListenerFilter},
+            listener::v3::{Filter, FilterChain, FilterChainMatch, Listener as EnvoyListener, ListenerFilter},
             route::v3::{RouteConfiguration, VirtualHost},
         },
         extensions::{
@@ -30,10 +30,13 @@ use envoy_api_rs::{
                     router::v3::Router,
                 },
                 listener::tls_inspector::v3::TlsInspector,
-                network::http_connection_manager::v3::{
-                    HttpConnectionManager, HttpFilter,
-                    http_connection_manager::{CodecType, RouteSpecifier},
-                    http_filter::ConfigType,
+                network::{
+                    http_connection_manager::v3::{
+                        HttpConnectionManager, HttpFilter,
+                        http_connection_manager::{CodecType, RouteSpecifier},
+                        http_filter::ConfigType,
+                    },
+                    tcp_proxy::v3::{TcpProxy, tcp_proxy::ClusterSpecifier},
                 },
             },
             transport_sockets::tls::v3::{CommonTlsContext, DownstreamTlsContext, SdsSecretConfig},
@@ -351,7 +354,10 @@ fn create_resources(gateway: &Gateway) -> Resources {
 
     for listener in listeners {
         let mut http_filters = vec![];
-        let router = Router { ..Default::default() };
+
+        info!(target:TARGET, "Processing listener {} {} {} {} {:?}", listener.name, listener.port, listener.http_listener_map.len(), listener.tcp_listener_map.len(), listener.hostnames);
+
+        let listener_name = listener.name();
         if listener.enable_ext_proc {
             let ext_processor = ExternalProcessor {
                 processing_mode: Some(ProcessingMode {
@@ -363,7 +369,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
                 grpc_service: Some(GrpcService {
                     target_specifier: Some(TargetSpecifier::GoogleGrpc(GoogleGrpc {
                         target_uri: "127.0.0.1:1000".to_owned(),
-                        stat_prefix: listener.name.clone() + "ext_filter_stats",
+                        stat_prefix: listener.name() + "ext_filter_stats",
                         ..Default::default()
                     })),
                     ..Default::default()
@@ -388,43 +394,6 @@ fn create_resources(gateway: &Gateway) -> Resources {
 
             http_filters.push(external_processor_filter);
         }
-
-        let listener_name = listener.name.clone();
-        let http_connection_manager_router_filter_any =
-            converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.router.v3.Router".to_owned(), &router));
-
-        let router_filter = HttpFilter {
-            name: format!("{listener_name}-http-connection-manager-route-filter"),
-            is_optional: false,
-            disabled: false,
-            config_type: Some(ConfigType::TypedConfig(http_connection_manager_router_filter_any)),
-        };
-
-        http_filters.push(router_filter);
-
-        let virtual_hosts = generate_virtual_hosts_from_xds(&listener.http_listener_map);
-        let http_connection_manager = HttpConnectionManager {
-            stat_prefix: listener_name.clone(),
-            codec_type: CodecType::Auto.into(),
-            http_filters,
-            route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
-                name: format!("{listener_name}-route"),
-                virtual_hosts,
-                validate_clusters: Some(BoolValue { value: false }),
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
-        let http_connection_manager_any = converters::AnyTypeConverter::from((
-            "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager".to_owned(),
-            &http_connection_manager,
-        ));
-
-        let http_connection_manager_filter = Filter {
-            name: format!("{listener_name}-http-connection-manager"),
-            config_type: Some(envoy_api_rs::envoy::config::listener::v3::filter::ConfigType::TypedConfig(http_connection_manager_any)),
-        };
 
         let (transport_socket, mut secrets) = if let Some(TlsType::Terminate(secrets)) = listener.tls_type.as_ref() {
             let secrets: Vec<ResourceKey> = secrets
@@ -468,6 +437,7 @@ fn create_resources(gateway: &Gateway) -> Resources {
         } else {
             (None, vec![])
         };
+
         let tls_inspector = TlsInspector::default();
 
         let tls_inspector_listener_filter = ListenerFilter {
@@ -481,12 +451,132 @@ fn create_resources(gateway: &Gateway) -> Resources {
             ..Default::default()
         };
 
+        let router = Router { ..Default::default() };
+        let http_connection_manager_router_filter_any =
+            converters::AnyTypeConverter::from(("type.googleapis.com/envoy.extensions.filters.http.router.v3.Router".to_owned(), &router));
+
+        let router_filter = HttpFilter {
+            name: format!("{listener_name}-http-connection-manager-route-filter"),
+            is_optional: false,
+            disabled: false,
+            config_type: Some(ConfigType::TypedConfig(http_connection_manager_router_filter_any)),
+        };
+
+        http_filters.push(router_filter);
+
+        let http_connection_manager_filter = if listener.http_listener_map.is_empty() {
+            None
+        } else {
+            info!(target:TARGET,"Processing HTTP Filter");
+            let server_names = listener
+                .http_listener_map
+                .iter()
+                .flat_map(|e| e.effective_hostnames.clone())
+                .filter_map(|h| if !(h.contains(':') || h.contains('*')) { Some(h.clone()) } else { None })
+                .collect::<BTreeSet<_>>();
+            info!(target:TARGET,"Effective HTTP server names {server_names:?}");
+            let virtual_hosts = generate_virtual_hosts_from_xds(&listener.http_listener_map);
+            let http_connection_manager = HttpConnectionManager {
+                stat_prefix: listener_name.clone(),
+                codec_type: CodecType::Auto.into(),
+                http_filters,
+                route_specifier: Some(RouteSpecifier::RouteConfig(RouteConfiguration {
+                    name: format!("{listener_name}-route"),
+                    virtual_hosts,
+                    validate_clusters: Some(BoolValue { value: false }),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            };
+
+            let http_connection_manager_any = converters::AnyTypeConverter::from((
+                "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager".to_owned(),
+                &http_connection_manager,
+            ));
+
+            let http_connection_manager_filter = Filter {
+                name: format!("{listener_name}-http-connection-manager"),
+                config_type: Some(envoy_api_rs::envoy::config::listener::v3::filter::ConfigType::TypedConfig(http_connection_manager_any)),
+            };
+
+            info!(target:TARGET, "Adding HTTP filter chain for server names {listener_name} {server_names:?}");
+            Some(vec![FilterChain {
+                name: format!("Filterchain-{listener_name}-http"),
+                filter_chain_match: Some(FilterChainMatch {
+                    server_names: vec![],
+                    transport_protocol: String::new(),
+                    ..Default::default()
+                }),
+                transport_socket: transport_socket.clone(),
+                filters: vec![http_connection_manager_filter],
+                ..Default::default()
+            }])
+        };
+
+        let filter_chains = listener.tcp_listener_map.iter().filter_map(|tcp| {
+            info!(target:TARGET,"Processing effective TCP route {}", tcp.name);
+            let server_names = tcp
+                .effective_hostnames
+                .iter()
+                //                .filter_map(|h| if !(h.contains(':') || h.contains('*')) { Some(h.clone()) } else { None })
+                .filter_map(|h| {
+                    if h.contains(':') {
+                        None
+                    } else if h.starts_with('*') && h.len() > 1 {
+                        Some(h.clone())
+                    } else if h.contains('*') {
+                        None
+                    } else {
+                        Some(h.clone())
+                    }
+                })
+                .collect::<Vec<_>>()
+                .clone();
+            info!(target:TARGET,"Effective TCP Hostnames {server_names:?}");
+            let cluster_specifiers: Vec<_> = tcp
+                .resolved_service_backends
+                .iter()
+                .map(crate::common::BackendTypeConfig::cluster_name)
+                .map(ClusterSpecifier::Cluster)
+                .collect();
+            if cluster_specifiers.is_empty() {
+                None
+            } else {
+                let tcp_proxy = TcpProxy {
+                    cluster_specifier: cluster_specifiers.first().cloned(),
+                    stat_prefix: listener_name.clone(),
+                    ..Default::default()
+                };
+                let tcp_proxy_any = converters::AnyTypeConverter::from((
+                    "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy".to_owned(),
+                    &tcp_proxy,
+                ));
+
+                let tcp_proxy_filter = Filter {
+                    name: format!("{listener_name}-tcp-proxy-{}", listener.port),
+                    config_type: Some(envoy_api_rs::envoy::config::listener::v3::filter::ConfigType::TypedConfig(tcp_proxy_any)),
+                };
+                info!(target:TARGET, "Adding TCP filter chain for server names {listener_name} {server_names:?}");
+                Some(FilterChain {
+                    name: format!("Filterchain-{listener_name}-tcp"),
+                    filter_chain_match: Some(FilterChainMatch { server_names, transport_protocol: String::new(), ..Default::default() }),
+                    transport_socket: transport_socket.clone(),
+                    filters: vec![tcp_proxy_filter],
+                    ..Default::default()
+                })
+            }
+        });
+        let filter_chains: Vec<_> = if let Some(http_filter) = http_connection_manager_filter {
+            filter_chains.chain(http_filter).collect()
+        } else {
+            filter_chains.collect()
+        };
+
         let envoy_listener = EnvoyListener {
             name: listener_name.clone(),
             address: Some(SocketAddressFactory::from(listener)),
             listener_filters: vec![tls_inspector_listener_filter],
-            filter_chains: vec![FilterChain { transport_socket, filters: vec![http_connection_manager_filter], ..Default::default() }],
-
+            filter_chains,
             ..Default::default()
         };
 
@@ -785,7 +875,12 @@ pub fn create_key_name(resource_key: &ResourceKey) -> String {
 fn create_secret_volumes(listeners: Values<String, Listener>) -> Vec<Volume> {
     let mut all_certificates = BTreeSet::new();
     for listener in listeners {
-        if let Listener::Https(listener_data) = listener
+        let listener_data = match listener {
+            Listener::Https(listener_data) | Listener::Tls(listener_data) => Some(listener_data),
+            _ => None,
+        };
+
+        if let Some(listener_data) = listener_data
             && let Some(TlsType::Terminate(certificates)) = &listener_data.config.tls_type
         {
             for certificate in certificates {

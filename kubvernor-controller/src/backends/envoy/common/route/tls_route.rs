@@ -7,18 +7,11 @@
 //
 //
 
-mod gateway_class_patcher;
-mod gateway_patcher;
-mod grpc_route_patcher;
-mod http_route_patcher;
-mod inference_pool_patcher;
-mod patcher;
-mod tls_route_patcher;
+use crate::common::Backend;
 
-pub use gateway_class_patcher::GatewayClassPatcherService;
-pub use gateway_patcher::GatewayPatcherService;
-pub use grpc_route_patcher::GRPCRoutePatcherService;
-pub use http_route_patcher::HttpRoutePatcherService;
-pub use inference_pool_patcher::InferencePoolPatcherService;
-pub use patcher::{DeleteContext, FinalizerContext, Operation, PatchContext, Patcher};
-pub use tls_route_patcher::TlsRoutePatcherService;
+#[derive(Clone, Debug, PartialOrd, PartialEq, Default)]
+pub struct TlsEffectiveRoutingRule {
+    pub backends: Vec<Backend>,
+    pub name: String,
+    pub hostnames: Vec<String>,
+}

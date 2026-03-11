@@ -35,8 +35,8 @@ const TARGET: &str = super::TARGET;
 use crate::{
     backends::agentgateway::SecureListenerWrapper,
     common::{
-        Backend, BackendType, DEFAULT_NAMESPACE_NAME, Gateway, HTTPRoutingRule, InferencePoolTypeConfig, KeyData, ProtocolType, RouteType,
-        TlsType,
+        Backend, BackendType, DEFAULT_NAMESPACE_NAME, Gateway, HTTPRoutingRule, InferencePoolTypeConfig, KeyData, ProtocolType,
+        RouteTypeConfiguration, TlsType,
     },
 };
 
@@ -159,9 +159,9 @@ impl<'a> ResourceGenerator<'a> {
                 let (resolved, unresolved) = l.routes();
                 let routes = resolved.into_iter().chain(unresolved);
                 routes
-                    .filter_map(|route| match route.route_type() {
-                        RouteType::Http(configuration) => Some((route, &configuration.routing_rules)),
-                        RouteType::Grpc(_) => None,
+                    .filter_map(|route| match route.route_type_configuration() {
+                        RouteTypeConfiguration::Http(configuration) => Some((route, &configuration.routing_rules)),
+                        RouteTypeConfiguration::Grpc(_) | RouteTypeConfiguration::Tls(_) => None,
                     })
                     .flat_map(|(route, routing_rules)| {
                         routing_rules
@@ -232,9 +232,10 @@ impl<'a> ResourceGenerator<'a> {
 
                                 Route {
                                     name: Some(RouteName {
-                                        kind: match route.route_type() {
-                                            RouteType::Http(_) => "HTTP".to_owned(),
-                                            RouteType::Grpc(_) => "GRPC".to_owned(),
+                                        kind: match route.route_type_configuration() {
+                                            RouteTypeConfiguration::Http(_) => "HTTP".to_owned(),
+                                            RouteTypeConfiguration::Grpc(_) => "GRPC".to_owned(),
+                                            RouteTypeConfiguration::Tls(_) => "TLS".to_owned(),
                                         },
                                         name: routing_rule.name.clone(),
                                         namespace: route.namespace().to_owned(),

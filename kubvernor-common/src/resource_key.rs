@@ -17,6 +17,7 @@ use gateway_api_with_extensions::{
     httproutes::{HTTPBackendReference, HTTPRoute},
     inferencepools::InferencePool,
     referencegrants::{ReferenceGrantFrom, ReferenceGrantTo},
+    tlsroutes::{TLSRoute, TlsRouteRulesBackendRefs},
 };
 use k8s_openapi::api::core::v1::Service;
 use kube::{Resource, ResourceExt};
@@ -126,6 +127,14 @@ impl From<&GRPCRoute> for ResourceKey {
     }
 }
 
+impl From<&TLSRoute> for ResourceKey {
+    fn from(value: &TLSRoute) -> Self {
+        let namespace = value.meta().namespace.clone().unwrap_or(DEFAULT_NAMESPACE_NAME.to_owned());
+
+        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name_any(), kind: "TLSRoute".to_owned() }
+    }
+}
+
 impl From<(&HTTPBackendReference, String)> for ResourceKey {
     fn from((value, gateway_namespace): (&HTTPBackendReference, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
@@ -144,6 +153,14 @@ impl From<(&BackendObjectReference, String)> for ResourceKey {
 
 impl From<(&GRPCBackendReference, String)> for ResourceKey {
     fn from((value, gateway_namespace): (&GRPCBackendReference, String)) -> Self {
+        let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
+
+        Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name.clone(), kind: value.kind.clone().unwrap_or_default() }
+    }
+}
+
+impl From<(&TlsRouteRulesBackendRefs, String)> for ResourceKey {
+    fn from((value, gateway_namespace): (&TlsRouteRulesBackendRefs, String)) -> Self {
         let namespace = value.namespace.clone().unwrap_or(gateway_namespace);
 
         Self { group: DEFAULT_GROUP_NAME.to_owned(), namespace, name: value.name.clone(), kind: value.kind.clone().unwrap_or_default() }

@@ -29,9 +29,10 @@ pub use listener::{Listener, ListenerCondition, ProtocolType, TlsType};
 pub use references_resolver::{BackendReferenceResolver, ReferenceGrantRef, ReferenceGrantsResolver, SecretsResolver};
 pub use resource_key::{DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, KUBERNETES_NONE, RouteRefKey};
 pub use route::{
-    FilterHeaders, NotResolvedReason, ResolutionStatus, Route, RouteStatus, RouteType,
+    FilterHeaders, NotResolvedReason, ResolutionStatus, Route, RouteStatus, RouteType, RouteTypeConfiguration,
     grpc_route::{GRPCRoutingConfiguration, GRPCRoutingRule},
     http_route::{HTTPRoutingConfiguration, HTTPRoutingRule},
+    tls_route::{TlsRoutingConfiguration, TlsRoutingRule},
 };
 use tokio::sync::{mpsc, oneshot};
 use typed_builder::TypedBuilder;

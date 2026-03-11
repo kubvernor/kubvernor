@@ -11,7 +11,7 @@ pub mod gateway_deployer_internal;
 pub mod gateway_processed_handler;
 use std::{collections::HashMap, sync::Arc};
 
-use gateway_api_with_extensions::{gatewayclasses::GatewayClass, grpcroutes::GRPCRoute, httproutes::HTTPRoute};
+use gateway_api_with_extensions::{gatewayclasses::GatewayClass, grpcroutes::GRPCRoute, httproutes::HTTPRoute, tlsroutes::TLSRoute};
 use gateway_deployer_internal::{GatewayDeployer, GatewayDeployerServiceInternal};
 pub(crate) use gateway_processed_handler::GatewayProcessedHandler;
 use kubvernor_common::GatewayImplementationType;
@@ -38,6 +38,7 @@ pub struct GatewayDeployerService {
     gateway_class_patcher_channel_sender: tokio::sync::mpsc::Sender<Operation<GatewayClass>>,
     http_route_patcher_channel_sender: tokio::sync::mpsc::Sender<Operation<HTTPRoute>>,
     grpc_route_patcher_channel_sender: tokio::sync::mpsc::Sender<Operation<GRPCRoute>>,
+    tls_route_patcher_channel_sender: tokio::sync::mpsc::Sender<Operation<TLSRoute>>,
     controller_name: String,
 }
 
@@ -72,6 +73,7 @@ impl GatewayDeployerService {
                                 state: &self.state.clone(),
                                 http_route_patcher: self.http_route_patcher_channel_sender.clone(),
                                 grpc_route_patcher: self.grpc_route_patcher_channel_sender.clone(),
+                                tls_route_patcher: self.tls_route_patcher_channel_sender.clone(),
                                 controller_name: self.controller_name.clone(),
                             };
 

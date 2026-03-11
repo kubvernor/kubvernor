@@ -9,10 +9,11 @@
 
 mod grpc_route;
 mod http_route;
-
+mod tls_route;
 use gateway_api_with_extensions::common::HeaderMatch;
 pub use grpc_route::GRPCEffectiveRoutingRule;
 pub use http_route::HTTPEffectiveRoutingRule;
+pub use tls_route::TlsEffectiveRoutingRule;
 use typed_builder::TypedBuilder;
 
 #[cfg(test)]

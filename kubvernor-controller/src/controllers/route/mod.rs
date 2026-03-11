@@ -10,5 +10,6 @@
 pub mod grpc_route;
 pub mod http_route;
 mod routes_common;
+pub mod tls_route;
 
 const TARGET: &str = super::TARGET;
