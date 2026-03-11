@@ -66,7 +66,7 @@ impl RouteResolver<'_> {
         let mut route_resolution_status = ResolutionStatus::Resolved;
 
         match &mut route_config.route_type {
-            common::RouteType::Http(httprouting_configuration) => {
+            common::RouteTypeConfiguration::Http(httprouting_configuration) => {
                 for rule in &mut httprouting_configuration.routing_rules {
                     let (new_service_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;
                     if resolution_status != ResolutionStatus::Resolved {
@@ -82,7 +82,7 @@ impl RouteResolver<'_> {
                     rule.filter_backends.clone_from(&new_filter_backends);
                 }
             },
-            common::RouteType::Grpc(grpcrouting_configuration) => {
+            common::RouteTypeConfiguration::Grpc(grpcrouting_configuration) => {
                 for rule in &mut grpcrouting_configuration.routing_rules {
                     let (new_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;
                     if resolution_status != ResolutionStatus::Resolved {
@@ -91,7 +91,7 @@ impl RouteResolver<'_> {
                     rule.backends.clone_from(&new_backends);
                 }
             },
-            common::RouteType::Tls(tls_routing_configuration) => {
+            common::RouteTypeConfiguration::Tls(tls_routing_configuration) => {
                 for rule in &mut tls_routing_configuration.routing_rules {
                     let (new_backends, resolution_status) = self.process_backends(route_resource_key, rule.backends.clone()).await;
                     if resolution_status != ResolutionStatus::Resolved {

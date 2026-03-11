@@ -17,7 +17,7 @@ use kube::ResourceExt;
 
 use super::{
     Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route,
-    RouteConfig, RouteType, ServiceTypeConfig, get_add_headers, get_remove_headers, get_set_headers,
+    RouteConfig, RouteTypeConfiguration, ServiceTypeConfig, get_add_headers, get_remove_headers, get_set_headers,
 };
 use crate::{
     common::{BackendType, InferencePoolTypeConfig, resource_key::DEFAULT_INFERENCE_GROUP_NAME},
@@ -109,7 +109,7 @@ impl TryFrom<&HTTPRoute> for Route {
             } else {
                 ResolutionStatus::NotResolved(NotResolvedReason::Unknown)
             },
-            route_type: RouteType::Http(HTTPRoutingConfiguration { routing_rules }),
+            route_type: RouteTypeConfiguration::Http(HTTPRoutingConfiguration { routing_rules }),
         };
 
         Ok(Route { config })

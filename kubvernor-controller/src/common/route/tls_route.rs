@@ -12,7 +12,7 @@ use kube::ResourceExt;
 
 use super::{
     Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, NotResolvedReason, ResolutionStatus, ResourceKey, Route, RouteConfig,
-    RouteType, ServiceTypeConfig,
+    RouteTypeConfiguration, ServiceTypeConfig,
 };
 use crate::{
     common::{BackendType, InferencePoolTypeConfig, resource_key::DEFAULT_INFERENCE_GROUP_NAME},
@@ -85,7 +85,7 @@ impl TryFrom<&TLSRoute> for Route {
             } else {
                 ResolutionStatus::NotResolved(NotResolvedReason::Unknown)
             },
-            route_type: RouteType::Tls(TlsRoutingConfiguration { routing_rules }),
+            route_type: RouteTypeConfiguration::Tls(TlsRoutingConfiguration { routing_rules }),
         };
 
         Ok(Route { config })

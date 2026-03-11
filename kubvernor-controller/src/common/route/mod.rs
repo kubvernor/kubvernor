@@ -79,16 +79,31 @@ impl Route {
         &mut self.config.resolution_status
     }
 
-    pub fn route_type(&self) -> &RouteType {
+    pub fn route_type_configuration(&self) -> &RouteTypeConfiguration {
         &self.config.route_type
+    }
+
+    pub fn route_type(&self) -> RouteType {
+        match &self.config.route_type {
+            RouteTypeConfiguration::Http(_) => RouteType::Http,
+            RouteTypeConfiguration::Grpc(_) => RouteType::Grpc,
+            RouteTypeConfiguration::Tls(_) => RouteType::Tls,
+        }
     }
 }
 
 #[derive(Clone, Debug)]
-pub enum RouteType {
+pub enum RouteTypeConfiguration {
     Http(HTTPRoutingConfiguration),
     Grpc(GRPCRoutingConfiguration),
     Tls(TlsRoutingConfiguration),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum RouteType {
+    Http,
+    Grpc,
+    Tls,
 }
 
 #[derive(Clone, Debug)]
@@ -97,19 +112,19 @@ pub struct RouteConfig {
     parents: Option<Vec<ParentReference>>,
     pub hostnames: Vec<String>,
     pub resolution_status: ResolutionStatus,
-    pub route_type: RouteType,
+    pub route_type: RouteTypeConfiguration,
 }
 
 impl RouteConfig {
     pub fn backends(&self) -> Vec<&Backend> {
         match &self.route_type {
-            RouteType::Http(routing_rules_configuration) => {
+            RouteTypeConfiguration::Http(routing_rules_configuration) => {
                 routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect()
             },
-            RouteType::Grpc(routing_rules_configuration) => {
+            RouteTypeConfiguration::Grpc(routing_rules_configuration) => {
                 routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect()
             },
-            RouteType::Tls(routing_rules_configuration) => {
+            RouteTypeConfiguration::Tls(routing_rules_configuration) => {
                 routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.backends).collect()
             },
         }
@@ -117,13 +132,13 @@ impl RouteConfig {
 
     pub fn filter_backends(&self) -> Vec<&Backend> {
         match &self.route_type {
-            RouteType::Http(routing_rules_configuration) => {
+            RouteTypeConfiguration::Http(routing_rules_configuration) => {
                 routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.filter_backends).collect()
             },
-            RouteType::Grpc(routing_rules_configuration) => {
+            RouteTypeConfiguration::Grpc(routing_rules_configuration) => {
                 routing_rules_configuration.routing_rules.iter().flat_map(|r| &r.filter_backends).collect()
             },
-            RouteType::Tls(_) => {
+            RouteTypeConfiguration::Tls(_) => {
                 vec![]
             },
         }

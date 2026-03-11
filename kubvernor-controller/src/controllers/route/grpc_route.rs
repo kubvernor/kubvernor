@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use super::routes_common::CommonRouteHandler;
 use crate::{
-    common::{ReferenceValidateRequest, Route},
+    common::{ReferenceValidateRequest, Route, RouteType},
     controllers::{
         ControllerError, RECONCILE_LONG_WAIT,
         handlers::ResourceHandler,
@@ -203,6 +203,6 @@ impl GRPCRouteHandler<GRPCRoute> {
             return Err(ControllerError::InvalidPayload("Route with no parents".to_owned()));
         };
 
-        self.common_handler.on_deleted(route_key, parent_gateway_refs).await
+        self.common_handler.on_deleted(RouteType::Grpc, route_key, parent_gateway_refs).await
     }
 }

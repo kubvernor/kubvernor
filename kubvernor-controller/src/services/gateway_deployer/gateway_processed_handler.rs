@@ -28,7 +28,7 @@ use log::{debug, info, warn};
 use tokio::sync::{mpsc::Sender, oneshot};
 
 use crate::{
-    common::{self, GatewayAddress, NotResolvedReason, ResolutionStatus, Route, RouteType},
+    common::{self, GatewayAddress, NotResolvedReason, ResolutionStatus, Route, RouteTypeConfiguration},
     controllers::ControllerError,
     services::patchers::{Operation, PatchContext},
 };
@@ -1438,22 +1438,22 @@ impl GatewayProcessedHandler<'_> {
 }
 
 fn only_http_routes(route: &Route) -> bool {
-    match route.route_type() {
-        RouteType::Http(_) => true,
-        RouteType::Grpc(_) | RouteType::Tls(_) => false,
+    match route.route_type_configuration() {
+        RouteTypeConfiguration::Http(_) => true,
+        RouteTypeConfiguration::Grpc(_) | RouteTypeConfiguration::Tls(_) => false,
     }
 }
 
 fn only_grpc_routes(route: &Route) -> bool {
-    match route.route_type() {
-        RouteType::Http(_) | RouteType::Tls(_) => false,
-        RouteType::Grpc(_) => true,
+    match route.route_type_configuration() {
+        RouteTypeConfiguration::Http(_) | RouteTypeConfiguration::Tls(_) => false,
+        RouteTypeConfiguration::Grpc(_) => true,
     }
 }
 
 fn only_tls_routes(route: &Route) -> bool {
-    match route.route_type() {
-        RouteType::Tls(_) => true,
-        RouteType::Http(_) | RouteType::Grpc(_) => false,
+    match route.route_type_configuration() {
+        RouteTypeConfiguration::Tls(_) => true,
+        RouteTypeConfiguration::Http(_) | RouteTypeConfiguration::Grpc(_) => false,
     }
 }

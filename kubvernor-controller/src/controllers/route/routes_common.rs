@@ -26,7 +26,7 @@ use tokio::sync::{mpsc, oneshot};
 use typed_builder::TypedBuilder;
 
 use crate::{
-    common::{self, Backend, BackendType, ReferenceValidateRequest, RequestContext, Route, RouteRefKey, VerifiyItems},
+    common::{self, Backend, BackendType, ReferenceValidateRequest, RequestContext, Route, RouteRefKey, RouteType, VerifiyItems},
     controllers::{ControllerError, inference_pool, utils::RouteListenerMatcher},
     services::patchers::{DeleteContext, Operation, PatchContext},
 };
@@ -128,11 +128,21 @@ where
                     if let BackendType::InferencePool(config) = b.backend_type() { Some(config.resource_key.clone()) } else { None }
                 })
                 .collect::<Vec<_>>();
-        parent_gateway_refs_keys.for_each(|(_ref, key)| {
-            state.attach_http_route_to_gateway(key.as_ref().clone(), route_key.clone()).expect("We expect the lock to work");
-            state
-                .attach_inference_pool_to_gateway(key.as_ref().clone(), route_key.clone(), inference_pools.clone())
-                .expect("We expect the lock to work");
+
+        parent_gateway_refs_keys.for_each(|(_ref, key)| match route.route_type() {
+            RouteType::Http => {
+                state.attach_http_route_to_gateway(key.as_ref().clone(), route_key.clone()).expect("We expect the lock to work");
+                state
+                    .attach_inference_pool_to_gateway(key.as_ref().clone(), route_key.clone(), inference_pools.clone())
+                    .expect("We expect the lock to work");
+            },
+
+            RouteType::Grpc => {
+                state.attach_http_route_to_gateway(key.as_ref().clone(), route_key.clone()).expect("We expect the lock to work");
+            },
+            RouteType::Tls => {
+                state.attach_tls_route_to_gateway(key.as_ref().clone(), route_key.clone()).expect("We expect the lock to work");
+            },
         });
 
         let matching_gateways = RouteListenerMatcher::filter_matching_gateways(state, &resolved_gateways);
@@ -192,7 +202,12 @@ where
         Ok(Action::await_change())
     }
 
-    pub async fn on_deleted(&self, route_key: ResourceKey, parent_gateway_refs: &[ParentReference]) -> Result<Action, ControllerError> {
+    pub async fn on_deleted(
+        &self,
+        route_type: RouteType,
+        route_key: ResourceKey,
+        parent_gateway_refs: &[ParentReference],
+    ) -> Result<Action, ControllerError> {
         let state = &self.state;
         let controller_name = &self.controller_name;
         let parent_gateway_refs_keys =
@@ -202,7 +217,12 @@ where
         debug!(target: TARGET,"Route parent/gateway keys = {gateway_ids:?}");
 
         gateway_ids.clone().iter().for_each(|gateway_key| {
-            state.detach_http_route_from_gateway(gateway_key, &route_key).expect("We expect the lock to work");
+            match route_type {
+                RouteType::Http => state.detach_http_route_from_gateway(gateway_key, &route_key).expect("We expect the lock to work"),
+                RouteType::Grpc => state.detach_grpc_route_from_gateway(gateway_key, &route_key).expect("We expect the lock to work"),
+                RouteType::Tls => state.detach_tls_route_from_gateway(gateway_key, &route_key).expect("We expect the lock to work"),
+            }
+
             let detached_inference_pools =
                 state.detach_infererence_pool_from_gateway(gateway_key, &route_key).expect("We expect the lock to work");
             debug!(target: TARGET,"Detached inference pools for gateway {gateway_key:?} route {route_key:?} {detached_inference_pools:?}");
@@ -212,11 +232,30 @@ where
             state.find_gateways_by_route_and_inference_pool(&route_key).expect("We expect the lock to work");
         debug!(target: TARGET,"Gateways with inference pools  = {gateway_ids_with_inference_pools:?}");
 
-        let Some(route) = state.delete_http_route(&route_key).expect("We expect the lock to work") else {
-            return Err(ControllerError::InvalidPayload("Route doesn't exist".to_owned()));
-        };
+        let route = match route_type {
+            RouteType::Http => {
+                let Some(route) = state.delete_http_route(&route_key).expect("We expect the lock to work") else {
+                    return Err(ControllerError::InvalidPayload("Route doesn't exist".to_owned()));
+                };
 
-        let route = Route::try_from(&*route)?;
+                Route::try_from(&*route)?
+            },
+            RouteType::Grpc => {
+                let Some(route) = state.delete_grpc_route(&route_key).expect("We expect the lock to work") else {
+                    return Err(ControllerError::InvalidPayload("Route doesn't exist".to_owned()));
+                };
+
+                Route::try_from(&*route)?
+            },
+
+            RouteType::Tls => {
+                let Some(route) = state.delete_tls_route(&route_key).expect("We expect the lock to work") else {
+                    return Err(ControllerError::InvalidPayload("Route doesn't exist".to_owned()));
+                };
+
+                Route::try_from(&*route)?
+            },
+        };
 
         Self::update_inference_pools(self, &route, &gateway_ids_with_inference_pools).await;
 

@@ -153,18 +153,22 @@ impl ResourceFinalizer {
 }
 
 pub fn find_linked_routes(state: &State, gateway_id: &ResourceKey) -> Vec<Route> {
-    let mut http_routes: Vec<Route> = state
+    let linked_routes: Vec<Route> = state
         .get_http_routes_attached_to_gateway(gateway_id)
         .expect("We expect the lock to work")
         .map(|routes| routes.iter().filter_map(|r| Route::try_from(&**r).ok()).collect())
         .unwrap_or_default();
-    let mut grpc_routes: Vec<Route> = state
+    let grpc_routes: Vec<Route> = state
         .get_grpc_routes_attached_to_gateway(gateway_id)
         .expect("We expect the lock to work")
         .map(|routes| routes.iter().filter_map(|r| Route::try_from(&**r).ok()).collect())
         .unwrap_or_default();
-    http_routes.append(&mut grpc_routes);
-    http_routes
+    let tls_routes: Vec<Route> = state
+        .get_tls_routes_attached_to_gateway(gateway_id)
+        .expect("We expect the lock to work")
+        .map(|routes| routes.iter().filter_map(|r| Route::try_from(&**r).ok()).collect())
+        .unwrap_or_default();
+    linked_routes.into_iter().chain(grpc_routes).chain(tls_routes).collect()
 }
 
 pub async fn resolve_namespaces(client: Client) -> BTreeMap<String, BTreeMap<String, String>> {

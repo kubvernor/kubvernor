@@ -18,7 +18,7 @@ use super::{
     envoy_deployer::{TEMPLATES, create_certificate_name, create_key_name, create_secret_name},
 };
 use crate::{
-    common::{self, Backend, BackendTypeConfig, Listener, ProtocolType, Route, RouteType, TlsType},
+    common::{self, Backend, BackendTypeConfig, Listener, ProtocolType, Route, RouteTypeConfiguration, TlsType},
     controllers::HostnameMatchFilter,
 };
 
@@ -179,8 +179,8 @@ impl<'a> EnvoyXDSGenerator<'a> {
         let resolved: Vec<_> = resolved
             .into_iter()
             .filter(|r| match &r.config.route_type {
-                RouteType::Http(_) => true,
-                RouteType::Grpc(_) | RouteType::Tls(_) => false,
+                RouteTypeConfiguration::Http(_) => true,
+                RouteTypeConfiguration::Grpc(_) | RouteTypeConfiguration::Tls(_) => false,
             })
             .collect();
 

@@ -44,25 +44,23 @@ use gateway_api_with_extensions::{
 };
 use itertools::Itertools;
 use kubvernor_common::GatewayImplementationType;
-use log::{debug, error};
+use log::{debug, error, info};
 
 use crate::{
     backends::envoy::common::{
         ClusterHolder, DurationConverter, InferenceClusterInfo, SocketAddressFactory, converters, enable_ect_proc_filter,
         get_inference_pool_configurations,
-        route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule},
+        route::{GRPCEffectiveRoutingRule, HTTPEffectiveRoutingRule, TlsEffectiveRoutingRule},
     },
     common::{
         self, Backend, BackendType, BackendTypeConfig, DEFAULT_ROUTE_HOSTNAME, FilterHeaders, GRPCRoutingConfiguration, GRPCRoutingRule,
-        HTTPRoutingConfiguration, HTTPRoutingRule, InferencePoolTypeConfig, Listener, ProtocolType, Route, RouteType, ServiceTypeConfig,
-        TlsType,
+        HTTPRoutingConfiguration, HTTPRoutingRule, InferencePoolTypeConfig, Listener, ProtocolType, Route, RouteType,
+        RouteTypeConfiguration, ServiceTypeConfig, TlsRoutingConfiguration, TlsRoutingRule, TlsType,
     },
     controllers::HostnameMatchFilter,
 };
 
 const TARGET: &str = super::super::TARGET;
-
-type ListenerNameToHostname = (String, Option<String>);
 
 fn get_http_default_rules_matches() -> RouteMatch {
     RouteMatch {
@@ -143,14 +141,27 @@ impl Listener {
             .collect()
     }
 
+    fn create_tls_effective_route(hostnames: &[String], routing_configuration: &TlsRoutingConfiguration) -> Vec<TlsEffectiveRoutingRule> {
+        info!(target:TARGET, "Creating effective tls rules {routing_configuration:?}");
+        routing_configuration
+            .routing_rules
+            .iter()
+            .map(|rr: &TlsRoutingRule| TlsEffectiveRoutingRule {
+                backends: rr.backends.clone(),
+                name: rr.name.clone(),
+                hostnames: hostnames.to_vec(),
+            })
+            .collect()
+    }
+
     pub fn http_matching_rules(&self) -> Vec<HTTPEffectiveRoutingRule> {
         let (resolved_routes, unresolved) = self.routes();
         let mut matching_rules: Vec<_> = resolved_routes
             .iter()
             .chain(unresolved.iter())
             .filter_map(|r| match &r.config.route_type {
-                RouteType::Http(configuration) => Some((&r.config.hostnames, configuration)),
-                RouteType::Grpc(_) | RouteType::Tls(_) => None,
+                RouteTypeConfiguration::Http(configuration) => Some((&r.config.hostnames, configuration)),
+                RouteTypeConfiguration::Grpc(_) | RouteTypeConfiguration::Tls(_) => None,
             })
             .flat_map(|(hostnames, config)| self.create_http_effective_route(hostnames, config))
             .collect();
@@ -164,10 +175,25 @@ impl Listener {
             .iter()
             .chain(unresolved.iter())
             .filter_map(|r| match &r.config.route_type {
-                RouteType::Http(_) | RouteType::Tls(_) => None,
-                RouteType::Grpc(configuration) => Some((&r.config.hostnames, configuration)),
+                RouteTypeConfiguration::Http(_) | RouteTypeConfiguration::Tls(_) => None,
+                RouteTypeConfiguration::Grpc(configuration) => Some((&r.config.hostnames, configuration)),
             })
             .flat_map(|(hostnames, config)| Self::create_grpc_effective_route(hostnames, config))
+            .collect();
+        matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
+        matching_rules
+    }
+
+    pub fn tls_matching_rules(&self) -> Vec<TlsEffectiveRoutingRule> {
+        let (resolved_routes, unresolved) = self.routes();
+        let mut matching_rules: Vec<_> = resolved_routes
+            .iter()
+            .chain(unresolved.iter())
+            .filter_map(|r| match &r.config.route_type {
+                RouteTypeConfiguration::Http(_) | RouteTypeConfiguration::Grpc(_) => None,
+                RouteTypeConfiguration::Tls(configuration) => Some((&r.config.hostnames, configuration)),
+            })
+            .flat_map(|(hostnames, config)| Self::create_tls_effective_route(hostnames, config))
             .collect();
         matching_rules.sort_by(|this, other| this.partial_cmp(other).unwrap_or(cmp::Ordering::Less));
         matching_rules
@@ -182,6 +208,15 @@ pub struct EnvoyVirtualHost {
     pub unresolved_routes: Vec<Route>,
     pub http_routes: Vec<EnvoyRoute>,
     pub grpc_routes: Vec<EnvoyRoute>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnvoyTcpProxy {
+    pub name: String,
+    pub effective_hostnames: Vec<String>,
+    pub resolved_service_backends: Vec<ServiceTypeConfig>,
+    pub resolved_routes: Vec<Route>,
+    pub unresolved_routes: Vec<Route>,
 }
 
 impl Ord for EnvoyVirtualHost {
@@ -204,14 +239,41 @@ impl PartialEq for EnvoyVirtualHost {
     }
 }
 
+impl Ord for EnvoyTcpProxy {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name.cmp(&other.name)
+    }
+}
+
+impl Eq for EnvoyTcpProxy {}
+
+impl PartialOrd for EnvoyTcpProxy {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for EnvoyTcpProxy {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EnvoyListener {
     pub name: String,
     pub port: i32,
     pub http_listener_map: BTreeSet<EnvoyVirtualHost>,
-    pub tcp_listener_map: BTreeSet<ListenerNameToHostname>,
+    pub tcp_listener_map: BTreeSet<EnvoyTcpProxy>,
     pub tls_type: Option<TlsType>,
     pub enable_ext_proc: bool,
+    pub hostnames: Vec<String>,
+}
+
+impl EnvoyListener {
+    pub fn name(&self) -> String {
+        format!("gateway-{}-listener-{}", self.name, self.port)
+    }
 }
 
 pub type HostnameCalculator = Box<dyn Fn(&str) -> Vec<String>>;
@@ -265,10 +327,10 @@ impl<'a> ResourceGenerator<'a> {
         let clusters: BTreeSet<ClusterHolder> = listeners
             .values()
             .flat_map(|listener| {
-                listener.http_listener_map.iter().flat_map(|evc| {
+                let http_clusters = listener.http_listener_map.iter().flat_map(|evc| {
                     evc.resolved_routes.iter().chain(evc.unresolved_routes.iter()).flat_map(|r| {
-                        debug!(target: TARGET,"Cluster backends {} filter_backends {}", r.backends().len(), r.filter_backends().len());
-                        let route_type = r.route_type();
+                        debug!(target: TARGET,"HTTP/GRPC Cluster backends {} filter_backends {}", r.backends().len(), r.filter_backends().len());
+                        let route_type = r.route_type_configuration();
                         let backends = r.backends();
                         let service_backends = r.backends();
                         let filter_backends = r.filter_backends();
@@ -317,7 +379,32 @@ impl<'a> ResourceGenerator<'a> {
 
                         service_backends.chain(inference_backends).chain(filter_backends).collect::<Vec<_>>()
                     })
-                })
+                });
+
+                let tcp_clusters = listener.tcp_listener_map.iter().flat_map(|tcp| {
+                    tcp.resolved_routes.iter().chain(tcp.unresolved_routes.iter()).flat_map(|r| {
+                        debug!(target: TARGET,"TCP/TLS Cluster backends {} filter_backends {}", r.backends().len(), r.filter_backends().len());
+                        let route_type = r.route_type_configuration();
+                        let service_backends = r.backends();
+                        let service_backends = service_backends
+                            .into_iter()
+                            .filter_map(|b| {
+                                if let Backend::Resolved(
+                                    BackendType::Service(backend_service_config) | BackendType::Invalid(backend_service_config),
+                                ) = b
+                                {
+                                    Some(backend_service_config)
+                                } else {
+                                    None
+                                }
+                            })
+                            .filter(|b| b.weight() > 0)
+                            .map(|r| create_service_cluster(r, route_type, &grpc_http_configuration));
+
+                        service_backends.collect::<Vec<_>>()
+                    })
+                });
+                Vec::from_iter(http_clusters.into_iter().chain(tcp_clusters).collect::<BTreeSet<_>>())
             })
             .collect();
         debug!(target: TARGET,"Clusters produced {}", clusters.len() );
@@ -335,8 +422,6 @@ impl<'a> ResourceGenerator<'a> {
         let gateway = self.effective_gateway;
         gateway.listeners().fold(BTreeMap::<i32, EnvoyListener>::new(), |mut acc, listener| {
             let port = listener.port();
-            let listener_name = listener.name().to_owned();
-            let listener_hostname = listener.hostname().cloned();
             let gateway_name = gateway.name().to_owned();
             let protocol_type = listener.protocol();
             let maybe_added = acc.get_mut(&port);
@@ -347,34 +432,15 @@ impl<'a> ResourceGenerator<'a> {
                         let mut new_listener = self.generate_envoy_listener(gateway_name, listener);
                         envoy_listener.http_listener_map.append(&mut new_listener.http_listener_map);
                     },
-                    ProtocolType::Tcp => {
-                        envoy_listener.tcp_listener_map.insert((listener_name, listener_hostname));
+                    ProtocolType::Tcp | ProtocolType::Tls => {
+                        let mut new_listener = self.generate_envoy_listener(gateway_name, listener);
+                        envoy_listener.tcp_listener_map.append(&mut new_listener.tcp_listener_map);
                     },
                     _ => (),
                 }
             } else {
-                match protocol_type {
-                    ProtocolType::Http | ProtocolType::Https => {
-                        let envoy_listener = self.generate_envoy_listener(gateway_name, listener);
-                        acc.insert(port, envoy_listener);
-                    },
-                    ProtocolType::Tcp => {
-                        let mut listener_map = BTreeSet::new();
-                        listener_map.insert((listener_name, listener_hostname));
-                        acc.insert(
-                            port,
-                            EnvoyListener {
-                                name: gateway_name,
-                                port,
-                                http_listener_map: BTreeSet::new(),
-                                tcp_listener_map: listener_map,
-                                tls_type: None,
-                                enable_ext_proc: false,
-                            },
-                        );
-                    },
-                    _ => (),
-                }
+                let envoy_listener = self.generate_envoy_listener(gateway_name, listener);
+                acc.insert(port, envoy_listener);
             }
 
             acc
@@ -382,60 +448,128 @@ impl<'a> ResourceGenerator<'a> {
     }
 
     fn generate_envoy_listener(&mut self, gateway_name: String, listener: &Listener) -> EnvoyListener {
+        let listener_name = listener.name();
         let (resolved, unresolved) = listener.routes();
         let resolved: Vec<_> = resolved.into_iter().collect();
-
-        let mut listener_map = BTreeSet::new();
-        let potential_hostnames = Self::calculate_potential_hostnames(&resolved, listener.hostname().cloned());
-        debug!(target: TARGET,"generate_virtual_hosts Potential hostnames {potential_hostnames:?}");
+        let resolved_http = resolved
+            .clone()
+            .into_iter()
+            .filter(|r| match r.route_type() {
+                RouteType::Http | RouteType::Grpc => true,
+                RouteType::Tls => false,
+            })
+            .collect::<Vec<_>>();
+        let resolved_tcp = resolved.clone().into_iter().filter(|r| r.route_type() == RouteType::Tls).collect::<Vec<_>>();
+        let unresolved_http = unresolved
+            .clone()
+            .into_iter()
+            .filter(|r| match r.route_type() {
+                RouteType::Http | RouteType::Grpc => true,
+                RouteType::Tls => false,
+            })
+            .collect::<Vec<_>>();
+        let unresolved_tcp = unresolved.clone().into_iter().filter(|r| r.route_type() == RouteType::Tls).collect::<Vec<_>>();
+        let mut http_listener_map = BTreeSet::new();
+        let potential_hostnames = Self::calculate_potential_hostnames(&resolved_http, listener.hostname().cloned());
+        debug!(target: TARGET,"{listener_name} generating virtual hosts - potential hostnames {potential_hostnames:?}", );
         let mut enable_ext_proc = false;
-        for potential_hostname in potential_hostnames {
-            let http_matching_rules = listener
-                .http_matching_rules()
-                .into_iter()
-                .filter(|em| {
-                    let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
-                    debug!(target: TARGET,"generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
-                    filtered
-                })
-                .collect::<Vec<_>>();
+        if resolved_http.is_empty() && unresolved_http.is_empty() {
+            info!("{listener_name} No HTTP/GRPC routes");
+        } else {
+            for potential_hostname in potential_hostnames.clone() {
+                let http_matching_rules = listener
+                    .http_matching_rules()
+                    .into_iter()
+                    .filter(|em| {
+                        let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
+                        debug!(target: TARGET,"generating virtual hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
+                        filtered
+                    })
+                    .collect::<Vec<_>>();
 
-            let grpc_matching_rules = listener
-                .grpc_matching_rules()
-                .into_iter()
-                .filter(|em| {
-                    let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
-                    debug!(target: TARGET,"generate_virtual_hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
-                    filtered
-                })
-                .collect::<Vec<_>>();
+                let grpc_matching_rules = listener
+                    .grpc_matching_rules()
+                    .into_iter()
+                    .filter(|em| {
+                        let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
+                        debug!(target: TARGET,"generating virtual hosts {filtered} -> {potential_hostname} {:?}", em.hostnames);
+                        filtered
+                    })
+                    .collect::<Vec<_>>();
 
-            self.inference_clusters = self
-                .inference_clusters
-                .clone()
-                .into_iter()
-                .chain(http_matching_rules.iter().flat_map(get_inference_pool_configurations))
-                .collect();
+                self.inference_clusters = self
+                    .inference_clusters
+                    .clone()
+                    .into_iter()
+                    .chain(http_matching_rules.iter().flat_map(get_inference_pool_configurations))
+                    .collect();
 
-            enable_ext_proc |= http_matching_rules.iter().any(enable_ect_proc_filter);
+                enable_ext_proc |= http_matching_rules.iter().any(enable_ect_proc_filter);
 
-            listener_map.insert(EnvoyVirtualHost {
-                http_routes: http_matching_rules.clone().into_iter().flat_map(Vec::<EnvoyRoute>::from).collect(),
-                grpc_routes: grpc_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
-                name: listener.name().to_owned() + "-" + &potential_hostname,
-                effective_hostnames: calculate_hostnames_common(&resolved, Some(potential_hostname), &self.effective_hostname_calculator),
-                resolved_routes: resolved.iter().map(|r| (**r).clone()).collect(),
-                unresolved_routes: unresolved.iter().map(|r| (**r).clone()).collect(),
-            });
+                http_listener_map.insert(EnvoyVirtualHost {
+                    http_routes: http_matching_rules.clone().into_iter().flat_map(Vec::<EnvoyRoute>::from).collect(),
+                    grpc_routes: grpc_matching_rules.clone().into_iter().map(EnvoyRoute::from).collect(),
+                    name: listener.name().to_owned() + "-" + &potential_hostname,
+                    effective_hostnames: calculate_hostnames_common(
+                        &resolved_http,
+                        Some(potential_hostname),
+                        &self.effective_hostname_calculator,
+                    ),
+                    resolved_routes: resolved_http.iter().map(|r| (**r).clone()).collect(),
+                    unresolved_routes: unresolved_http.iter().map(|r| (**r).clone()).collect(),
+                });
+            }
+        }
+
+        let potential_hostnames = Self::calculate_potential_hostnames(&resolved_tcp, listener.hostname().cloned());
+        let mut tcp_listener_map = BTreeSet::new();
+        if resolved_tcp.is_empty() && unresolved_tcp.is_empty() {
+            info!("{listener_name} No TCP/TLS routes");
+        } else {
+            debug!(target: TARGET,"{listener_name} generating tcp routes - potential hostnames {potential_hostnames:?}");
+            for potential_hostname in potential_hostnames.clone() {
+                let tls_matching_rules: Vec<_> = listener
+                    .tls_matching_rules()
+                    .into_iter()
+                    .filter(|em| {
+                        let filtered = HostnameMatchFilter::new(&potential_hostname, &em.hostnames).filter();
+                        debug!(target: TARGET,"generating tcp routes {filtered} -> {potential_hostname} {:?}", em.hostnames);
+                        filtered
+                    })
+                    .collect();
+                tcp_listener_map.insert(EnvoyTcpProxy {
+                    name: listener.name().to_owned() + "-" + &potential_hostname,
+                    effective_hostnames: calculate_hostnames_common(
+                        &resolved_tcp,
+                        Some(potential_hostname),
+                        &self.effective_hostname_calculator,
+                    ),
+                    resolved_service_backends: tls_matching_rules
+                        .iter()
+                        .flat_map(|r| {
+                            r.backends
+                                .iter()
+                                .filter_map(|b| match b.backend_type() {
+                                    BackendType::Service(s) => Some(s.clone()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>(),
+                    unresolved_routes: unresolved_tcp.iter().map(|r| (**r).clone()).collect(),
+                    resolved_routes: resolved_tcp.iter().map(|r| (**r).clone()).collect(),
+                });
+            }
         }
 
         EnvoyListener {
             name: gateway_name,
             port: listener.port(),
             tls_type: listener.config().tls_type.clone(),
-            http_listener_map: listener_map,
-            tcp_listener_map: BTreeSet::new(),
+            http_listener_map,
+            tcp_listener_map,
             enable_ext_proc,
+            hostnames: potential_hostnames,
         }
     }
 
@@ -558,7 +692,7 @@ pub fn calculate_hostnames_common(
 
 fn create_service_cluster(
     config: &ServiceTypeConfig,
-    route_type: &RouteType,
+    route_type: &RouteTypeConfiguration,
     grpc_http_configuration: &envoy_api_rs::google::protobuf::Any,
 ) -> ClusterHolder {
     ClusterHolder {
@@ -587,8 +721,8 @@ fn create_service_cluster(
                 ..Default::default()
             }),
             typed_extension_protocol_options: match route_type {
-                common::RouteType::Http(_) | common::RouteType::Tls(_) => HashMap::new(),
-                common::RouteType::Grpc(_) => {
+                common::RouteTypeConfiguration::Http(_) | common::RouteTypeConfiguration::Tls(_) => HashMap::new(),
+                common::RouteTypeConfiguration::Grpc(_) => {
                     vec![("envoy.extensions.upstreams.http.v3.HttpProtocolOptions".to_owned(), grpc_http_configuration.clone())]
                         .into_iter()
                         .collect()
@@ -600,7 +734,7 @@ fn create_service_cluster(
     }
 }
 
-fn create_inference_cluster(config: &InferencePoolTypeConfig, _route_type: &RouteType) -> ClusterHolder {
+fn create_inference_cluster(config: &InferencePoolTypeConfig, _route_type: &RouteTypeConfiguration) -> ClusterHolder {
     let fallback_policy = envoy_api_rs::envoy::config::cluster::v3::load_balancing_policy::Policy {
         typed_extension_config: Some(envoy_api_rs::envoy::config::core::v3::TypedExtensionConfig {
             name: "envoy.load_balancing_policies.round_robing".to_owned(),

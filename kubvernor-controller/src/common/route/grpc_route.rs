@@ -17,7 +17,7 @@ use kube::ResourceExt;
 
 use super::{
     Backend, DEFAULT_NAMESPACE_NAME, DEFAULT_ROUTE_HOSTNAME, FilterHeaders, NotResolvedReason, ResolutionStatus, ResourceKey, Route,
-    RouteConfig, RouteType, ServiceTypeConfig, get_add_headers, get_remove_headers, get_set_headers,
+    RouteConfig, RouteTypeConfiguration, ServiceTypeConfig, get_add_headers, get_remove_headers, get_set_headers,
 };
 use crate::{common::BackendType, controllers::ControllerError};
 
@@ -115,7 +115,7 @@ impl TryFrom<&GRPCRoute> for Route {
             } else {
                 ResolutionStatus::NotResolved(NotResolvedReason::Unknown)
             },
-            route_type: RouteType::Grpc(GRPCRoutingConfiguration {
+            route_type: RouteTypeConfiguration::Grpc(GRPCRoutingConfiguration {
                 routing_rules,
                 //effective_routing_rules,
             }),
@@ -125,10 +125,9 @@ impl TryFrom<&GRPCRoute> for Route {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct GRPCRoutingConfiguration {
     pub routing_rules: Vec<GRPCRoutingRule>,
-    //pub effective_routing_rules: Vec<GRPCEffectiveRoutingRule>,
 }
 
 #[derive(Clone, Debug)]
